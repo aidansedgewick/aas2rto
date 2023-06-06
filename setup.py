@@ -16,4 +16,4 @@ setup(
 
 from dk154_targets.paths import build_paths
 
-build_paths()
+#build_paths()

@@ -1,5 +1,4 @@
 import warnings
-import yaml
 from typing import Callable
 
 import numpy as np
@@ -168,7 +167,7 @@ class Target:
         if isinstance(obs_name, Observer):
             obs_name = obs_name.name
             msg = (
-                f"you should provide a string observatory name (eg. {obs_name}, "
+                f"you should provide a string observatory name (eg. {obs_name}), "
                 "not the `astroplan.Observer`"
             )
             warnings.warn(msg, Warning)
