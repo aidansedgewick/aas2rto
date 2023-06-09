@@ -32,6 +32,8 @@ jobs:
     - name: Install extra dependencies
       run: |
         python3 -m pip install -r requirements.txt
+        python3 -c "import numpy as np"
+        python3 -c "import yaml"
     - name: Install package as dev
       run: |
         python3 -m pip install -e .
