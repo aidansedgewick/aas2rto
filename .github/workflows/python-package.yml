@@ -32,7 +32,7 @@ jobs:
     - name: Install extra dependencies
       run: |
         python -m pip install -r requirements.txt
-        python -c "import numpy as np; print np.__file__"
+        python -c "import numpy as np; print(np.__file__)"
         python -c "import yaml"
     - name: Install package as dev
       run: |
