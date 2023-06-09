@@ -26,14 +26,14 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        python3 -m pip install --upgrade pip
-        python3 -m pip install flake8 pytest pyyaml
+        python -m pip install --upgrade pip
+        python -m pip install flake8 pytest pyyaml
         # if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Install extra dependencies
       run: |
-        python3 -m pip install -r requirements.txt
-        python3 -c "import numpy as np"
-        python3 -c "import yaml"
+        python -m pip install -r requirements.txt
+        python -c "import numpy as np; print np.__file__"
+        python -c "import yaml"
     - name: Install package as dev
       run: |
         python3 -m pip install -e .
