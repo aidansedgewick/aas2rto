@@ -31,7 +31,6 @@ jobs:
         # if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Install extra dependencies
       run: |
-        python3 -m pip install
         python3 -m pip install -r requirements.txt
     - name: Install package as dev
       run: |
