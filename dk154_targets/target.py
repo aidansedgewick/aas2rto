@@ -1,17 +1,29 @@
 import warnings
-from typing import Callable
+from logging import getLogger
+from typing import Callable, List
 
 import numpy as np
 
 import pandas as pd
 
+import matplotlib.pyplot as plt
+
+from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
+from astropy.visualization import ZScaleInterval
 
 from astroplan import FixedTarget, Observer
 
 
+logger = getLogger(__name__.split(".")[-1])
+
+
 class TargetData:
+    valid_tags = ("valid",)
+    badqual_tags = ("badquality", "badqual", "dubious")
+    nondet_tags = ("upperlim", "nondet")
+
     def __init__(
         self,
         lightcurve: pd.DataFrame = None,
@@ -20,18 +32,113 @@ class TargetData:
         cutouts: dict = None,
         meta: dict = None,
     ):
-        self.lightcurve = lightcurve
+        self.meta = dict()
+        meta = meta or {}
+        self.meta.update(meta)
+        # self.updated = False
+
+        if lightcurve is not None:
+            self.add_lightcurve(lightcurve.copy())
+        else:
+            self.lightcurve = None
+            self.detections = None
+            self.non_detections = None
         self.probabilities = probabilities
         self.parameters = parameters or {}
         self.cutouts = cutouts or {}
-        self.meta = dict(
-            # lightcurve_update_time=None,
-            # probabilities_update_time=None,
-            # parameters_update_time=None,
-            # cutout_update_time=None,
-        )
-        meta = meta or {}
-        self.meta.update(meta)
+
+    def add_lightcurve(
+        self, lightcurve: pd.DataFrame, tag_col="tag", include_badqual=True
+    ):
+        if ("jd" not in lightcurve.columns) and ("mjd" not in lightcurve.columns):
+            raise ValueError("lightcurve should have at least 'jd' or 'mjd'")
+        if ("jd" in lightcurve.columns) and ("mjd" not in lightcurve.columns):
+            mjd_dat = Time(lightcurve["jd"].values, format="jd").mjd
+            jd_loc = lightcurve.columns.get_loc("jd")
+            lightcurve.insert(jd_loc + 1, "mjd", mjd_dat)
+        if ("mjd" in lightcurve.columns) and ("jd" not in lightcurve.columns):
+            jd_dat = Time(lightcurve["mjd"].values, format="mjd").jd
+            mjd_loc = lightcurve.columns.get_loc("mjd")
+            lightcurve.insert(mjd_loc, "jd", jd_dat)
+
+        lightcurve.sort_values("jd", inplace=True)
+        self.lightcurve = lightcurve
+
+        if include_badqual:
+            det_query = " or ".join(
+                f"tag=='{x}'" for x in self.valid_tags + self.badqual_tags
+            )
+        else:
+            det_query = " or ".join(f"tag=='{x}'" for x in self.valid_tags)
+        nondet_query = " or ".join(f"tag=='{x}'" for x in self.nondet_tags)
+        if tag_col in self.lightcurve.columns:
+            self.detections = self.lightcurve.query(det_query)
+            self.non_detections = self.lightcurve.query(nondet_query)
+        else:
+            self.detections = self.lightcurve
+            self.non_detections = None
+        return
+
+    def integrate_lightcurve_updates(
+        self,
+        updates: pd.DataFrame,
+        column: str = "candid",
+        nan_values: List[str] = (0,),
+        timelike=False,
+        verify_integrity=True,
+        keep_updates=True,
+    ):
+        """
+        combine updates into a lightcurve.
+
+        Parameters
+        ----------
+        updates
+            pd.DataFrame, the updates you want to include in your updated lightcurve.
+        column
+            the column to check for matches, and check that repeated rows don't happen
+
+
+        """
+        if column not in self.lightcurve.columns:
+            raise ValueError(f"{column} not in both lightcurve columns")
+        if column not in updates.columns:
+            raise ValueError(f"{column} not in both updates columns")
+        if timelike:
+            updated_lightcurve = self.integrate_timelike(
+                updates, column, keep_updated=keep_updates, nan_values=nan_values
+            )
+        else:
+            updated_lightcurve = self.integrate_equality(
+                updates,
+                column,
+                verify_integrity=verify_integrity,
+                nan_values=nan_values,
+            )
+        self.add_lightcurve(updated_lightcurve)
+
+    def integrate_timelike(self, updates, column, keep_updated=True):
+        raise NotImplementedError
+
+    def integrate_equality(
+        self, updates: pd.DataFrame, column, verify_integrity=True, nan_values=(0,)
+    ):
+        if self.lightcurve is None:
+            return updates
+        updated_lightcurve = pd.concat([self.lightcurve, updates])
+
+        if verify_integrity:
+            extra_nan_vals_mask = updated_lightcurve[column].isin(nan_values)
+            pd_nan_mask = updated_lightcurve[column].isna()
+            finite_col_vals = updated_lightcurve[extra_nan_vals_mask & pd_nan_mask][
+                column
+            ]
+            if not finite_col_vals.is_unique:
+                repeated_mask = nonzero_candid["candid"].duplicated()
+                repeated_candid = nonzero_candid["candid"][repeated_mask]
+                err_msg = f"repeated candid:\n{set(repeated_candid)}"
+                raise ValueError(err_msg)
+        return updated_lightcurve
 
 
 class Target:
@@ -40,12 +147,8 @@ class Target:
     """
 
     default_base_score = 100.0
-    data_sources = (
-        "alerce",
-        "atlas",
-        "fink",
-        "tns",
-    )
+    data_sources = ("alerce", "atlas", "fink", "tns")
+    default_broker_priority = ("alerce", "fink", "lasair")
 
     def __init__(
         self,
@@ -55,37 +158,66 @@ class Target:
         alerce_data: TargetData = None,
         atlas_data: TargetData = None,
         fink_data: TargetData = None,
+        lasair_data: TargetData = None,
         tns_data: TargetData = None,
         base_score: float = None,
+        target_of_opportunity: bool = False,
+        broker_priority: tuple = None,
+        t_ref: Time = None,
     ):
+        t_ref = t_ref or Time.now()
+
         # Basics
         self.objectId = objectId
-        self.ra = ra
-        self.dec = dec
-        self.coord = SkyCoord(ra=ra, dec=dec, unit="deg")
+        self.update_coordinates(ra, dec)
         self.base_score = base_score or self.default_base_score
-        self.astroplan_target = FixedTarget(self.coord, self.objectId)  # for plots
+        self.compiled_lightcurve = None
+        self.broker_priority = broker_priority or self.default_broker_priority
+        _check_broker_priority(self.broker_priority)
 
         # Target data
         self.alerce_data = alerce_data or TargetData()
         self.atlas_data = atlas_data or TargetData()
         self.fink_data = fink_data or TargetData()
+        self.lasair_data = lasair_data or TargetData()
         self.tns_data = tns_data or TargetData()
 
         # Observatory data
         self.observatory_night = {"no_observatory": None}
 
         # Scoring data
-        self.models = []
+        self.models = {}
+        self.models_tref = {}
         self.score_history = {"no_observatory": []}
         self.score_comments = {"no_observatory": None}
         self.reject_comments = {"no_observatory": None}
         self.rank_history = {"no_observatory": []}
 
+        # Space to keep some plots
+        self.latest_lc_fig = None
+        self.latest_lc_fig_path = None
+        self.latest_oc_figs = {}
+        self.latest_oc_fig_paths = {}
+
         # Keep track of what's going on
-        self.target_of_opportunity = False
+        self.creation_time = t_ref
+        self.target_of_opportunity = target_of_opportunity
         self.updated = False
         self.to_reject = False
+        self.send_updates = False
+        self.update_messages = []
+
+    def __str__(self):
+        s = f"{self.objectId}: ra={self.ra:.5f} dec={self.dec:.5f}\n"
+        return s
+
+    def update_coordinates(self, ra, dec):
+        self.ra = ra
+        self.dec = dec
+        self.coord = None
+        if ra is not None and dec is not None:
+            self.coord = SkyCoord(ra=ra, dec=dec, unit="deg")
+            self.astroplan_target = FixedTarget(self.coord, self.objectId)  # for plots
 
     def evaluate_target(
         self,
@@ -109,20 +241,21 @@ class Target:
 
         """
 
-        t_ref = t_ref or Time.time()
+        t_ref = t_ref or Time.now()
         obs_name = getattr(observatory, "name", "no_observatory")
         if obs_name == "no_observatory":
             assert observatory is None
 
-        scoring_result = scoring_function(self, observatory)
-        # Note that we're passing self as the first arg!
+        scoring_result = scoring_function(self, observatory)  # `self` is first arg!
 
+        ##===== TODO: Check signature of function! =====##
         error_msg = (
-            f"your function {scoring_function.__name__} should return ",
-            f"the score, and optionally two lists of strings",
-            "`score_comments` and `reject_comments`",
+            f"your function '{scoring_function.__name__}' should return "
+            f"the score, and optionally two lists of strings "
+            f"`score_comments` and `reject_comments`, not {scoring_result} "
+            f"which is {type(scoring_result)}"
         )
-        if isinstance(scoring_result, float):
+        if isinstance(scoring_result, float) or isinstance(scoring_result, int):
             score_value = scoring_result
             score_comments = None
             reject_comments = None
@@ -153,8 +286,9 @@ class Target:
 
         Parameters
         ----------
-        obs_name: str
+        obs_name: str [optional]
             the name of an observatory that the system knows about
+            if not provided defaults to `no_observatory`.
         return_time: bool
             optional, defaults to `False`. If `False` return only the score
             (either a float or `None`).
@@ -172,14 +306,237 @@ class Target:
             )
             warnings.warn(msg, Warning)
 
-        obs_score_history = self.score_history.get(obs_name, [])
+        # obs_score_history = self.score_history.get(obs_name, [])
+        # if len(obs_score_history) == 0:
+        #    result = (None, None)
+        # else:
+        #    result = obs_score_history[-1]
 
-        if len(obs_score_history) == 0:
-            result = (None, None)
-        else:
-            result = obs_score_history[-1]
+        obs_history = self.score_history.get(obs_name, [None])
+        obs_history = obs_history or [None]
+        result = obs_history[-1] or (None, None)
 
         if return_time:
             return result
         else:
             return result[0]
+
+    def build_compiled_lightcurve(
+        self,
+        compile_function: Callable,
+        t_ref: Time = None,
+        lazy=True,
+        broker_priority: list = None,
+    ):
+        t_ref = t_ref or Time.now()
+        if lazy and not self.updated and self.compiled_lightcurve is not None:
+            logger.debug(f"{self.objectId}: skip compile, not updated and lazy=True")
+            return
+
+        if compile_function is None:
+            logger.warning("no light curve compiled.")
+            return
+
+        compiled_lightcurve = compile_function(self)
+        compiled_lightcurve.sort_values("jd", inplace=True)
+        compiled_lightcurve.query(f"jd < @t_ref.jd", inplace=True)
+        self.compiled_lightcurve = compiled_lightcurve
+
+    def build_models(
+        self, modeling_functions: List[Callable], t_ref: Time = None, lazy=True
+    ):
+        if lazy and not self.updated:
+            return
+
+        if not isinstance(modeling_functions, list):
+            modeling_functions = [modeling_functions]
+
+        models = {}
+        models_tref = {}
+        for modeling_func in modeling_functions:
+            try:
+                model = modeling_func(self)
+            except Exception as e:
+                logger.warn(
+                    f"error modeling {self.objectId} with {modeling_func.__name__}:"
+                )
+                print(e)
+                model = None
+            # key_name = modeling_function.__name__
+            key_name = model.__class__.__name__
+            models[key_name] = model
+            models_tref[key_name] = t_ref
+        self.models.update(models)
+        self.models_tref.update(models_tref)
+
+    def plot_lightcurve(
+        self,
+        lc_plotting_function: Callable = None,
+        t_ref: Time = None,
+        fig=None,
+        figpath=None,
+    ):
+        t_ref = t_ref or Time.now()
+        if lc_plotting_function is None:
+            lc_plotting_function = default_plot_lightcurve
+        lc_fig = lc_plotting_function(self, t_ref=t_ref, fig=fig)
+        self.latest_lc_fig = lc_fig
+        if figpath is not None:
+            lc_fig.savefig(figpath)
+            self.latest_lc_fig_path = figpath
+        return lc_fig
+
+    def reset_figures(self):
+        self.latest_lc_fig = None
+        self.latest_lc_fig_path = None
+        self.latest_oc_figs = {}
+        self.latest_oc_fig_paths = {}
+
+
+def _check_broker_priority(broker_list):
+    unknown_brokers = []
+    for broker in broker_list:
+        if broker not in Target.default_broker_priority:
+            unknown_brokers.append(broker)
+    if len(unknown_brokers) > 0:
+        raise ValueError(
+            f"unknown brokers {unknown_brokers}: choose from {Target.default_broker_priority}"
+        )
+
+
+lc_gs = plt.GridSpec(3, 4)
+zscaler = ZScaleInterval()
+
+
+def default_plot_lightcurve(
+    target: Target, t_ref: Time = None, fig=None, forecast_days=5.0
+) -> plt.Figure:
+    t_ref = t_ref or Time.now()
+
+    ##======== initialise figure
+    if fig is None:
+        fig = plt.figure(figsize=(8, 4.8))
+        ax = fig.add_subplot(lc_gs[:, :-1])
+    else:
+        ax = fig.axes[0]
+
+    if target.compiled_lightcurve is None:
+        logger.warning(f"{target.objectId} has no compiled lightcurve")
+        return None
+
+    det_kwargs = dict(ls="none", marker="o")
+    ulim_kwargs = dict(ls="none", marker="v", mfc="none")
+    badqual_kwargs = dict(ls="none", marker="o", mfc="none")
+
+    peak_mag_vals = []
+    legend_handles = []
+
+    for ii, (band, band_history) in enumerate(
+        target.compiled_lightcurve.groupby("band")
+    ):
+        band_history.sort_values("jd")
+        band_kwargs = dict(color=f"C{ii%8}")
+
+        scatter_handle = ax.errorbar(
+            0, 0, yerr=0.1, label=band, **band_kwargs, **det_kwargs
+        )
+        legend_handles.append(scatter_handle)
+
+        if "tag" in band_history:
+            detections = band_history.query("tag=='valid'")
+            ulimits = band_history.query("tag=='upperlim'")
+            badqual = band_history.query("tag=='badquality'")
+
+            Npoints = len(band_history)
+            Ndet = len(detections)
+            Nulim = len(ulimits)
+            Nbq = len(badqual)
+
+            if not (Ndet + Nulim + Nbq) == Npoints:
+                msg = f"for band {band} len(det+ulimits+badqual)!=len(df)"
+                msg = msg + f"({Ndet}+{Nulim}+{Nbq}!={Npoints})"
+                logger.warning(msg)
+
+            if len(ulimits) > 0:
+                xdat = ulimits["jd"].values - t_ref.jd
+                ydat = ulimits["diffmaglim"]
+                ax.errorbar(xdat, ydat, **band_kwargs, **ulim_kwargs)
+
+            if len(badqual) > 0:
+                xdat = badqual["jd"].values - t_ref.jd
+                ydat = badqual["mag"].values
+                yerr = badqual["magerr"].values
+                ax.errorbar(xdat, ydat, yerr=yerr, **band_kwargs, **badqual_kwargs)
+        else:
+            detections = band_history
+
+        if any(np.isfinite(detections["mag"])):
+            peak_mag_vals.append(np.nanmin(detections["mag"]))
+
+        if len(detections) > 0:
+            xdat = detections["jd"] - t_ref.jd
+            ydat = detections["mag"]
+            yerr = detections["magerr"]
+            ax.errorbar(xdat, ydat, yerr=yerr, **band_kwargs, **det_kwargs)
+
+    peak_mag_vals.append(16.0)
+    y_bright = np.nanmin(peak_mag_vals)
+    ax.set_ylim(22.0, y_bright)
+    ax.axvline(t_ref.jd - t_ref.jd, color="k")
+
+    legend = ax.legend(handles=legend_handles, loc=2)
+    ax.add_artist(legend)
+
+    title = f"{target.objectId}, ra={target.ra:.4f} dec={target.dec:.5f}"
+    known_redshift = target.tns_data.parameters.get("Redshift", None)
+    if known_redshift is not None:
+        title = title + r" $z_{\rm TNS}=" + f"{known_redshift:.3f}" + "$"
+
+    ax.text(
+        0.5, 1.0, title, fontsize=14, ha="center", va="bottom", transform=ax.transAxes
+    )
+
+    date_str = t_ref.strftime("%d-%m-%y %H%M")
+    xlabel = f"Days before {date_str}"
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Difference magnitude")
+
+    ##======== add postage stamps
+    cutouts = {}
+    for broker in target.broker_priority:
+        source_data = getattr(target, f"{broker}_data", None)
+        if len(source_data.cutouts) == 0:
+            continue
+        cutouts = source_data.cutouts
+
+    for ii, imtype in enumerate(["Science", "Template", "Difference"]):
+        if len(fig.axes) == 4:
+            im_ax = fig.axes[ii + 1]
+        else:
+            im_ax = fig.add_subplot(lc_gs[ii : ii + 1, -1:])
+
+        im_ax.set_xticks([])
+        im_ax.set_yticks([])
+
+        imtext_kwargs = dict(
+            rotation=90, transform=im_ax.transAxes, ha="left", va="center"
+        )
+        im_ax.text(1.02, 0.5, imtype, **imtext_kwargs)
+
+        im = cutouts.get(imtype, None)
+        if im is None:
+            continue
+
+        im_finite = im[np.isfinite(im)]
+
+        vmin, vmax = zscaler.get_limits(im_finite.flatten())
+
+        im_ax.imshow(im, vmin=vmin, vmax=vmax)
+
+        xl_im = len(im.T)
+        yl_im = len(im)
+        # add pointers
+        im_ax.plot([0.5 * xl_im, 0.5 * xl_im], [0.2 * yl_im, 0.4 * yl_im], color="r")
+        im_ax.plot([0.2 * yl_im, 0.4 * yl_im], [0.5 * yl_im, 0.5 * yl_im], color="r")
+    fig.tight_layout()
+    return fig
