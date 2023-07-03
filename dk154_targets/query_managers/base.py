@@ -11,6 +11,10 @@ class BaseQueryManager(abc.ABC):
     def name(self):
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def perform_all_tasks(self):
+        raise NotImplementedError
+
     def process_paths(self, data_path: Path = None, create_paths=True):
         if data_path is None:
             data_path = paths.base_path / paths.default_data_dir
@@ -18,6 +22,7 @@ class BaseQueryManager(abc.ABC):
         self.lightcurves_path = self.parent_data_path / "lightcurves"
         self.alerts_path = self.parent_data_path / "alerts"
         self.probabilities_path = self.parent_data_path / "probabilities"
+        self.parameters_path = self.parent_data_path / "parameters"
         self.magstats_path = self.parent_data_path / "magstats"
         self.query_results_path = self.parent_data_path / "query_results"
         self.cutouts_path = self.parent_data_path / "cutouts"
@@ -26,6 +31,7 @@ class BaseQueryManager(abc.ABC):
             self.lightcurves_path.mkdir(exist_ok=True, parents=True)
             self.alerts_path.mkdir(exist_ok=True, parents=True)
             self.probabilities_path.mkdir(exist_ok=True, parents=True)
+            self.parameters_path.mkdir(exist_ok=True, parents=True)
             self.magstats_path.mkdir(exist_ok=True, parents=True)
             self.query_results_path.mkdir(exist_ok=True, parents=True)
             self.cutouts_path.mkdir(exist_ok=True, parents=True)
@@ -43,7 +49,11 @@ class BaseQueryManager(abc.ABC):
         return alert_dir / f"{candid}.{fmt}"
 
     def get_magstats_dir(self, objectId) -> Path:
-        return self.magstats_path / f"{objectId}"
+        return self.magstats_path  # / f"{objectId}"
+
+    def get_magstats_file(self, objectId) -> Path:
+        magstats_dir = self.get_magstats_dir(objectId)
+        return magstats_dir / f"{objectId}.csv"
 
     def get_lightcurve_file(self, objectId, fmt="csv") -> Path:
         return self.lightcurves_path / f"{objectId}.{fmt}"

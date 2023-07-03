@@ -14,7 +14,7 @@ from dk154_targets import Target
 def prepare_ztf_data(ztf_data: pd.DataFrame):
     ztf_band_lookup = {1: "ztfg", 2: "ztfr", 3: "ztfi"}
     col_map = {"magpsf": "mag", "sigmapsf": "magerr", "fid": "band"}
-    use_cols = ["jd", "magpsf", "sigmapsf", "diffmaglim", "tag"]
+    use_cols = ["mjd", "jd", "magpsf", "sigmapsf", "diffmaglim", "tag"]
 
     avail_cols = [col for col in use_cols if col in ztf_data.columns]
     with pd.option_context("mode.chained_assignment", None):
@@ -44,7 +44,7 @@ def prepare_atlas_data(atlas_data: pd.DataFrame):
         atlas_df.loc[:, "tag"] = pd.Series(tag_data)
 
     atlas_df.rename(atlas_rename, axis=1, inplace=True)
-    use_cols = ["jd", "mag", "magerr", "diffmaglim", "tag", "band"]
+    use_cols = ["mjd", "jd", "mag", "magerr", "diffmaglim", "tag", "band"]
 
     return atlas_df[use_cols]
 
@@ -78,14 +78,13 @@ def default_compile_lightcurve(target: Target):
                 print(e)
                 raise ValueError(f"can't process df:\n{broker_data}")
 
-    else:
-        raise ValueError(f"no broker data for {target.objectId}")
-
     # Get the atlas data
     if target.atlas_data.lightcurve is not None:
         if not target.atlas_data.lightcurve.empty:
             atlas_df = prepare_atlas_data(target.atlas_data.lightcurve)
             lightcurve_dfs.append(atlas_df)
 
-    compiled_lightcurve = pd.concat(lightcurve_dfs)
+    compiled_lightcurve = None
+    if len(lightcurve_dfs) > 0:
+        compiled_lightcurve = pd.concat(lightcurve_dfs)
     return compiled_lightcurve

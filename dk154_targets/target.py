@@ -1,3 +1,4 @@
+import traceback
 import warnings
 from logging import getLogger
 from typing import Callable, List
@@ -14,7 +15,7 @@ from astropy.time import Time
 from astropy.visualization import ZScaleInterval
 
 from astroplan import FixedTarget, Observer
-
+from astroplan.plots import plot_altitude
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -147,7 +148,7 @@ class Target:
     """
 
     default_base_score = 100.0
-    data_sources = ("alerce", "atlas", "fink", "tns")
+    # data_sources = ("alerce", "atlas", "fink", "tns")
     default_broker_priority = ("alerce", "fink", "lasair")
 
     def __init__(
@@ -160,6 +161,7 @@ class Target:
         fink_data: TargetData = None,
         lasair_data: TargetData = None,
         tns_data: TargetData = None,
+        yse_data: TargetData = None,
         base_score: float = None,
         target_of_opportunity: bool = False,
         broker_priority: tuple = None,
@@ -181,9 +183,10 @@ class Target:
         self.fink_data = fink_data or TargetData()
         self.lasair_data = lasair_data or TargetData()
         self.tns_data = tns_data or TargetData()
+        self.yse_data = yse_data or TargetData()
 
         # Observatory data
-        self.observatory_night = {"no_observatory": None}
+        self.observatory_information = {"no_observatory": None}
 
         # Scoring data
         self.models = {}
@@ -214,7 +217,6 @@ class Target:
     def update_coordinates(self, ra, dec):
         self.ra = ra
         self.dec = dec
-        self.coord = None
         if ra is not None and dec is not None:
             self.coord = SkyCoord(ra=ra, dec=dec, unit="deg")
             self.astroplan_target = FixedTarget(self.coord, self.objectId)  # for plots
@@ -231,9 +233,10 @@ class Target:
         Parameters
         ----------
         scoring_function
-            a callable function, which accepts two parameters, `target` and `observatory`:
+            a callable function, which accepts three parameters, `target`, `observatory` and `t_ref`:
                 - `target`: an instance of `Target` (ie, this class). `self` will be passed.
                 - `observatory`: `astroplan.Observer`, or `None`
+                - `t_ref`: an `astropy.time.Time`
             it should return one or three objects:
                 - `score`: a float
                 - `score_comments`: an iterable (list) of strings explaining the score.
@@ -338,36 +341,32 @@ class Target:
             return
 
         compiled_lightcurve = compile_function(self)
-        compiled_lightcurve.sort_values("jd", inplace=True)
-        compiled_lightcurve.query(f"jd < @t_ref.jd", inplace=True)
+        if compiled_lightcurve is not None:
+            compiled_lightcurve.sort_values("jd", inplace=True)
+            compiled_lightcurve.query(f"jd < @t_ref.jd", inplace=True)
         self.compiled_lightcurve = compiled_lightcurve
 
-    def build_models(
-        self, modeling_functions: List[Callable], t_ref: Time = None, lazy=True
-    ):
+    def build_model(self, modeling_function: Callable, t_ref: Time = None, lazy=True):
         if lazy and not self.updated:
             return
 
-        if not isinstance(modeling_functions, list):
-            modeling_functions = [modeling_functions]
-
         models = {}
         models_tref = {}
-        for modeling_func in modeling_functions:
-            try:
-                model = modeling_func(self)
-            except Exception as e:
-                logger.warn(
-                    f"error modeling {self.objectId} with {modeling_func.__name__}:"
-                )
-                print(e)
-                model = None
-            # key_name = modeling_function.__name__
-            key_name = model.__class__.__name__
-            models[key_name] = model
-            models_tref[key_name] = t_ref
+        try:
+            model = modeling_function(self)
+        except Exception as e:
+            logger.warn(
+                f"error modeling {self.objectId} with {modeling_function.__name__}:"
+            )
+            tr = traceback.format_exc()
+            print(tr)
+            model = None
+        key_name = modeling_function.__name__  # model.__class__.__name__
+        models[key_name] = model
+        models_tref[key_name] = t_ref
         self.models.update(models)
         self.models_tref.update(models_tref)
+        return model
 
     def plot_lightcurve(
         self,
@@ -380,16 +379,30 @@ class Target:
         if lc_plotting_function is None:
             lc_plotting_function = default_plot_lightcurve
         lc_fig = lc_plotting_function(self, t_ref=t_ref, fig=fig)
-        self.latest_lc_fig = lc_fig
-        if figpath is not None:
+        # self.latest_lc_fig = lc_fig
+        if figpath is not None and lc_fig is not None:
             lc_fig.savefig(figpath)
             self.latest_lc_fig_path = figpath
         return lc_fig
 
+    def plot_observing_chart(self, observatory, t_ref: Time = None, figpath=None):
+        obs_name = getattr(observatory, "name", "no_observatory")
+        t_ref = t_ref or Time.now()
+
+        try:
+            oc_fig = plot_observing_chart(observatory, self)
+        except Exception as e:
+            print(traceback.format_exc())
+            oc_fig = None
+        if oc_fig is not None and figpath is not None:
+            oc_fig.savefig(figpath)
+            self.latest_oc_fig_paths[obs_name] = figpath
+        return oc_fig
+
     def reset_figures(self):
-        self.latest_lc_fig = None
+        # self.latest_lc_fig = None
         self.latest_lc_fig_path = None
-        self.latest_oc_figs = {}
+        # self.latest_oc_figs = {}
         self.latest_oc_fig_paths = {}
 
 
@@ -409,19 +422,18 @@ zscaler = ZScaleInterval()
 
 
 def default_plot_lightcurve(
-    target: Target, t_ref: Time = None, fig=None, forecast_days=5.0
+    target: Target, t_ref: Time = None, fig=None, forecast_days=10.0
 ) -> plt.Figure:
     t_ref = t_ref or Time.now()
 
     ##======== initialise figure
     if fig is None:
-        fig = plt.figure(figsize=(8, 4.8))
+        fig = plt.figure(figsize=(8, 6))
         ax = fig.add_subplot(lc_gs[:, :-1])
     else:
         ax = fig.axes[0]
 
     if target.compiled_lightcurve is None:
-        logger.warning(f"{target.objectId} has no compiled lightcurve")
         return None
 
     det_kwargs = dict(ls="none", marker="o")
@@ -431,11 +443,14 @@ def default_plot_lightcurve(
     peak_mag_vals = []
     legend_handles = []
 
+    lightcurve_plot_colours = {}
+
     for ii, (band, band_history) in enumerate(
         target.compiled_lightcurve.groupby("band")
     ):
         band_history.sort_values("jd")
         band_kwargs = dict(color=f"C{ii%8}")
+        lightcurve_plot_colours[band] = f"C{ii%8}"
 
         scatter_handle = ax.errorbar(
             0, 0, yerr=0.1, label=band, **band_kwargs, **det_kwargs
@@ -496,10 +511,23 @@ def default_plot_lightcurve(
         0.5, 1.0, title, fontsize=14, ha="center", va="bottom", transform=ax.transAxes
     )
 
-    date_str = t_ref.strftime("%d-%m-%y %H%M")
+    date_str = t_ref.strftime("%d-%b-%y %H:%M")
     xlabel = f"Days before {date_str}"
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Difference magnitude")
+
+    ##======== try sncosmo models
+    model = target.models.get("sncosmo_model")
+    if model is not None:
+        t_start = target.compiled_lightcurve["jd"].min()
+        t_end = t_ref.jd + forecast_days
+        model_time_grid = np.arange(t_start, t_end, 0.1)
+        for band, color in lightcurve_plot_colours.items():
+            # model_mag = model.bandmag(band, "ab", model_time_grid)
+            model_flux = model.bandflux(band, model_time_grid, zp=8.9, zpsys="ab")
+            pos_mask = model_flux > 0.0
+            model_mag = -2.5 * np.log10(model_flux[pos_mask]) + 8.9
+            ax.plot(model_time_grid[pos_mask] - t_ref.jd, model_mag, color=color)
 
     ##======== add postage stamps
     cutouts = {}
@@ -523,7 +551,7 @@ def default_plot_lightcurve(
         )
         im_ax.text(1.02, 0.5, imtype, **imtext_kwargs)
 
-        im = cutouts.get(imtype, None)
+        im = cutouts.get(imtype.lower(), None)
         if im is None:
             continue
 
@@ -539,4 +567,79 @@ def default_plot_lightcurve(
         im_ax.plot([0.5 * xl_im, 0.5 * xl_im], [0.2 * yl_im, 0.4 * yl_im], color="r")
         im_ax.plot([0.2 * yl_im, 0.4 * yl_im], [0.5 * yl_im, 0.5 * yl_im], color="r")
     fig.tight_layout()
+
+    comments = target.score_comments.get("no_observatory", [])
+    if comments is not None:
+        if len(comments) > 0:
+            fig.subplots_adjust(bottom=0.3)
+            text = "score comments:\n" + "\n".join(f"    {comm}" for comm in comments)
+            fig.text(
+                0.01, 0.01, text, ha="left", va="bottom", transform=fig.transFigure
+            )
+    return fig
+
+
+def plot_observing_chart(
+    observatory: Observer,
+    target: Target = None,
+    t_ref=None,
+    fig=None,
+    alt_ax=None,
+    sky_ax=None,
+):
+    t_ref = t_ref or Time.now()
+
+    if fig is None:
+        fig = plt.figure(figsize=(6, 8))
+    if alt_ax is None:
+        alt_ax = fig.add_axes(211)
+    if sky_ax is None:
+        sky_ax = fig.add_axes(212, projection="polar")
+    obs_name = getattr(observatory, "name", None)
+    if observatory is None:
+        return fig
+
+    if target is not None:
+        obs_info = target.observatory_information.get(obs_name, None)
+        t_grid = obs_info.t_grid
+        moon_altaz = obs_info.moon_altaz
+        sun_altaz = obs_info.sun_altaz
+        target_altaz = obs_info.target_altaz
+    else:
+        obs_info = None
+
+    if obs_info is None:
+        t_grid = t_ref + np.linspace(0, 24.0, 24 * 4) * u.hour
+        moon_altaz = observatory.moon_altaz(t_grid)
+        sun_altaz = observatory.sun_altaz(t_grid)
+        obs_info = dict(t_grid=t_grid, moon_altaz=moon_altaz, sun_altaz=sun_altaz)
+
+    alt_ax.plot(t_grid.mjd, moon_altaz.alt.deg, color="0.5", ls="--", label="moon")
+    alt_ax.plot(t_grid.mjd, sun_altaz.alt.deg, color="0.5", ls=":", label="sun")
+    alt_ax.set_ylim(-20, 90)
+    alt_ax.axhline(0, color="k")
+    alt_ax.set_ylabel("Altitude [deg]", fontsize=16)
+    if target is not None:
+        alt_ax.plot(t_grid.mjd, target_altaz.alt.deg, color="b", label="target")
+
+        if all(target_altaz.alt < 30 * u.deg):
+            bad_alt_kwargs = dict(
+                color="red", rotation=45, ha="center", va="center", fontsize=18
+            )
+            text = f"target alt never >30 deg"
+            alt_ax.text(0.5, 0.5, text, transform=alt_ax.transAxes, **bad_alt_kwargs)
+
+    title = f"Observing from {obs_name}"
+    title = title + f"\n starting at {t_ref.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+    title_kwargs = dict(fontsize=14, ha="center", va="bottom")
+    alt_ax.text(0.5, 1.0, title, transform=alt_ax.transAxes, **title_kwargs)
+
+    # sun_alt = = (91 * u.deg - obs.altaz(time, target).alt) * (1/u.deg)
+
+    sky_ax.set_rlim(bottom=90, top=0)
+    sky_ax.plot(sun_altaz.az.rad, sun_altaz.alt.deg, color="0.5", ls=":")
+    sky_ax.plot(moon_altaz.az.rad, moon_altaz.alt.deg, color="0.5", ls="--")
+    if target is not None:
+        sky_ax.plot(target_altaz.az.rad, target_altaz.alt.deg, color="r")
+
     return fig

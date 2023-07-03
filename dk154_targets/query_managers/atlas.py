@@ -61,7 +61,7 @@ class AtlasQueryManager(BaseQueryManager):
         atlas_config,
         target_lookup: Dict[str, Target],
         data_path=None,
-        create_paths=False,
+        create_paths=True,
     ):
         self.atlas_config = atlas_config
         self.target_lookup = target_lookup
@@ -81,7 +81,7 @@ class AtlasQueryManager(BaseQueryManager):
         self.submitted_queries = {}
         self.throttled_queries = []
 
-        self.process_paths()
+        self.process_paths(data_path=data_path, create_paths=create_paths)
 
     def recover_finished_queries(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()

@@ -87,6 +87,7 @@ def target_from_fink_alert(alert: dict, objectId: str, t_ref: Time = None) -> Ta
     if (ra is None) or (dec is None):
         return None
     target = Target(objectId, ra=ra, dec=dec)
+    return target
 
 
 def target_from_fink_lightcurve(
@@ -240,7 +241,7 @@ class FinkQueryManager(BaseQueryManager):
                     if data is None:
                         continue
                     cutout = readstamp(data, return_type="array")
-                    cutouts[imtype] = cutout
+                    cutouts[imtype.lower()] = cutout
                 if len(cutouts) > 0:
                     cutout_file = self.get_cutouts_file(objectId, candidate["candid"])
                     with open(cutout_file, "wb+") as f:
@@ -333,15 +334,18 @@ class FinkQueryManager(BaseQueryManager):
             target = self.target_lookup.get(objectId, None)
             lightcurve = pd.read_csv(lightcurve_file, dtype={"candid": "Int64"})
             # TODO: not optimum to read every time... but not a bottleneck for now.
+            if target is None:
+                target = target_from_fink_lightcurve(lightcurve, objectId)
+                self.target_lookup[objectId] = target
+            else:
+                existing_lightcurve = target.fink_data.lightcurve
+                if existing_lightcurve is not None:
+                    if len(lightcurve) == len(existing_lightcurve):
+                        continue
             lightcurve.sort_values("jd", inplace=True)
-            existing_lightcurve = target.fink_data.lightcurve
-            if existing_lightcurve is None or len(lightcurve) > len(
-                existing_lightcurve
-            ):
-                loaded_lightcurves.append(objectId)
-                target.fink_data.add_lightcurve(lightcurve)
-                target.updated = True
-            # if fink_data.lightcurve.iloc[-1, "candid"]
+            loaded_lightcurves.append(objectId)
+            target.fink_data.add_lightcurve(lightcurve)
+            target.updated = True
         t_end = time.perf_counter()
 
         N_loaded = len(loaded_lightcurves)
@@ -387,6 +391,7 @@ class FinkQueryManager(BaseQueryManager):
                 target.fink_data.lightcurve.to_csv(lightcurve_file, index=False)
 
     def load_cutouts(self):
+        loaded_cutouts = []
         for objectId, target in self.target_lookup.items():
             cutouts_are_None = [
                 im is None for k, im in target.fink_data.cutouts.items()
@@ -398,12 +403,13 @@ class FinkQueryManager(BaseQueryManager):
                     if cutouts_candid == candid:
                         # If the existing cutouts are from this candid,
                         # they must already be the latest (as we're searching in rev.)
-                        break
+                        continue
                     with open(cutouts_file, "rb") as f:
                         cutouts = pickle.load(f)
                     target.fink_data.cutouts = cutouts
                     target.fink_data.meta["cutouts_candid"] = candid
-                    break
+                    loaded_cutouts.append(objectId)
+        logger.info(f"{len(loaded_cutouts)} cutouts loaded")
 
     def apply_messenger_updates(self, alerts):
         for alert in alerts:

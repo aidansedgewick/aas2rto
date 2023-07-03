@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 import sys
 import time
 import warnings
@@ -18,11 +19,13 @@ from astropy.coordinates import EarthLocation
 from astropy.time import Time
 
 from astroplan import Observer
+from astroplan.plots import plot_altitude
 
 from dk154_targets import Target
 from dk154_targets import query_managers
 from dk154_targets import messengers
 from dk154_targets.lightcurve_compilers import default_compile_lightcurve
+from dk154_targets.obs_info import ObservatoryInfo
 from dk154_targets.utils import print_header
 
 from dk154_targets import paths
@@ -49,6 +52,8 @@ class TargetSelector:
     )
 
     default_sleep_time = 600.0
+    default_unranked_value = 9999
+    minimum_score = 0.0
 
     def __init__(self, selector_config: dict):
         # Unpack configs.
@@ -123,7 +128,7 @@ class TargetSelector:
         if "data_path" not in self.paths:
             self.paths["data_path"] = project_path / paths.default_data_dir
         self.data_path = self.paths["data_path"]
-        if "ouputs_path" not in self.paths:
+        if "outputs_path" not in self.paths:
             self.paths["outputs_path"] = project_path / paths.default_outputs_dir
         self.outputs_path = self.paths["outputs_path"]
         if "opp_targets_path" not in self.paths:
@@ -134,6 +139,10 @@ class TargetSelector:
         if "scratch_path" not in self.paths:
             self.paths["scratch_path"] = project_path / paths.default_scratch_dir
         self.scratch_path = self.paths["scratch_path"]
+        self.lc_scratch_path = self.scratch_path / "lc"
+        self.lc_scratch_path.mkdir(exist_ok=True, parents=True)
+        self.oc_scratch_path = self.scratch_path / "oc"
+        self.oc_scratch_path.mkdir(exist_ok=True, parents=True)
         if "existing_targets_file" not in self.paths:
             self.paths["existing_targets_file"] = (
                 self.data_path / "existing_targets.csv"
@@ -168,7 +177,7 @@ class TargetSelector:
             elif qm_name == "tns":
                 raise NotImplementedError(f"{qm_name.capitalize()}QueryManager")
             elif qm_name == "yse":
-                raise NotImplementedError(f"{qm_name.capitalize()}QueryManager")
+                qm = query_managers.YseQueryManager(*qm_args, **qm_kwargs)
             else:
                 # Mainly for testing.
                 logger.warning(f"no known query manager for {qm_name}")
@@ -216,23 +225,40 @@ class TargetSelector:
             raise ValueError(f"obj {target.objectId} already in target_lookup")
         self.target_lookup[target.objectId] = target
 
-    def compute_observatory_nights(
-        self, t_ref: Time = None, horizon: u.Quantity = None
-    ):
+    def compute_observatory_information(self, t_ref: Time = None):
         """
-        save the result of astrolan.Observer().tonight() in each target
-        as it's not a cheap function if computing many times.
+        save the result of astrolan.Observer() functions.
 
         access in a target with eg. `my_target.observatory_nights["lasilla"]`
         """
         t_ref = t_ref or Time.now()
-        horizon = horizon or -18.0 * u.deg
+
         for obs_name, observatory in self.observatories.items():
             if observatory is None:
                 continue
-            tonight = observatory.tonight(t_ref, horizon=horizon)
+
+            t_grid = t_ref + np.linspace(0, 24.0, 24 * 4) * u.hour
+            moon_altaz = observatory.moon_altaz(t_grid)
+            sun_altaz = observatory.sun_altaz(t_grid)
+            try:
+                sunset, sunrise = observatory.tonight(t_ref)
+            except Exception as e:
+                sunset, sunrise = None, None
+
             for objectId, target in self.target_lookup.items():
-                target.observatory_night[obs_name] = tonight
+                target_altaz = observatory.altaz(t_grid, target.coord)
+                observatory_info = ObservatoryInfo(
+                    t_grid=t_grid,
+                    moon_altaz=moon_altaz,
+                    sun_altaz=sun_altaz,
+                    target_altaz=target_altaz,
+                    time_computed=t_ref,
+                    sunset=sunset,
+                    sunrise=sunrise,
+                )
+                target.observatory_information[obs_name] = observatory_info
+                if target.observatory_information[obs_name].target_altaz is None:
+                    logger.warning(f"{objectId} target_altaz not computed correctly")
 
     def check_for_targets_of_opportunity(self):
         logger.info("check for targets of opportunity")
@@ -285,10 +311,16 @@ class TargetSelector:
         if compile_function is None:
             compile_function = default_compile_lightcurve
         logger.info("compile photometric data")
+
+        not_compiled = []
         for objectId, target in self.target_lookup.items():
             target.build_compiled_lightcurve(
                 compile_function=compile_function, t_ref=t_ref
             )
+            if target.compiled_lightcurve is None:
+                not_compiled.append(objectId)
+        if len(not_compiled) > 0:
+            logger.info(f"{len(not_compiled)} have no compiled lightcurve")
 
     def perform_query_manager_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -317,7 +349,10 @@ class TargetSelector:
         """
 
         t_ref = t_ref or Time.now()
+        logger.info(f"evaluate {len(self.target_lookup)} targets")
+        logger.info(f"evaluate with {scoring_function.__name__}")
         for obs_name, observatory in self.observatories.items():
+            logger.info(f"evaluate for {obs_name}")
             self.evaluate_all_targets_at_observatory(
                 scoring_function, observatory, t_ref=t_ref
             )
@@ -346,6 +381,7 @@ class TargetSelector:
 
     def remove_bad_targets(self, t_ref=None):
         t_ref = t_ref or Time.now()
+
         to_remove = []
         for objectId, target in self.target_lookup.items():
             raw_score = target.get_last_score("no_observatory")
@@ -369,20 +405,143 @@ class TargetSelector:
         self, modeling_functions: Callable, t_ref: Time = None, lazy=True
     ):
         t_ref = t_ref or Time.now()
+
         logger.info(f"build models for {len(self.target_lookup)} targets")
+
+        if not isinstance(modeling_functions, list):
+            modeling_functions = [modeling_functions]
+        failed_models = {func.__name__: 0 for func in modeling_functions}
         for objectId, target in self.target_lookup.items():
-            target.build_models(modeling_functions, t_ref=t_ref, lazy=lazy)
+            for func in modeling_functions:
+                target.build_model(func, t_ref=t_ref, lazy=lazy)
+                if target.models.get(func.__name__, None) is None:
+                    failed_models[func.__name__] = failed_models[func.__name__] + 1
+        for func_name, N_failed in failed_models.items():
+            if N_failed > 0:
+                logger.warning(f"{func_name} failed for {N_failed} targets")
 
     def build_lightcurve_plots(
         self, lc_plotting_function: Callable = None, t_ref: Time = None
     ):
-        logger.info(f"build {len(self.target_lookup)} lightcurves")
+        logger.info(f"build {len(self.target_lookup)} lightcurve plots")
         for objectId, target in self.target_lookup.items():
-            figpath = self.scratch_path / f"{objectId}_lc.png"
+            figpath = self.lc_scratch_path / f"{objectId}_lc.png"
             fig = target.plot_lightcurve(
                 lc_plotting_function=lc_plotting_function, t_ref=t_ref, figpath=figpath
             )
             plt.close(fig=fig)
+
+    def build_observing_charts(self, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
+        for obs_name, observatory in self.observatories.items():
+            if observatory is None:
+                continue
+            logger.info(f"build observing charts for {obs_name}")
+            for objectId, target in self.target_lookup.items():
+                figpath = self.oc_scratch_path / f"{objectId}_{obs_name}_oc.png"
+                fig = target.plot_observing_chart(
+                    observatory, t_ref=t_ref, figpath=figpath
+                )
+                plt.close(fig=fig)
+
+    def get_output_plots_dir(self, obs_name, mkdir=True) -> Path:
+        plots_dir = self.outputs_path / f"plots/{obs_name}"
+        if mkdir:
+            plots_dir.mkdir(exist_ok=True, parents=True)
+        return plots_dir
+
+    def get_output_lists_dir(self, mkdir=True) -> Path:
+        ranked_list_dir = self.outputs_path / "ranked_lists"
+        if mkdir:
+            ranked_list_dir.mkdir(exist_ok=True, parents=True)
+        return ranked_list_dir
+
+    def clear_scratch_plots(self):
+        for plot in self.lc_scratch_path.glob("*.png"):
+            os.remove(plot)
+        for plot in self.lc_scratch_path.glob("*.png"):
+            os.remove(plot)
+
+    def clear_output_directories(self):
+        ranked_list_dir = self.get_output_lists_dir(mkdir=True)
+        if ranked_list_dir.exists():
+            for listfile in ranked_list_dir.glob("*.png"):
+                os.remove(listfile)
+        for obs_name, observatory in self.observatories.items():
+            plot_dir = self.get_output_plots_dir(obs_name, mkdir=False)
+            if plot_dir.exists():
+                for plot in plot_dir.glob("*.png"):
+                    os.remove(plot)
+
+    def build_all_ranked_target_lists(
+        self, plots=True, write_list=True, t_ref: Time = None
+    ):
+        t_ref = t_ref or Time.now()
+        for obs_name, observatory in self.observatories.items():
+            self.build_ranked_target_list(
+                observatory, plots=plots, write_list=write_list, t_ref=t_ref
+            )
+
+    def build_ranked_target_list(
+        self, observatory: Observer, plots=True, write_list=True, t_ref: Time = None
+    ):
+        t_ref = t_ref or Time.now()
+
+        obs_name = getattr(observatory, "name", "no_observatory")
+        if obs_name == "no_observatory":
+            assert observatory is None
+
+        logger.info(f"ranked lists for {obs_name}")
+
+        data_list = []
+        for objectId, target in self.target_lookup.items():
+            last_score = target.get_last_score(obs_name)
+            data_list.append(
+                dict(objectId=objectId, score=last_score, ra=target.ra, dec=target.dec)
+            )
+
+        if len(data_list) == 0:
+            logger.warning("no targets in target lookup!")
+            return
+        score_df = pd.DataFrame(data_list)
+        score_df.sort_values("score", inplace=True, ascending=False)
+        score_df.set_index("objectId", inplace=True)
+        score_df["ranking"] = np.arange(1, len(score_df) + 1)
+        negative_score = score_df["score"] < 0.0
+        score_df.loc[negative_score, "rank"] = self.default_unranked_value
+        for objectId, row in score_df.iterrows():
+            target = self.target_lookup[objectId]
+            if obs_name not in target.rank_history:
+                target.rank_history[obs_name] = []
+            target.rank_history[obs_name].append((row.ranking, t_ref))
+
+        score_df.query(f"score>{self.minimum_score}", inplace=True)
+        if write_list:
+            ranked_list_dir = self.get_output_lists_dir()
+            ranked_list_file = ranked_list_dir / f"{obs_name}.csv"
+            score_df.to_csv(ranked_list_file, index=True)
+
+        if plots:
+            for objectId, row in score_df.iterrows():
+                target = self.target_lookup[objectId]
+                self.collect_plots(target, obs_name, row.ranking)
+
+    def collect_plots(self, target: Target, obs_name: str, rank: int):
+        plots_dir = self.get_output_plots_dir(obs_name)
+
+        lcfig_file = target.latest_lc_fig_path
+        if lcfig_file is not None:
+            new_lcfig_filename = f"{int(rank):03d}_{target.objectId}_lc.png"
+            new_lcfig_file = plots_dir / new_lcfig_filename
+            if lcfig_file.exists():
+                shutil.copy2(lcfig_file, new_lcfig_file)
+        ocfig_file = target.latest_oc_fig_paths.get(obs_name, None)
+        if ocfig_file is not None:
+            new_ocfig_filename = f"{int(rank):03d}_{target.objectId}_oc.png"
+            new_ocfig_file = plots_dir / new_ocfig_filename
+            if ocfig_file.exists():
+                shutil.copy2(ocfig_file, new_ocfig_file)
 
     def perform_messaging_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -454,12 +613,14 @@ class TargetSelector:
         t_str = t_ref.strftime("%Y-%m-%d %H:%M:%S")
         print_header(f"iteration at {t_str}")
 
+        self.clear_scratch_plots()
+
         # Get new data
         self.check_for_targets_of_opportunity()
         self.perform_query_manager_tasks(t_ref=t_ref)
 
         # Set some things before modelling and scoring.
-        self.compute_observatory_nights(t_ref=t_ref)
+        self.compute_observatory_information(t_ref=t_ref)
         self.compile_target_lightcurves(
             t_ref=t_ref, compile_function=lightcurve_compile_function
         )
@@ -482,9 +643,15 @@ class TargetSelector:
             f"removed {len(removed_targets)} targets, {len(self.target_lookup)} remain"
         )
 
+        # Plotting
         self.build_lightcurve_plots(
             lc_plotting_function=lc_plotting_function, t_ref=t_ref
         )
+        self.build_observing_charts(t_ref=t_ref)
+
+        # Ranking
+        self.clear_output_directories()  # In prep for the new outputs
+        self.build_all_ranked_target_lists(t_ref=t_ref, plots=True, write_list=True)
 
     def start(
         self,
@@ -527,8 +694,6 @@ class TargetSelector:
 
             self.reset_target_figures()
             self.reset_updated_targets()
-
-            asdasds
 
             if existing_targets:
                 self.write_existing_target_list()
