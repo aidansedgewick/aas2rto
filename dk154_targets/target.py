@@ -572,8 +572,6 @@ def default_plot_lightcurve(
         cutouts = source_data.cutouts
         break
 
-    print(source_data)
-
     for ii, imtype in enumerate(["Science", "Template", "Difference"]):
         if len(fig.axes) == 4:
             im_ax = fig.axes[ii + 1]

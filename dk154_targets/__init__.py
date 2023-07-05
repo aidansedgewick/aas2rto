@@ -1,4 +1,5 @@
 import logging.config
+import os
 
 import yaml
 
@@ -12,3 +13,6 @@ if default_logging_config.exists():
     with open(default_logging_config, "rt") as f:
         log_config = yaml.safe_load(f.read())
     logging.config.dictConfig(log_config)
+
+if os.environ.get("PYTEST_CURRENT_TEST"):
+    paths.build_test_path()

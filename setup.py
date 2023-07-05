@@ -12,8 +12,6 @@ setup(
     packages=find_packages(),
 )
 
-from dk154_targets.paths import build_paths
 from dk154_targets.utils import init_sfd_dustmaps
 
-build_paths()
 init_sfd_dustmaps()

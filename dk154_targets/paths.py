@@ -15,6 +15,5 @@ test_path = base_path / "test_dk154_targets"
 test_data_path = wkdir / "test_data"
 
 
-def build_paths():
-    config_path.mkdir(exist_ok=True, parents=True)
+def build_test_path():
     test_data_path.mkdir(exist_ok=True, parents=True)
