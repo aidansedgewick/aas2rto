@@ -29,6 +29,12 @@ jobs:
         python3 -m pip install --upgrade pip
         python3 -m pip install flake8 pytest setuptools
         # if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Build and source env
+      run: |
+        python3 -m pip install virtualenv
+        python3 -m virtualenv dk154_env
+        source dk154_env/bin/activate
+        python3 -m pip install flake8 pytest setuptools
     - name: Install extra dependencies
       run: |
         python3 -m pip install -r requirements.txt
