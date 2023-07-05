@@ -30,6 +30,6 @@ from dk154_targets.query_managers.lasair import (
     target_from_lasair_lightcurve,
 )
 
-from dk154_targets.query_managers.yse import (
-    YseQueryManager,
-)
+# from dk154_targets.query_managers.yse import (
+#     YseQueryManager,
+# )
