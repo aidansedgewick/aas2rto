@@ -1,6 +1,19 @@
 astroplan
 astropy
 black
+dustmaps
+matplotlib
 numpy
 pandas
 pyyaml
+scipy
+
+# messengers
+python-telegram-bot==13.12
+slack_sdk
+
+# brokers
+fink_client
+lasair
+alerce
+
