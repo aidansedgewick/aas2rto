@@ -8,6 +8,7 @@ numpy
 pandas
 pyyaml
 scipy
+sncosmo
 
 # messengers
 python-telegram-bot==13.12
