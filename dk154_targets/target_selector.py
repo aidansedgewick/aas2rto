@@ -225,7 +225,9 @@ class TargetSelector:
             raise ValueError(f"obj {target.objectId} already in target_lookup")
         self.target_lookup[target.objectId] = target
 
-    def compute_observatory_information(self, t_ref: Time = None):
+    def compute_observatory_info(
+        self, t_ref: Time = None, horizon: u.Quantity = -18 * u.deg
+    ):
         """
         save the result of astrolan.Observer() functions.
 
@@ -237,27 +239,17 @@ class TargetSelector:
             if observatory is None:
                 continue
 
-            t_grid = t_ref + np.linspace(0, 24.0, 24 * 4) * u.hour
-            moon_altaz = observatory.moon_altaz(t_grid)
-            sun_altaz = observatory.sun_altaz(t_grid)
-            try:
-                sunset, sunrise = observatory.tonight(t_ref)
-            except Exception as e:
-                sunset, sunrise = None, None
+            obs_info = ObservatoryInfo.from_observatory(
+                observatory, t_ref=t_ref, horizon=horizon
+            )
 
             for objectId, target in self.target_lookup.items():
-                target_altaz = observatory.altaz(t_grid, target.coord)
-                observatory_info = ObservatoryInfo(
-                    t_grid=t_grid,
-                    moon_altaz=moon_altaz,
-                    sun_altaz=sun_altaz,
-                    target_altaz=target_altaz,
-                    time_computed=t_ref,
-                    sunset=sunset,
-                    sunrise=sunrise,
-                )
-                target.observatory_information[obs_name] = observatory_info
-                if target.observatory_information[obs_name].target_altaz is None:
+                target_obs_info = obs_info.copy()
+                assert target_obs_info.target_altaz is None
+                target_altaz = observatory.altaz(obs_info.t_grid, target.coord)
+                target_obs_info.target_altaz = target_altaz
+                target.observatory_info[obs_name] = target_obs_info
+                if target.observatory_info[obs_name].target_altaz is None:
                     logger.warning(f"{objectId} target_altaz not computed correctly")
 
     def check_for_targets_of_opportunity(self):
@@ -620,7 +612,7 @@ class TargetSelector:
         self.perform_query_manager_tasks(t_ref=t_ref)
 
         # Set some things before modelling and scoring.
-        self.compute_observatory_information(t_ref=t_ref)
+        self.compute_observatory_info(t_ref=t_ref)
         self.compile_target_lightcurves(
             t_ref=t_ref, compile_function=lightcurve_compile_function
         )

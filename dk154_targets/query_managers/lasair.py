@@ -140,9 +140,6 @@ class LasairQueryManager(BaseQueryManager):
             logger.info(f"received {len(new_alerts)} {topic} alerts")
         return new_alerts
 
-    def get_consumer_args(self):
-        return
-
     def read_simulated_alerts(self, t_ref: Time = None) -> List[Dict]:
         t_ref = t_ref or Time.now()
         raise NotImplementedError

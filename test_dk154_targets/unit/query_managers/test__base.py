@@ -9,6 +9,9 @@ from dk154_targets import paths
 class ExampleQueryManager(BaseQueryManager):
     name = "example_qm"
 
+    def perform_all_tasks(self):
+        pass
+
 
 class Test__BaseQueryManager:
     @classmethod
@@ -18,6 +21,7 @@ class Test__BaseQueryManager:
         exp_alerts_path = paths.test_data_path / f"{name}/alerts"
         exp_query_results_path = paths.test_data_path / f"{name}/query_results"
         exp_probabilities_path = paths.test_data_path / f"{name}/probabilities"
+        exp_parameters_path = paths.test_data_path / f"{name}/parameters"
         exp_magstats_path = paths.test_data_path / f"{name}/magstats"
         exp_cutouts_path = paths.test_data_path / f"{name}/cutouts"
 
@@ -26,6 +30,7 @@ class Test__BaseQueryManager:
             exp_alerts_path,
             exp_query_results_path,
             exp_probabilities_path,
+            exp_parameters_path,
             exp_magstats_path,
             exp_cutouts_path,
         ]:

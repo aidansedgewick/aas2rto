@@ -67,16 +67,12 @@ def default_compile_lightcurve(target: Target):
         if "mjd" in broker_data.columns and "jd" not in broker_data.columns:
             broker_data["jd"] = Time(broker_data["mjd"].values, format="mjd").jd
 
-        if target.objectId.startswith("ZTF"):
-            ztf_data = prepare_ztf_data(broker_data)
-            lightcurve_dfs.append(ztf_data)
-        else:
-            try:
-                broker_data = prepare_ztf_data(broker_data)
-                lightcurve_dfs.append(broker_data)
-            except Exception as e:
-                print(e)
-                raise ValueError(f"can't process df:\n{broker_data}")
+        try:
+            broker_data = prepare_ztf_data(broker_data)
+            lightcurve_dfs.append(broker_data)
+        except Exception as e:
+            print(e)
+            raise ValueError(f"can't process df:\n{broker_data}")
 
     # Get the atlas data
     if target.atlas_data.lightcurve is not None:
@@ -86,5 +82,6 @@ def default_compile_lightcurve(target: Target):
 
     compiled_lightcurve = None
     if len(lightcurve_dfs) > 0:
-        compiled_lightcurve = pd.concat(lightcurve_dfs)
+        compiled_lightcurve = pd.concat(lightcurve_dfs, ignore_index=True)
+        compiled_lightcurve.sort_values("jd", inplace=True)
     return compiled_lightcurve

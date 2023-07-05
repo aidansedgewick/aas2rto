@@ -1,7 +1,7 @@
 import traceback
 import warnings
 from logging import getLogger
-from typing import Callable, List
+from typing import Callable, Dict, List
 
 import numpy as np
 
@@ -46,7 +46,10 @@ class TargetData:
             self.non_detections = None
         self.probabilities = probabilities
         self.parameters = parameters or {}
-        self.cutouts = cutouts or {}
+
+        self.cutouts = self.empty_cutouts()
+        cutouts = cutouts or {}
+        self.cutouts.update(cutouts)
 
     def add_lightcurve(
         self, lightcurve: pd.DataFrame, tag_col="tag", include_badqual=True
@@ -79,6 +82,9 @@ class TargetData:
             self.detections = self.lightcurve
             self.non_detections = None
         return
+
+    def empty_cutouts(self) -> Dict[str, np.ndarray]:
+        return {}
 
     def integrate_lightcurve_updates(
         self,
@@ -186,7 +192,7 @@ class Target:
         self.yse_data = yse_data or TargetData()
 
         # Observatory data
-        self.observatory_information = {"no_observatory": None}
+        self.observatory_info = {"no_observatory": None}
 
         # Scoring data
         self.models = {}
@@ -347,6 +353,32 @@ class Target:
         self.compiled_lightcurve = compiled_lightcurve
 
     def build_model(self, modeling_function: Callable, t_ref: Time = None, lazy=True):
+        """
+        Build a target model and store it, so you can access it later for storing/
+        plotting, etc.
+
+        >>> from my_modeling_functions import amazing_sn_model
+        >>> my_model = target.build_model(amazing_sn_model)
+
+        you can also then access with
+        >>> my_model = target.models["amazing_sn_model"]
+        >>> t_built = target.models_tref["amazing_sn_model"]
+        >>> print(f"{type(my_model)} model built at {t_built.isot}")
+        SuperAmazingSupernovae model built at 2023-02-25T00:00:00.000
+
+        Parameters
+        ----------
+        modeling_function
+            your function, which should accept one argument, `Target` and return
+            a model (which you can access later)
+        t_ref
+            an `astropy.time.Time`
+        lazy
+            if `True`, only build models for targets which have `target.updated=True`
+
+        """
+        t_ref = t_ref or Time.now()
+
         if lazy and not self.updated:
             return
 
@@ -370,8 +402,8 @@ class Target:
 
     def plot_lightcurve(
         self,
-        lc_plotting_function: Callable = None,
         t_ref: Time = None,
+        lc_plotting_function: Callable = None,
         fig=None,
         figpath=None,
     ):
@@ -390,7 +422,7 @@ class Target:
         t_ref = t_ref or Time.now()
 
         try:
-            oc_fig = plot_observing_chart(observatory, self)
+            oc_fig = plot_observing_chart(observatory, self, t_ref=t_ref)
         except Exception as e:
             print(traceback.format_exc())
             oc_fig = None
@@ -434,7 +466,7 @@ def default_plot_lightcurve(
         ax = fig.axes[0]
 
     if target.compiled_lightcurve is None:
-        return None
+        return fig
 
     det_kwargs = dict(ls="none", marker="o")
     ulim_kwargs = dict(ls="none", marker="v", mfc="none")
@@ -533,9 +565,14 @@ def default_plot_lightcurve(
     cutouts = {}
     for broker in target.broker_priority:
         source_data = getattr(target, f"{broker}_data", None)
+        if source_data is None:
+            continue
         if len(source_data.cutouts) == 0:
             continue
         cutouts = source_data.cutouts
+        break
+
+    print(source_data)
 
     for ii, imtype in enumerate(["Science", "Template", "Difference"]):
         if len(fig.axes) == 4:
@@ -558,7 +595,6 @@ def default_plot_lightcurve(
         im_finite = im[np.isfinite(im)]
 
         vmin, vmax = zscaler.get_limits(im_finite.flatten())
-
         im_ax.imshow(im, vmin=vmin, vmax=vmax)
 
         xl_im = len(im.T)
@@ -586,6 +622,7 @@ def plot_observing_chart(
     fig=None,
     alt_ax=None,
     sky_ax=None,
+    warn=True,
 ):
     t_ref = t_ref or Time.now()
 
@@ -596,23 +633,36 @@ def plot_observing_chart(
     if sky_ax is None:
         sky_ax = fig.add_axes(212, projection="polar")
     obs_name = getattr(observatory, "name", None)
+
     if observatory is None:
         return fig
 
+    obs_info = None
     if target is not None:
-        obs_info = target.observatory_information.get(obs_name, None)
-        t_grid = obs_info.t_grid
-        moon_altaz = obs_info.moon_altaz
-        sun_altaz = obs_info.sun_altaz
-        target_altaz = obs_info.target_altaz
-    else:
-        obs_info = None
+        obs_info = target.observatory_info.get(obs_name, None)
+        if obs_info is not None:
+            t_grid = obs_info.t_grid
+            moon_altaz = obs_info.moon_altaz
+            sun_altaz = obs_info.sun_altaz
+            target_altaz = obs_info.target_altaz
 
     if obs_info is None:
         t_grid = t_ref + np.linspace(0, 24.0, 24 * 4) * u.hour
         moon_altaz = observatory.moon_altaz(t_grid)
         sun_altaz = observatory.sun_altaz(t_grid)
         obs_info = dict(t_grid=t_grid, moon_altaz=moon_altaz, sun_altaz=sun_altaz)
+        if target is not None:
+            if warn:
+                msg = (
+                    "You're computing info for plotting each target. This is expensive. "
+                    " You should call `selector.compute_observatory_info(t_ref=<Time>)` "
+                    + "before scoring/plotting"
+                    + "which is less expensive as it precomputes this information, and saves it"
+                    + "In each target. You can then access the info as "
+                    + "`my_target.observatory_info[<obs-name>]`"
+                )
+                logger.warning(msg)
+            target_altaz = observatory.altaz(t_grid, target)
 
     alt_ax.plot(t_grid.mjd, moon_altaz.alt.deg, color="0.5", ls="--", label="moon")
     alt_ax.plot(t_grid.mjd, sun_altaz.alt.deg, color="0.5", ls=":", label="sun")

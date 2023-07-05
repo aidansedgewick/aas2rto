@@ -5,6 +5,7 @@ import numpy as np
 
 import pandas as pd
 
+from dk154_targets import query_managers
 from dk154_targets.query_managers.exc import BadKafkaConfigError
 from dk154_targets.query_managers.lasair import (
     LasairQueryManager,
@@ -42,12 +43,26 @@ def example_config(client_config, kafka_config, query_parameters):
     }
 
 
+class MockLasairConsumer:
+    def __init__(self, **kwargs):
+        pass
+
+    def poll(self, **kwargs):
+        pass
+
+
+@pytest.fixture
+def mock_lasair_consumer():
+    return MockLasairConsumer()
+
+
 class Test__LasairQueryManager:
     exp_lasair_path = paths.test_data_path / "lasair"
     exp_lightcurves_path = paths.test_data_path / "lasair/lightcurves"
     exp_alerts_path = paths.test_data_path / "lasair/alerts"
     exp_query_results_path = paths.test_data_path / "lasair/query_results"
     exp_probabilities_path = paths.test_data_path / "lasair/probabilities"
+    exp_parameters_path = paths.test_data_path / "lasair/parameters"
     exp_magstats_path = paths.test_data_path / "lasair/magstats"
     exp_cutouts_path = paths.test_data_path / "lasair/cutouts"
 
@@ -58,6 +73,7 @@ class Test__LasairQueryManager:
             cls.exp_alerts_path,
             cls.exp_query_results_path,
             cls.exp_probabilities_path,
+            cls.exp_parameters_path,
             cls.exp_magstats_path,
             cls.exp_cutouts_path,
         ]:
@@ -174,4 +190,14 @@ class Test__LasairQueryManager:
         with pytest.raises(BadKafkaConfigError):
             qm = LasairQueryManager(
                 config3, {}, data_path=paths.test_data_path, create_paths=False
+            )
+
+    def test__listen_for_alerts(self, mock_lasair_consumer, monkeypatch):
+        config = {}
+        qm = LasairQueryManager(config, {}, data_path=paths.test_data_path)
+
+        with monkeypatch.context() as m:
+            m.setattr(
+                "dk154_targets.query_managers.lasair.lasair_consumer",
+                MockLasairConsumer,
             )

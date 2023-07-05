@@ -74,6 +74,24 @@ def target_from_alerce_lightcurve(
     return target
 
 
+def process_query_results(query_updates: pd.DataFrame):
+    query_updates.sort_values(["oid", "lastmjd"], inplace=True)
+    query_updates.drop_duplicates(subset="oid", keep="last", inplace=True)
+    query_updates.set_index("oid", verify_integrity=True, inplace=True)
+    return query_updates
+
+
+def cutouts_from_fits(cutouts_file: Path) -> Dict[str, np.ndarray]:
+    cutouts = {}
+    with fits.open(cutouts_file) as hdul:
+        for ii, hdu in enumerate(hdul):
+            imtype = hdu.header["STAMP_TYPE"]
+            if imtype not in AlerceQueryManager.expected_cutout_types:
+                logger.warning(f"{oid} stamp HDU{ii} has type '{imtype}'")
+            cutouts[imtype] = hdu.data
+    return cutouts
+
+
 class AlerceQueryManager(BaseQueryManager):
     name = "alerce"
     default_query_parameters = {
@@ -85,7 +103,7 @@ class AlerceQueryManager(BaseQueryManager):
         "max_failed_queries": 10,  # after X failed queries, stop trying
         "max_total_query_time": 300,  # total time to spend in each stage seconds
     }
-    expected_cutout_type = ("science", "template", "difference")
+    expected_cutout_types = ("science", "template", "difference")
 
     def __init__(
         self,
@@ -117,56 +135,9 @@ class AlerceQueryManager(BaseQueryManager):
 
         self.process_paths(data_path=data_path, create_paths=create_paths)
 
-    def query_for_updates(self, t_ref: Time = None) -> pd.DataFrame:
-        t_ref = t_ref or Time.now()
-
-        for query_name, query_pattern in self.object_queries.items():
-            query_results_file = self.get_query_results_file(query_name)
-            results_file_age = calc_file_age(
-                query_results_file, t_ref, allow_missing=True
-            )
-            if results_file_age < self.query_parameters["interval"]:
-                if query_results_file.stat().st_size > 1:
-                    logger.debug(f"reading {query_results_file.name}")
-                    query_updates = pd.read_csv(query_results_file)
-                    if query_updates.empty:
-                        continue
-                    query_updates.sort_values(["oid", "lastmjd"], inplace=True)
-                    query_updates.drop_duplicates(
-                        subset="oid", keep="last", inplace=True
-                    )
-                    self.query_updates[query_name] = query_updates.set_index(
-                        "oid", verify_integrity=True
-                    )
-                    # It's fine that we don't make the query now (ie, don't go to "else:")
-                    # we just assume that there were no results if the file is tiny.
-                else:
-                    continue
-            else:
-                # if we need to make the query...
-                logger.info(f"query for {query_name}")
-                t_start = time.perf_counter()
-                query_updates = self.query_and_collate_pages(
-                    query_name, query_pattern, t_ref
-                )
-                if query_updates is None:
-                    continue
-                if query_updates.empty:
-                    query_updates.to_csv(query_results_file, index=False)
-                    continue
-                query_updates.sort_values(["oid", "lastmjd"], inplace=True)
-                query_updates.drop_duplicates(subset="oid", keep="first", inplace=True)
-                query_updates.to_csv(query_results_file, index=False)
-                self.query_updates[query_name] = query_updates.set_index(
-                    "oid", verify_integrity=True
-                )
-                t_end = time.perf_counter()
-                logger.info(
-                    f"{query_name} returned {len(query_updates)} in {t_end-t_start:.1f}s"
-                )
-                self.query_results_updated = True
-
-    def query_and_collate_pages(self, query_name, query_pattern, t_ref):
+    def query_and_collate_pages(
+        self, query_name, query_pattern, t_ref, delete_pages=True
+    ):
         page_results_list = []
         page_results_file_list = []
         page = 1
@@ -197,9 +168,51 @@ class AlerceQueryManager(BaseQueryManager):
         query_results = None
         if len(page_results_list) > 0:
             query_results = pd.concat(page_results_list)
-            for page_results_file in page_results_file_list:
-                os.remove(page_results_file)  # Don't need to keep page results.
+            if delete_pages:
+                for page_results_file in page_results_file_list:
+                    os.remove(page_results_file)  # Don't need to keep page results.
         return query_results
+
+    def query_for_updates(self, t_ref: Time = None) -> pd.DataFrame:
+        t_ref = t_ref or Time.now()
+
+        for query_name, query_pattern in self.object_queries.items():
+            query_results_file = self.get_query_results_file(query_name)
+            results_file_age = calc_file_age(
+                query_results_file, t_ref, allow_missing=True
+            )
+            if results_file_age < self.query_parameters["interval"]:
+                if query_results_file.stat().st_size > 1:
+                    logger.debug(f"reading {query_results_file.name}")
+                    raw_query_updates = pd.read_csv(query_results_file)
+                    if raw_query_updates.empty:
+                        continue
+                    query_updates = process_query_results(raw_query_updates)
+                    self.query_updates[query_name] = query_updates
+                    # It's fine that we don't make the query now (ie, don't go to "else:")
+                    # we just assume that there were no results if the file is tiny.
+                else:
+                    continue
+            else:
+                # if we need to make the query...
+                logger.info(f"query for {query_name}")
+                t_start = time.perf_counter()
+                raw_query_updates = self.query_and_collate_pages(
+                    query_name, query_pattern, t_ref
+                )
+                if raw_query_updates is None:
+                    continue
+                if raw_query_updates.empty:
+                    raw_query_updates.to_csv(query_results_file, index=False)
+                    continue
+                raw_query_updates.to_csv(query_results_file, index=False)
+                query_updates = process_query_results(raw_query_updates)
+                self.query_updates[query_name] = query_updates
+                t_end = time.perf_counter()
+                logger.info(
+                    f"{query_name} returned {len(query_updates)} in {t_end-t_start:.1f}s"
+                )
+                self.query_results_updated = True
 
     def prepare_query_data(self, query_pattern: dict, page: int, t_ref: Time):
         query_data = dict(
@@ -218,7 +231,7 @@ class AlerceQueryManager(BaseQueryManager):
             oid_list = list(self.target_lookup.keys())
 
         old_magstats = []
-        for oid, target in self.target_lookup.items():
+        for oid in oid_list:
             magstats_file = self.get_magstats_file(oid)
             magstats_file_age = calc_file_age(magstats_file, t_ref, allow_missing=True)
             if magstats_file_age > self.query_parameters["interval"]:
@@ -234,8 +247,8 @@ class AlerceQueryManager(BaseQueryManager):
 
         t_start = time.perf_counter()
         for oid in oid_list:
-            if len(failed) > self.query_parameters["max_failed_queries"]:
-                msg = f"Too many failed magstats queries ({N_failed}). Stop for now."
+            if len(failed) >= self.query_parameters["max_failed_queries"]:
+                msg = f"Too many failed magstats queries ({len(failed)}). Stop for now."
                 logger.info(msg)
                 break
             logger.debug(f"magstats query for {oid}")
@@ -244,6 +257,7 @@ class AlerceQueryManager(BaseQueryManager):
                 success.append(oid)
             except Exception as e:
                 failed.append(oid)
+                print(f"failed", e)
                 continue
             magstats_file = self.get_magstats_file(oid)
             magstats.to_csv(magstats_file)
@@ -260,6 +274,7 @@ class AlerceQueryManager(BaseQueryManager):
 
         update_dfs = []
         for query_name, updated_results in self.query_updates.items():
+            # updated_results.sort_values(["oid", "lastmjd"], inplace=True)
             updated_targets = []
             existing_results = self.query_results.get(query_name, None)
             if existing_results is None:
@@ -267,8 +282,8 @@ class AlerceQueryManager(BaseQueryManager):
                 logger.info(
                     f"no existing {query_name} results, use updates {len(updated_results)}"
                 )
-                update_dfs = []
                 continue
+            # existing_results.sort_values(["oid", "lastmjd"], inplace=True)
             for oid, updated_row in updated_results.iterrows():
                 if oid in existing_results.index:
                     existing_row = existing_results.loc[oid]
@@ -277,11 +292,12 @@ class AlerceQueryManager(BaseQueryManager):
                 else:
                     updated_targets.append(oid)
             self.query_results[query_name] = updated_results
-            updated = updated_results[updated_targets]
+            updated = updated_results.loc[updated_targets]
             update_dfs.append(updated)
 
         if len(update_dfs) > 0:
-            alerce_updates = updated_results.loc[updated_targets]
+            # alerce_updates = updated_results.loc[updated_targets]
+            alerce_updates = pd.concat(update_dfs)
             logger.info(f"{len(alerce_updates)} alerce targets updates")
         else:
             alerce_updates = None
@@ -305,7 +321,7 @@ class AlerceQueryManager(BaseQueryManager):
         return new_targets
 
     def get_lightcurves_to_query(
-        self, oid_list: List[str] = None, t_ref: Time = None, magstats_requrement=True
+        self, oid_list: List[str] = None, t_ref: Time = None, require_magstats=True
     ):
         """
         returns a list of objectId which have alerce lightcurves are older than
@@ -318,7 +334,7 @@ class AlerceQueryManager(BaseQueryManager):
 
         old_lightcurve_list = []
         for oid in oid_list:
-            if magstats_requrement:
+            if require_magstats:
                 valid_magstats = self.check_valid_magstats(oid)
                 if not valid_magstats:
                     continue
@@ -345,14 +361,14 @@ class AlerceQueryManager(BaseQueryManager):
     def perform_lightcurve_queries(self, oid_list, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        successful_queries = []
-        N_failed = 0
+        success = []
+        failed = []
         logger.info(f"attempt {len(oid_list)} lightcurve queries")
         t_start = time.perf_counter()
-        for oid in set(oid_list):
+        for oid in oid_list:
             lightcurve_file = self.get_lightcurve_file(oid)
-            if N_failed > self.query_parameters["max_failed_queries"]:
-                msg = f"Too many failed queries ({N_failed}), stop for now"
+            if len(failed) >= self.query_parameters["max_failed_queries"]:
+                msg = f"Too many failed queries ({len(failed)}), stop for now"
                 logger.info(msg)
                 break
             t_now = time.perf_counter()
@@ -368,7 +384,7 @@ class AlerceQueryManager(BaseQueryManager):
             except Exception as e:
                 print(e)
                 logger.warning(f"{oid} lightcurve query failed")
-                N_failed = N_failed + 1
+                failed.append(oid)
                 continue
 
             try:
@@ -379,46 +395,16 @@ class AlerceQueryManager(BaseQueryManager):
             if lightcurve_file.exists():
                 existing_lightcurve = pd.read_csv(lightcurve_file)
             lightcurve.to_csv(lightcurve_file, index=False)
-            successful_queries.append(oid)
+            success.append(oid)
 
-        N_success = len(successful_queries)
+        N_success = len(success)
+        N_failed = len(failed)
         if N_success > 0 or N_failed > 0:
             t_end = time.perf_counter()
             logger.info(f"lightcurve queries in {t_end - t_start:.1f}s")
             logger.info(f"{N_success} successful, {N_failed} failed lc queries")
 
-        return successful_queries
-
-    def load_target_lightcurves(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        loaded_lightcurves = []
-        missing_lightcurves = []
-        t_start = time.perf_counter()
-
-        for objectId, target in self.target_lookup.items():
-            lightcurve_file = self.get_lightcurve_file(objectId)
-            if not lightcurve_file.exists():
-                missing_lightcurves.append(objectId)
-                continue
-            target = self.target_lookup.get(objectId, None)
-            lightcurve = pd.read_csv(lightcurve_file, dtype={"candid": "Int64"})
-            # TODO: not optimum to read every time... but not a bottleneck for now.
-            lightcurve.sort_values("jd", inplace=True)
-            existing_lightcurve = target.fink_data.lightcurve
-            if existing_lightcurve is None or (
-                len(lightcurve) > len(existing_lightcurve)
-            ):
-                loaded_lightcurves.append(objectId)
-                target.fink_data.add_lightcurve(lightcurve)
-                target.updated = True
-            # if fink_data.lightcurve.iloc[-1, "candid"]
-        t_end = time.perf_counter()
-
-        N_loaded = len(loaded_lightcurves)
-        if N_loaded > 0:
-            logger.info(f"loaded {N_loaded} lightcurves in {t_end-t_start:.1f}s")
-        return loaded_lightcurves, missing_lightcurves
+        return success, failed
 
     def load_target_lightcurves(self, oid_list=None, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -476,19 +462,23 @@ class AlerceQueryManager(BaseQueryManager):
         t_ref = t_ref or Time.now()
 
         logger.info(f"attempt {len(oid_list)} cutouts queries")
-        successful_queries = []
-        N_failed = 0
+        success = []
+        failed = []
         t_start = time.perf_counter()
-        for oid in set(oid_list):
-            if N_failed > self.query_parameters["max_failed_queries"]:
-                msg = f"Too many failed queries ({N_failed}), stop for now"
+        for oid in oid_list:
+            if len(failed) >= self.query_parameters["max_failed_queries"]:
+                msg = f"Too many failed queries ({len(failed)}), stop for now"
                 logger.info(msg)
                 break
             t_now = time.perf_counter()
             if t_now - t_start > self.query_parameters["max_total_query_time"]:
                 logger.info(f"querying time ({t_now - t_start:.1f}s) exceeded max")
                 break
-            target = self.target_lookup[oid]
+            target = self.target_lookup.get(oid, None)
+            if target is None:
+                logger.warning(f"stamp_query for {oid}: not in target_lookup!")
+                failed.append(oid)
+                continue
 
             candid = None
             if target.alerce_data.detections is not None:
@@ -501,19 +491,20 @@ class AlerceQueryManager(BaseQueryManager):
             try:
                 cutouts = self.alerce_broker.get_stamps(oid, candid=candid)
             except Exception as e:
-                N_failed = N_failed + 1
+                failed.append(oid)
                 continue
             cutout_file = self.get_cutouts_file(oid, candid, fmt="fits")
             target.alerce_data.meta["cutouts_candid"] = candid
             cutouts.writeto(cutout_file, overwrite=True)
-            successful_queries.append(oid)
+            success.append(oid)
 
-        N_success = len(successful_queries)
+        N_success = len(success)
+        N_failed = len(failed)
         if N_success > 0 or N_failed > 0:
             t_end = time.perf_counter()
             logger.info(f"cutouts queries in {t_end - t_start:.1f}s")
             logger.info(f"{N_success} successful, {N_failed} failed cutouts queries")
-        return successful_queries
+        return success, failed
 
     def load_cutouts(self, oid_list: List = None, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -524,24 +515,27 @@ class AlerceQueryManager(BaseQueryManager):
         loaded_cutouts = []
         missing_cutouts = []
         t_start = time.perf_counter()
-        for oid in oid_list:
-            target = self.target_lookup.get(oid, None)
-            if target is None:
-                logger.warning(f"{oid} not in alerce target_lookup")
+        for oid, target in self.target_lookup.items():
+            if target.alerce_data.detections is None:
                 continue
-            candid = target.alerce_data.meta.get("cutouts_candid", None)
-            cutouts_file = self.get_cutouts_file(oid, candid, fmt="fits")
-            if not cutouts_file.exists():
-                missing_cutouts.append(oid)
-                continue
-            with fits.open(cutouts_file) as hdul:
-                for ii, hdu in enumerate(hdul):
-                    cutout_type = hdu.header["STAMP_TYPE"]
-                    if cutout_type not in self.expected_cutout_type:
-                        logger.warning(f"{oid} stamp HDU{ii} has type '{cutout_type}'")
-                    cutout_data = hdu.data
-                    target.alerce_data.cutouts[cutout_type] = cutout_data
+
+            cutouts = {}
+            cutouts_candid = target.alerce_data.meta.get("cutouts_candid", None)
+            for candid in target.alerce_data.detections["candid"][::-1]:
+                cutouts_file = self.get_cutouts_file(oid, candid, fmt="fits")
+                if cutouts_candid == candid:
+                    # If the existing cutouts are from this candid,
+                    # they must already be the latest (as we're searching in rev.)
+                    break
+                if cutouts_file.exists():
+                    cutouts = cutouts_from_fits(cutouts_file)
+                    break
+            if len(cutouts) == 3:
+                target.alerce_data.cutouts.update(cutouts)
+                target.alerce_data.meta["cutouts_candid"] = candid
                 loaded_cutouts.append(oid)
+            if len(target.alerce_data.cutouts) == 0:
+                missing_cutouts.append(oid)
         t_end = time.perf_counter()
 
         N_loaded = len(loaded_cutouts)
@@ -549,35 +543,7 @@ class AlerceQueryManager(BaseQueryManager):
             logger.info(f"loaded {N_loaded} cutouts in {t_end-t_start:.1f}s")
         if len(missing_cutouts) > 0:
             logger.info(f"{len(missing_cutouts)} cutouts missing")
-        return missing_cutouts
-
-    def load_cutouts(self):
-        loaded_cutouts = []
-        for oid, target in self.target_lookup.items():
-            cutouts_are_None = [
-                im is None for k, im in target.fink_data.cutouts.items()
-            ]
-            if target.alerce_data.detections is None:
-                continue
-            for candid in target.alerce_data.detections["candid"][::-1]:
-                cutouts_file = self.get_cutouts_file(oid, candid, fmt="fits")
-                if cutouts_file.exists():
-                    cutouts_candid = target.fink_data.meta.get("cutouts_candid", None)
-                    if cutouts_candid == candid:
-                        # If the existing cutouts are from this candid,
-                        # they must already be the latest (as we're searching in rev.)
-                        continue
-                    with fits.open(cutouts_file) as hdul:
-                        for ii, hdu in enumerate(hdul):
-                            imtype = hdu.header["STAMP_TYPE"]
-                            if imtype not in self.expected_cutout_type:
-                                logger.warning(
-                                    f"{oid} stamp HDU{ii} has type '{imtype}'"
-                                )
-                            target.alerce_data.cutouts[imtype] = hdu.data
-                    loaded_cutouts.append(oid)
-                    target.alerce_data.meta["cutouts_candid"] = candid
-        logger.info(f"{len(loaded_cutouts)} cutouts loaded")
+        return loaded_cutouts, missing_cutouts
 
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -604,10 +570,10 @@ class AlerceQueryManager(BaseQueryManager):
 
         # Periodically lightcurves "just" in case
         old_lightcurves = self.get_lightcurves_to_query(t_ref=t_ref)
-        self.perform_lightcurve_queries(old_lightcurves, t_ref=t_ref)
+        success, failed = self.perform_lightcurve_queries(old_lightcurves, t_ref=t_ref)
         self.load_target_lightcurves()
 
         # Cutouts
-        missing_cutouts = self.get_cutouts_to_query(t_ref=t_ref)
+        loaded_cutouts, missing_cutouts = self.get_cutouts_to_query(t_ref=t_ref)
         successful_queries = self.perform_cutouts_queries(missing_cutouts)
         self.load_cutouts()

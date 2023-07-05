@@ -44,7 +44,8 @@ def build_test_config():
     return config
 
 
-def build_test_target_list():
+@pytest.fixture
+def test_target_list():
     return [
         Target(
             "t1",
@@ -171,66 +172,111 @@ def test__perform_all_qm_tasks():
     )
 
 
-def test__compute_observatory_nights():
+def test__compute_observatory_info(test_target_list):
     config = build_test_config()
     selector = TargetSelector(config)
 
     time_atol = 0.014  # 20 minutes
 
-    target_list = build_test_target_list()
-    for target in target_list:
+    for target in test_target_list:
         selector.add_target(target)
     assert len(selector.target_lookup) == 3
 
     # Test is 'now' as the start of the night if now is nighttime?
     t_ref = Time("2023-02-25T00:00:00", format="isot")  # 2023-02-24-noon=2460000.
-    selector.compute_observatory_nights(t_ref=t_ref)
+    selector.compute_observatory_info(t_ref=t_ref)
 
-    exp_astrolab_night_start = Time(2460000.5, format="jd")
-    exp_astrolab_night_end = Time(2460000.71389, format="jd")  # from internet...
+    exp_astrolab_sunset = Time(2460000.5, format="jd")
+    astrolab_sunset = test_target_list[0].observatory_info["astrolab"].sunset
     assert np.isclose(
-        target_list[0].observatory_night["astrolab"][0].jd - 2_460_000.0,
-        exp_astrolab_night_start.jd - 2_460_000.0,
-        atol=time_atol,
+        astrolab_sunset.mjd - 60000.0, exp_astrolab_sunset.mjd - 60000, atol=time_atol
     )
+    exp_astrolab_sunrise = Time(2460000.71389, format="jd")  # from internet...
+    astrolab_sunrise = test_target_list[0].observatory_info["astrolab"].sunrise
     assert np.isclose(
-        target_list[0].observatory_night["astrolab"][1].jd - 2_460_000.0,
-        exp_astrolab_night_end.jd - 2_460_000.0,
+        astrolab_sunrise.mjd - 2_460_000.0,
+        exp_astrolab_sunrise.mjd - 2_460_000.0,
         atol=time_atol,
     )
 
     # Test the night is correctly updated.
     t_ref = Time("2023-02-25T12:00:00", format="isot")  # jd=2460000.
-    selector.compute_observatory_nights(t_ref=t_ref)
+    selector.compute_observatory_info(t_ref=t_ref)
 
-    exp_astrolab_night_start = Time(2460001.31458, format="jd")
-    exp_astrolab_night_end = Time(2460001.71111, format="jd")  # from internet...
+    exp_astrolab_sunset = Time(2460001.31458, format="jd")
+    astrolab_sunset = test_target_list[0].observatory_info["astrolab"].sunset
     assert np.isclose(
-        target_list[0].observatory_night["astrolab"][0].jd - 2_460_000.0,
-        exp_astrolab_night_start.jd - 2_460_000.0,
-        atol=time_atol,
+        astrolab_sunset.mjd - 60000.0, exp_astrolab_sunset.mjd - 60000.0, atol=time_atol
     )
+    exp_astrolab_sunrise = Time(2460001.71111, format="jd")  # from internet...
+    astrolab_sunrise = test_target_list[0].observatory_info["astrolab"].sunrise
     assert np.isclose(
-        target_list[0].observatory_night["astrolab"][1].jd - 2_460_000.0,
-        exp_astrolab_night_end.jd - 2_460_000.0,
-        atol=time_atol,
-    )
-
-    exp_lasilla_night_start = Time(2460001.53472, format="jd")
-    exp_lasilla_night_end = Time(2460001.87917, format="jd")
-    assert np.isclose(
-        target_list[0].observatory_night["lasilla"][0].jd - 2_460_000.0,
-        exp_lasilla_night_start.jd - 2_460_000.0,
-        atol=time_atol,
-    )
-    assert np.isclose(
-        target_list[0].observatory_night["lasilla"][1].jd - 2_460_000.0,
-        exp_lasilla_night_end.jd - 2_460_000.0,
+        astrolab_sunrise.mjd - 60000.0,
+        exp_astrolab_sunrise.mjd - 60000.0,
         atol=time_atol,
     )
 
+    exp_lasilla_sunset = Time(2460001.53472, format="jd")
+    exp_lasilla_sunrise = Time(2460001.87917, format="jd")
+    lasilla_sunset = test_target_list[0].observatory_info["lasilla"].sunset
+    lasilla_sunrise = test_target_list[0].observatory_info["lasilla"].sunrise
+    assert np.isclose(
+        lasilla_sunset.mjd - 60000.0, exp_lasilla_sunset.mjd - 60000.0, atol=time_atol
+    )
+    assert np.isclose(
+        lasilla_sunrise.mjd - 60000.0, exp_lasilla_sunrise.mjd - 60000.0, atol=time_atol
+    )
 
-def test__initial_target_check():
+
+def test__observatory_info_no_crash_on_tonight_failure():
+    config = {
+        "observatories": {
+            "SPT": dict(lat=-89.9, lon=90.0, height=2300.0),
+            "NPT": dict(lat=89.9, lon=0.0),
+            "greenwich": "greenwich",
+        }
+    }
+    selector = TargetSelector(config)
+    t1 = Target("test1", ra=5.0, dec=0)
+    selector.add_target(t1)
+
+    t_ref = Time("2022-12-21T12:00:00")  # Noon UT, solstice
+    SPT = selector.observatories["SPT"]  # real - permanent day!
+    NPT = selector.observatories["NPT"]  # fictional - permanent night!
+    greenwich = selector.observatories["greenwich"]  # long, but finite, night.
+
+    # Try the actual compute
+    selector.compute_observatory_info(t_ref=t_ref)
+
+    assert isinstance(SPT, Observer)
+    assert isinstance(NPT, Observer)
+    assert isinstance(greenwich, Observer)
+
+    # Check it would have raised an error
+    with pytest.raises(TypeError):
+        SPT.tonight(t_ref)
+    assert t1.observatory_info["SPT"].sunset is None
+    assert t1.observatory_info["SPT"].sunrise is None
+
+    NPT_tonight = NPT.tonight(t_ref)
+    assert isinstance(NPT_tonight[0], Time)
+    assert isinstance(NPT_tonight[0].jd, float)
+    assert isinstance(NPT_tonight[1], Time)
+    assert not isinstance(NPT_tonight[1].jd, float)
+    assert not NPT_tonight[1] is None
+    NPT_sunset = t1.observatory_info["NPT"].sunset
+    assert np.isclose(NPT_sunset.mjd - 60000.0, t_ref.mjd - 60000.0)
+    NPT_sunrise = t1.observatory_info["NPT"].sunrise
+    assert NPT_sunrise is None  # Correctly set as None.
+
+    greenwich_tonight = greenwich.tonight(t_ref)
+    assert isinstance(greenwich_tonight[0], Time)
+    assert isinstance(greenwich_tonight[0].jd, float)
+    assert isinstance(greenwich_tonight[1], Time)
+    assert isinstance(greenwich_tonight[1].jd, float)
+
+
+def test__initial_target_check(test_target_list):
     config = {
         "observatories": {"palomar": "palomar"},
     }
@@ -241,10 +287,8 @@ def test__initial_target_check():
             score = -np.inf
         return score
 
-    target_list = build_test_target_list()
-
     selector = TargetSelector(config)
-    for target in target_list:
+    for target in test_target_list:
         selector.add_target(target)
 
     t_ref = Time("2023-02-25T00:00:00", format="isot")  # mjd=60000.
@@ -253,13 +297,13 @@ def test__initial_target_check():
         reject_high_ra_targets, t_ref=t_ref
     )
     assert set(new_objectIds) == set(["t1", "t2", "t3"])
-    assert np.isclose(target_list[0].get_last_score(), 50.0)
-    assert np.isclose(target_list[1].get_last_score(), 20.0)
-    assert target_list[2].get_last_score() == -np.inf
+    assert np.isclose(test_target_list[0].get_last_score(), 50.0)
+    assert np.isclose(test_target_list[1].get_last_score(), 20.0)
+    assert test_target_list[2].get_last_score() == -np.inf
 
-    assert target_list[0].get_last_score("palomar") is None
-    assert target_list[1].get_last_score("palomar") is None
-    assert target_list[2].get_last_score("palomar") is None
+    assert test_target_list[0].get_last_score("palomar") is None
+    assert test_target_list[1].get_last_score("palomar") is None
+    assert test_target_list[2].get_last_score("palomar") is None
 
     t4 = Target("t4", ra=30.0, dec=40.0)
     t5 = Target("t5", ra=120.0, dec=40.0)
@@ -272,7 +316,7 @@ def test__initial_target_check():
     assert set(new_objectIds_2) == set(["t4", "t5"])
 
 
-def test__evaluate_all_targets():
+def test__evaluate_all_targets(test_target_list):
     config = {
         "observatories": {"palomar": "palomar"},
     }
@@ -281,14 +325,12 @@ def test__evaluate_all_targets():
         factor = 2.0 if obs else 1.0
         return target.ra * factor
 
-    target_list = build_test_target_list()
-
     selector = TargetSelector(config)
-    for target in target_list:
+    for target in test_target_list:
         selector.add_target(target)
     t_ref = Time("2023-02-25T00:00:00", format="isot")  # mjd=60000.
     assert set(selector.observatories.keys()) == set(["no_observatory", "palomar"])
-    assert set(target_list[0].score_history.keys()) == set(["no_observatory"])
+    assert set(test_target_list[0].score_history.keys()) == set(["no_observatory"])
 
     selector.evaluate_all_targets(test_score_with_obs, t_ref=t_ref)
     t1_no_obs = selector.target_lookup["t1"].get_last_score()
@@ -305,7 +347,7 @@ def test__evaluate_all_targets():
     assert np.isclose(t3_palomar, 180.0)
 
 
-def test__remove_bad_targets():
+def test__remove_bad_targets(test_target_list):
     config = {
         "observatories": {"palomar": "palomar"},
     }
@@ -316,10 +358,8 @@ def test__remove_bad_targets():
             score = -np.inf
         return score
 
-    target_list = build_test_target_list()
-
     selector = TargetSelector(config)
-    for target in target_list:
+    for target in test_target_list:
         selector.add_target(target)
 
     t_ref = Time("2023-02-25T00:00:00", format="isot")  # mjd=60000.
@@ -350,9 +390,7 @@ def test__remove_bad_targets():
     assert not np.isfinite(last_score)
 
 
-def test__compile_target_lightcurves():
-    target_list = build_test_target_list()
-
+def test__compile_target_lightcurves(test_target_list):
     t1_data = pd.DataFrame(
         dict(
             mjd=np.arange(60000.0, 60005.0, 1.0),
@@ -361,7 +399,7 @@ def test__compile_target_lightcurves():
             fid=[1, 2, 2, 2, 1],
         )
     )
-    target_list[0].alerce_data.lightcurve = t1_data
+    test_target_list[0].alerce_data.lightcurve = t1_data
 
     t2_data = pd.DataFrame(
         dict(
@@ -371,7 +409,7 @@ def test__compile_target_lightcurves():
             fid=[2, 2, 2, 1, 1],
         )
     )
-    target_list[1].alerce_data.lightcurve = t2_data
+    test_target_list[1].alerce_data.lightcurve = t2_data
 
     t3_data = pd.DataFrame(
         dict(
@@ -381,18 +419,18 @@ def test__compile_target_lightcurves():
             fid=[1, 2, 1, 1, 2],
         )
     )
-    target_list[2].alerce_data.lightcurve = t3_data
+    test_target_list[2].alerce_data.lightcurve = t3_data
 
     selector = TargetSelector({})
-    for target in target_list:
+    for target in test_target_list:
         selector.add_target(target)
-    assert all([t.compiled_lightcurve is None for t in target_list])
+    assert all([t.compiled_lightcurve is None for t in test_target_list])
 
     t_ref = Time(60003.8, format="mjd")  # cut off the last datapoint
     selector.compile_target_lightcurves(t_ref=t_ref)
 
-    assert all(["jd" in t.compiled_lightcurve.columns for t in target_list])
-    assert all([len(t.compiled_lightcurve) == 4 for t in target_list])
+    assert all(["jd" in t.compiled_lightcurve.columns for t in test_target_list])
+    assert all([len(t.compiled_lightcurve) == 4 for t in test_target_list])
     expected_t1_values = [19.0, 18.0, 17.0, 16.0]
     assert np.allclose(
         selector.target_lookup["t1"].compiled_lightcurve["mag"], expected_t1_values
@@ -477,9 +515,8 @@ def test__opp_target_loading():
     assert not expected_t_opp_path.exists()
 
 
-def test__reset_updated_target_flags():
+def test__reset_updated_target_flags(test_target_list):
     selector = TargetSelector({})
-    test_target_list = build_test_target_list()
     for target in test_target_list:
         selector.add_target(target)
 

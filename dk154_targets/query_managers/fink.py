@@ -28,7 +28,11 @@ from dk154_targets import Target, TargetData
 from dk154_targets.utils import calc_file_age
 
 from dk154_targets.query_managers.base import BaseQueryManager
-from dk154_targets.query_managers.exc import BadKafkaConfigError, MissingObjectIdError
+from dk154_targets.query_managers.exc import (
+    BadKafkaConfigError,
+    MissingObjectIdError,
+    MissingCoordinateColumnsError,
+)
 
 from dk154_targets import paths
 
@@ -85,7 +89,7 @@ def target_from_fink_alert(alert: dict, objectId: str, t_ref: Time = None) -> Ta
     ra = alert.get("ra", None)
     dec = alert.get("dec", None)
     if (ra is None) or (dec is None):
-        return None
+        raise
     target = Target(objectId, ra=ra, dec=dec)
     return target
 
@@ -101,6 +105,10 @@ def target_from_fink_lightcurve(
         ra = lightcurve["ra"].iloc[-1]
     if "dec" in lightcurve.columns:
         dec = lightcurve["dec"].iloc[-1]
+
+    if (ra is None) or (dec is None):
+        raise MissingCoordinateColumnsError(f"missing ra/dec from {lightcurve.columns}")
+
     fink_data = TargetData(lightcurve=lightcurve)
     target = Target(objectId, ra=ra, dec=dec, fink_data=fink_data)
     target.updated = True
@@ -319,14 +327,20 @@ class FinkQueryManager(BaseQueryManager):
             target = Target(objectId=objectId, ra=alert["ra"], dec=alert["dec"])
             self.target_lookup[objectId] = target
 
-    def load_target_lightcurves(self, t_ref: Time = None):
+    def load_target_lightcurves(
+        self, objectId_list: List[str] = None, t_ref: Time = None
+    ):
         t_ref = t_ref or Time.now()
 
         loaded_lightcurves = []
         missing_lightcurves = []
         t_start = time.perf_counter()
 
-        for objectId, target in self.target_lookup.items():
+        if objectId_list is None:
+            objectId_list = list(self.target_lookup.keys())
+
+        # for objectId, target in self.target_lookup.items():
+        for objectId in objectId_list:
             lightcurve_file = self.get_lightcurve_file(objectId)
             if not lightcurve_file.exists():
                 missing_lightcurves.append(objectId)
@@ -335,7 +349,11 @@ class FinkQueryManager(BaseQueryManager):
             lightcurve = pd.read_csv(lightcurve_file, dtype={"candid": "Int64"})
             # TODO: not optimum to read every time... but not a bottleneck for now.
             if target is None:
-                target = target_from_fink_lightcurve(lightcurve, objectId)
+                try:
+                    target = target_from_fink_lightcurve(lightcurve, objectId)
+                except MissingCoordinateColumnsError as e:
+                    logger.warning(f"{objectId}: {e}")
+                    continue
                 self.target_lookup[objectId] = target
             else:
                 existing_lightcurve = target.fink_data.lightcurve

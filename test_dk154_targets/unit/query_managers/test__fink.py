@@ -11,7 +11,11 @@ from astropy import units as u
 from astropy.time import Time
 
 from dk154_targets import Target
-from dk154_targets.query_managers.exc import BadKafkaConfigError, MissingObjectIdError
+from dk154_targets.query_managers.exc import (
+    BadKafkaConfigError,
+    MissingObjectIdError,
+    MissingCoordinateColumnsError,
+)
 from dk154_targets.query_managers import fink
 from dk154_targets.query_managers.fink import (
     FinkQueryManager,
@@ -128,6 +132,7 @@ class Test__FinkQueryManager:
     exp_alerts_path = paths.test_data_path / "fink/alerts"
     exp_query_results_path = paths.test_data_path / "fink/query_results"
     exp_probabilities_path = paths.test_data_path / "fink/probabilities"
+    exp_parameters_path = paths.test_data_path / "fink/parameters"
     exp_magstats_path = paths.test_data_path / "fink/magstats"
     exp_cutouts_path = paths.test_data_path / "fink/cutouts"
 
@@ -138,6 +143,7 @@ class Test__FinkQueryManager:
             cls.exp_alerts_path,
             cls.exp_query_results_path,
             cls.exp_probabilities_path,
+            cls.exp_parameters_path,
             cls.exp_magstats_path,
             cls.exp_cutouts_path,
         ]:
@@ -396,6 +402,8 @@ class Test__FinkQueryManager:
         assert hasattr(fink.AlertConsumer, "consume")  # back to normal.
 
     def test__process_alerts(self, fink_qm, fake_alert_results):
+        self._clear_test_directories()
+
         processed_alerts = fink_qm.process_alerts(
             fake_alert_results, save_alerts=False, save_cutouts=False
         )
@@ -419,8 +427,11 @@ class Test__FinkQueryManager:
         exp_alert1_path = exp_alert_dir / "2300010000200001001.json"
         assert not exp_alert1_path.exists()
 
+        self._clear_test_directories()
+
     def test__save_alerts(self, example_config, fake_alert_results):
         self._clear_test_directories()
+
         qm = FinkQueryManager(
             example_config, {}, data_path=paths.test_data_path, create_paths=True
         )
@@ -449,6 +460,7 @@ class Test__FinkQueryManager:
 
     def test__get_lightcurves_to_query(self, fink_qm, fink_lc):
         self._clear_test_directories()
+
         fink_qm.process_paths(data_path=paths.test_data_path, create_paths=True)
         assert self.exp_fink_path.exists()
         assert self.exp_lightcurves_path.exists()
@@ -481,9 +493,12 @@ class Test__FinkQueryManager:
         t_plus3 = t_now + 3 * u.day
         result = fink_qm.get_lightcurves_to_query(t_ref=t_plus3)
         assert set(result) == set(["test1", "test2"])
+
         self._clear_test_directories()
 
     def test__perform_lightcurve_queries(self, fink_qm, det_df, ndet_df, monkeypatch):
+        self._clear_test_directories()
+
         class MockFinkQuery:
             def __init__(self):
                 pass
@@ -522,9 +537,12 @@ class Test__FinkQueryManager:
             assert len(lc_result.query("tag=='badquality'")) == 1
 
         assert fink.FinkQuery.api_url == "https://fink-portal.org/api/v1"
+
         self._clear_test_directories()
 
     def test__load_target_lightcurves(self, fink_qm, fink_lc):
+        self._clear_test_directories()
+
         fink_qm.process_paths(data_path=paths.test_data_path, create_paths=True)
 
         fink_lc.sort_values("jd", ascending=True, inplace=True)
@@ -540,7 +558,7 @@ class Test__FinkQueryManager:
         # No useful updates for test1 - shouldn't be read.
 
         test2 = Target("test2", ra=45.0, dec=60.0)
-        trunc_lc = fink_lc.copy()[:-1]
+        trunc_lc = fink_lc.copy()[:-1]  # truncate a row, so need to re-load
         assert len(trunc_lc) == 6
         test2.fink_data.add_lightcurve(trunc_lc)
         assert len(test2.fink_data.detections) == 3  # includes bad qual.
@@ -564,6 +582,31 @@ class Test__FinkQueryManager:
         successful, missing = fink_qm.load_target_lightcurves(input_list)
         assert set(successful) == set(["test2", "test3"])
         assert set(missing) == set(["test4", "test5"])
+
+        assert len(test2.fink_data.lightcurve) == 7
+        assert len(test2.fink_data.detections) == 4  # properly added!
+
+        self._clear_test_directories()
+
+    def test__load_lightcurves_does_not_fail_on_bad_lightcurve(self, fink_qm, fink_lc):
+        self._clear_test_directories()
+
+        fink_qm.process_paths(data_path=paths.test_data_path, create_paths=True)
+
+        fink_lc.sort_values("jd", ascending=True, inplace=True)
+        exp_good_lc_path = paths.test_data_path / "fink/lightcurves/good_lc.csv"
+        fink_lc.to_csv(exp_good_lc_path, index=False)
+
+        bad_lc = fink_lc.copy()
+        bad_lc.drop(["ra", "dec"], inplace=True, axis=1)
+        with pytest.raises(MissingCoordinateColumnsError):
+            # Definitely should fail
+            bad_target = target_from_fink_lightcurve(bad_lc, "bad_target")
+        exp_bad_lc_path = paths.test_data_path / "fink/lightcurves/bad_lc.csv"
+        bad_lc.to_csv(exp_bad_lc_path, index=False)
+
+        fink_qm.load_target_lightcurves(["good_lc", "bad_lc"])
+        assert "good_lc" in fink_qm.target_lookup
 
         self._clear_test_directories()
 
@@ -605,6 +648,7 @@ class Test__FinkQueryManager:
 
     def test__integrate_alerts(self, fink_qm, fink_lc, fake_alert_results):
         self._clear_test_directories()
+
         fink_qm.process_paths(data_path=paths.test_data_path, create_paths=True)
         processed_alerts = fink_qm.process_alerts(fake_alert_results)
         assert len(processed_alerts) == 15
@@ -630,6 +674,7 @@ class Test__FinkQueryManager:
         assert len(target.fink_data.lightcurve) == (7 + 15)
         assert len(target.fink_data.detections) == 19  # 4 + 15
 
+        self._clear_test_directories()
         # assert target.
 
 
