@@ -42,7 +42,7 @@ jobs:
     #    flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        pytest --cov=dk154_targets --cov-report=xml tests
+        pytest --cov=dk154_targets --cov-report=xml test_dk154_targets
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v2
       with:
