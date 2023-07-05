@@ -9,8 +9,10 @@ default_outputs_dir = "outputs"
 default_opp_targets_dir = "opp_targets"
 default_scratch_dir = "scratch"
 
+wkdir = Path.cwd()
+
 test_path = base_path / "test_dk154_targets"
-test_data_path = test_path / "test_data"
+test_data_path = wkdir / "test_data"
 
 
 def build_paths():

@@ -2,6 +2,7 @@ astroplan
 astropy
 black
 dustmaps
+iminuit
 matplotlib
 numpy
 pandas

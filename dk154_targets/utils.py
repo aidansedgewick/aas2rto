@@ -1,10 +1,13 @@
 import shutil
+from logging import getLogger
 
 from pathlib import Path
 
 import numpy as np
 
 from astropy.time import Time
+
+logger = getLogger("utils")
 
 
 def calc_file_age(filepath, t_ref, allow_missing=True):
@@ -31,3 +34,18 @@ def print_header(s):
     pad = max(pad, 1)
     fmt_s = "\n###" + "=" * pad + f" {s} " + "=" * pad + "###"
     print(fmt_s)
+
+
+def init_sfd_dustmaps():
+    try:
+        import dustmaps
+        from dustmaps import sfd
+    except ModuleNotFoundError as e:
+        msg = (
+            "`dusmaps` not imported properly. try:"
+            "\n    \033[33;1mpython3 -m pip install dustmaps\033[0m"
+        )
+        raise ModuleNotFoundError(msg)
+
+    logger.info("calling dustmaps.sfd.fetch()")
+    sfd.fetch()
