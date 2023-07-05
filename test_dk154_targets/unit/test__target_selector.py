@@ -77,7 +77,7 @@ def test__selector_init():
 
 
 def test__from_config():
-    test_config_path = paths.test_path / "test_data/test_config.yaml"
+    test_config_path = paths.test_data_path / "test_config.yaml"
 
     test_config = build_test_config()
     if test_config_path.exists():

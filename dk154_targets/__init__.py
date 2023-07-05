@@ -1,5 +1,6 @@
 import logging.config
 import os
+import sys
 
 import yaml
 
@@ -14,5 +15,5 @@ if default_logging_config.exists():
         log_config = yaml.safe_load(f.read())
     logging.config.dictConfig(log_config)
 
-if os.environ.get("PYTEST_CURRENT_TEST"):
-    paths.build_test_path()
+if "pytest" in sys.modules:
+    paths.make_test_dir()

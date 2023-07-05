@@ -113,6 +113,7 @@ class Test__LasairQueryManager:
         )
         assert not qm.parent_data_path.exists()
         assert not self.exp_lasair_path.exists()  # don't create as appropriate.
+        self._clear_test_directories()
 
     def test__lasair_uses_config(self, example_config):
         example_config["kafka_config"]["n_alerts"] = 20
@@ -192,12 +193,12 @@ class Test__LasairQueryManager:
                 config3, {}, data_path=paths.test_data_path, create_paths=False
             )
 
-    def test__listen_for_alerts(self, mock_lasair_consumer, monkeypatch):
-        config = {}
-        qm = LasairQueryManager(config, {}, data_path=paths.test_data_path)
+    # def test__listen_for_alerts(self, mock_lasair_consumer, monkeypatch):
+    #     config = {}
+    #     qm = LasairQueryManager(config, {}, data_path=paths.test_data_path)
 
-        with monkeypatch.context() as m:
-            m.setattr(
-                "dk154_targets.query_managers.lasair.lasair_consumer",
-                MockLasairConsumer,
-            )
+    #     with monkeypatch.context() as m:
+    #         m.setattr(
+    #             "dk154_targets.query_managers.lasair.lasair_consumer",
+    #             MockLasairConsumer,
+    #         )

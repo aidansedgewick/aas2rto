@@ -14,6 +14,7 @@ from astropy.coordinates import SkyCoord, EarthLocation
 
 from astroplan import Observer
 
+import dk154_targets
 from dk154_targets import Target, TargetData
 from dk154_targets import target
 from dk154_targets.target import default_plot_lightcurve
@@ -338,6 +339,7 @@ class TestTarget:
             return plt.figure()
 
         fig_path = paths.test_data_path / "test_lc_fig.png"
+        assert fig_path.parent.exists()
         if fig_path.exists():
             os.remove(fig_path)
         fig = target_with_data.plot_lightcurve(
@@ -351,6 +353,7 @@ class TestTarget:
 
         ## works with no function (ie, correctly uses default_lc_pl)
         fig_path = paths.test_data_path / "test_lc_fig.png"
+        assert fig_path.parent.exists()
         fig = target_with_data.plot_lightcurve(figpath=fig_path)
         assert isinstance(fig, plt.Figure)
         assert fig_path.exists()
