@@ -26,12 +26,12 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install flake8 pytest setuptools
+        python3 -m pip install --upgrade pip
+        python3 -m pip install flake8 pytest setuptools
         # if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Install extra dependencies
       run: |
-        python -m pip install -r requirements.txt
+        python3 -m pip install -r requirements.txt
     - name: Install package as dev
       run: |
         python3 -m pip install -e .
