@@ -453,7 +453,12 @@ def test__opp_target_loading():
         expected_t_opp_path.rmdir()
     assert not expected_t_opp_path.exists()
 
-    config = {"paths": {"opp_targets_path": "test_dk154_targets/test_data/t_opp"}}
+    config = {
+        "paths": {
+            "project_path": str(paths.test_data_path),
+            "opp_targets_path": f"$project_path/t_opp",
+        }
+    }
     selector = TargetSelector(config)
 
     assert expected_t_opp_path.exists()

@@ -112,7 +112,7 @@ class TargetSelector:
         project_path = self.paths_config.pop("project_path", "default")
         if project_path == "default":
             project_path = self.base_path
-        self.project_path = project_path
+        self.project_path = Path(project_path)
         self.paths = {"base_path": self.base_path, "project_path": self.project_path}
         for location, path in self.paths_config.items():
             parts = path.split("/")
@@ -126,18 +126,18 @@ class TargetSelector:
             formatted_path = parent.joinpath(*formatted_parts)
             self.paths[location] = formatted_path
         if "data_path" not in self.paths:
-            self.paths["data_path"] = project_path / paths.default_data_dir
+            self.paths["data_path"] = self.project_path / paths.default_data_dir
         self.data_path = self.paths["data_path"]
         if "outputs_path" not in self.paths:
-            self.paths["outputs_path"] = project_path / paths.default_outputs_dir
+            self.paths["outputs_path"] = self.project_path / paths.default_outputs_dir
         self.outputs_path = self.paths["outputs_path"]
         if "opp_targets_path" not in self.paths:
             self.paths["opp_targets_path"] = (
-                project_path / paths.default_opp_targets_dir
+                self.project_path / paths.default_opp_targets_dir
             )
         self.opp_targets_path = self.paths["opp_targets_path"]
         if "scratch_path" not in self.paths:
-            self.paths["scratch_path"] = project_path / paths.default_scratch_dir
+            self.paths["scratch_path"] = self.project_path / paths.default_scratch_dir
         self.scratch_path = self.paths["scratch_path"]
         self.lc_scratch_path = self.scratch_path / "lc"
         self.lc_scratch_path.mkdir(exist_ok=True, parents=True)
@@ -500,8 +500,8 @@ class TargetSelector:
         score_df.sort_values("score", inplace=True, ascending=False)
         score_df.set_index("objectId", inplace=True)
         score_df["ranking"] = np.arange(1, len(score_df) + 1)
-        negative_score = score_df["score"] < 0.0
-        score_df.loc[negative_score, "rank"] = self.default_unranked_value
+        negative_score = score_df["score"] < self.minimum_score
+        score_df.loc[negative_score, "ranking"] = self.default_unranked_value
         for objectId, row in score_df.iterrows():
             target = self.target_lookup[objectId]
             if obs_name not in target.rank_history:
