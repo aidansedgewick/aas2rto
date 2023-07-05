@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from distutils.core import setup
+from setuptools import setup, find_packages
 
 setup(
     name="dk154_targets",
@@ -9,11 +9,9 @@ setup(
     author="Aidan S",
     author_email="aidan.sedgewick@gmail.com",
     # url='',
-    packages=[
-        "dk154_targets",
-    ],
+    packages=find_packages(),
 )
 
 from dk154_targets.paths import build_paths
 
-#build_paths()
+# build_paths()
