@@ -47,6 +47,7 @@ class AtlasQueryManager(BaseQueryManager):
     # these are the normal http response codes...
     QUERY_EXISTS = 200
     QUERY_SUBMITTED = 201
+    QUERY_BAD_REQUEST = 400
     QUERY_THROTTLED = 429
 
     default_query_parameters = {
@@ -219,6 +220,12 @@ class AtlasQueryManager(BaseQueryManager):
         t_ref = t_ref or Time.now()
 
         query_data = self.prepare_query_data(target, t_ref=t_ref)
+        if query_data.get("ra", None) is None or query_data.get("dec", None) is None:
+            logger.warning(
+                f"\033[33m{target.objectId} ra/dec is None!\033[0m skip submit."
+            )
+            return self.QUERY_BAD_REQUEST
+
         res = AtlasQuery.atlas_query(query_data, headers=self.atlas_headers)
         if res.status_code == self.QUERY_SUBMITTED:
             task_url = res.json()["url"]
@@ -228,7 +235,7 @@ class AtlasQueryManager(BaseQueryManager):
             self.throttled_queries.append(target.objectId)
             return res.status_code
         else:
-            msg = f"{target.objectId} query status \033[33;1m{res.status_code}\033[0m\n{res.reason}"
+            msg = f"{target.objectId} query status \033[33;1m{res.status_code}\033[0m: {res.reason}"
             logger.error(msg)
             return res.status_code
 

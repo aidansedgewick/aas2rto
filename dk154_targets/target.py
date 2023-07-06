@@ -19,6 +19,8 @@ from astroplan.plots import plot_altitude
 
 logger = getLogger(__name__.split(".")[-1])
 
+DEFAULT_ZTF_BROKER_PRIORITY = ("fink", "alerce", "lasair", "antares")
+
 
 class TargetData:
     valid_tags = ("valid",)
@@ -154,8 +156,6 @@ class Target:
     """
 
     default_base_score = 100.0
-    # data_sources = ("alerce", "atlas", "fink", "tns")
-    default_broker_priority = ("alerce", "fink", "lasair")
 
     def __init__(
         self,
@@ -163,6 +163,7 @@ class Target:
         ra: float,
         dec: float,
         alerce_data: TargetData = None,
+        antares_data: TargetData = None,
         atlas_data: TargetData = None,
         fink_data: TargetData = None,
         lasair_data: TargetData = None,
@@ -170,7 +171,6 @@ class Target:
         yse_data: TargetData = None,
         base_score: float = None,
         target_of_opportunity: bool = False,
-        broker_priority: tuple = None,
         t_ref: Time = None,
     ):
         t_ref = t_ref or Time.now()
@@ -180,11 +180,10 @@ class Target:
         self.update_coordinates(ra, dec)
         self.base_score = base_score or self.default_base_score
         self.compiled_lightcurve = None
-        self.broker_priority = broker_priority or self.default_broker_priority
-        _check_broker_priority(self.broker_priority)
 
         # Target data
         self.alerce_data = alerce_data or TargetData()
+        self.antares_data = antares_data or TargetData()
         self.atlas_data = atlas_data or TargetData()
         self.fink_data = fink_data or TargetData()
         self.lasair_data = lasair_data or TargetData()
@@ -217,12 +216,15 @@ class Target:
         self.update_messages = []
 
     def __str__(self):
-        s = f"{self.objectId}: ra={self.ra:.5f} dec={self.dec:.5f}\n"
-        return s
+        if self.ra is None or self.dec is None:
+            return f"{self.objectId}: NO COORDINATES FOUND!"
+        return f"{self.objectId}: ra={self.ra:.5f} dec={self.dec:.5f}\n"
 
     def update_coordinates(self, ra, dec):
         self.ra = ra
         self.dec = dec
+        self.coord = None
+        self.astroplan_target = None
         if ra is not None and dec is not None:
             self.coord = SkyCoord(ra=ra, dec=dec, unit="deg")
             self.astroplan_target = FixedTarget(self.coord, self.objectId)  # for plots
@@ -534,7 +536,7 @@ def default_plot_lightcurve(
     legend = ax.legend(handles=legend_handles, loc=2)
     ax.add_artist(legend)
 
-    title = f"{target.objectId}, ra={target.ra:.4f} dec={target.dec:.5f}"
+    title = str(target)
     known_redshift = target.tns_data.parameters.get("Redshift", None)
     if known_redshift is not None:
         title = title + r" $z_{\rm TNS}=" + f"{known_redshift:.3f}" + "$"
@@ -563,7 +565,7 @@ def default_plot_lightcurve(
 
     ##======== add postage stamps
     cutouts = {}
-    for broker in target.broker_priority:
+    for broker in DEFAULT_ZTF_BROKER_PRIORITY:
         source_data = getattr(target, f"{broker}_data", None)
         if source_data is None:
             continue
@@ -633,6 +635,11 @@ def plot_observing_chart(
     obs_name = getattr(observatory, "name", None)
 
     if observatory is None:
+        return fig
+
+    if target.ra is None or target.dec is None:
+        logger.warning(f"plot_oc: \033[33m{target.objectId} has no coordinates!\033[0m")
+        fig.suptitle(f"{target.objectId} has no coordinates!")
         return fig
 
     obs_info = None

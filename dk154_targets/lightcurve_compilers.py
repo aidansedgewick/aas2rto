@@ -6,7 +6,8 @@ import pandas as pd
 
 from astropy.time import Time
 
-from dk154_targets import Target
+from dk154_targets.target import DEFAULT_ZTF_BROKER_PRIORITY
+from dk154_targets import Target, TargetData
 
 # from dk154_targets.query_managers import atlas
 
@@ -49,20 +50,29 @@ def prepare_atlas_data(atlas_data: pd.DataFrame):
     return atlas_df[use_cols]
 
 
+def prepare_yse_data(yse_data: pd.DataFrame):
+    yse_band_lookup = {band: f"ps1::{band}" for band in "g r i z y".split()}
+
+    yse_df = yse_data.copy()
+    yse_df["band"] = yse_df["flt"].map(yse_band_lookup)
+
+    return yse_df
+
+
 def default_compile_lightcurve(target: Target):
     # TODO: is this better as a class with a __call__ magic method?
     lightcurve_dfs = []
 
     # Select the best data from the brokers.
-    source_data_list = [
-        getattr(target, f"{broker}_data", None) for broker in target.broker_priority
-    ]
-    if not all(source_data_list):  # TargetData evaluates as True.
-        raise ValueError("some source data is None! (Should be TargetData")
     broker_data = None
-    for source_data in source_data_list:
+    for source in DEFAULT_ZTF_BROKER_PRIORITY:
+        source_data = getattr(target, f"{source}_data", None)
+        if not isinstance(source_data, TargetData):
+            continue
         if source_data.lightcurve is not None:
             broker_data = source_data.lightcurve
+            break
+
     if broker_data is not None:
         if "mjd" in broker_data.columns and "jd" not in broker_data.columns:
             broker_data["jd"] = Time(broker_data["mjd"].values, format="mjd").jd
@@ -79,6 +89,12 @@ def default_compile_lightcurve(target: Target):
         if not target.atlas_data.lightcurve.empty:
             atlas_df = prepare_atlas_data(target.atlas_data.lightcurve)
             lightcurve_dfs.append(atlas_df)
+
+    # Get YSE data
+    if target.yse_data.lightcurve is not None:
+        if not target.yse_data.lightcurve.empty:
+            yse_df = prepare_yse_data(target.yse_data.lightcurve)
+            lightcurve_dfs.append(yse_df)
 
     compiled_lightcurve = None
     if len(lightcurve_dfs) > 0:

@@ -108,10 +108,10 @@ class TargetSelector:
         return set()
 
     def process_paths(self):
-        self.base_path = paths.base_path
+        self.base_path = paths.wkdir
         project_path = self.paths_config.pop("project_path", "default")
         if project_path == "default":
-            project_path = self.base_path
+            project_path = self.base_path / "projects/default"
         self.project_path = Path(project_path)
         self.paths = {"base_path": self.base_path, "project_path": self.project_path}
         for location, path in self.paths_config.items():
@@ -246,11 +246,13 @@ class TargetSelector:
             for objectId, target in self.target_lookup.items():
                 target_obs_info = obs_info.copy()
                 assert target_obs_info.target_altaz is None
-                target_altaz = observatory.altaz(obs_info.t_grid, target.coord)
-                target_obs_info.target_altaz = target_altaz
+                if target.coord is not None:
+                    target_altaz = observatory.altaz(obs_info.t_grid, target.coord)
+                    target_obs_info.target_altaz = target_altaz
                 target.observatory_info[obs_name] = target_obs_info
                 if target.observatory_info[obs_name].target_altaz is None:
-                    logger.warning(f"{objectId} target_altaz not computed correctly")
+                    msg = f"\033[33m{objectId} {obs_name} altaz missing\033[0m"
+                    logger.warning(msg)
 
     def check_for_targets_of_opportunity(self):
         logger.info("check for targets of opportunity")
@@ -565,6 +567,8 @@ class TargetSelector:
 
     def write_existing_target_list(self):
         rows = []
+        if len(self.target_lookup) == 0:
+            logger.info("no existing targets to write...")
         for objectId, target in self.target_lookup.items():
             data = dict(
                 objectId=objectId,
@@ -578,6 +582,10 @@ class TargetSelector:
 
     def recover_existing_targets(self):
         if not self.existing_targets_file.exists():
+            logger.info("no existing targets to recover...")
+            return
+        if self.existing_targets_file.stat().st_size < 2:
+            logger.info("file too small - don't attempt read...")
             return
         existing_targets_df = pd.read_csv(self.existing_targets_file)
         recovered_targets = 0

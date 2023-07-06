@@ -66,3 +66,6 @@ class BaseQueryManager(abc.ABC):
         if mkdir:
             cutouts_dir.mkdir(exist_ok=True, parents=True)
         return cutouts_dir / f"{candid}.{fmt}"
+
+    def get_parameters_file(self, objectId, fmt="pkl") -> Path:
+        return self.parameters_path / f"{objectId}.{fmt}"

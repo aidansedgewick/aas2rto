@@ -1,0 +1,38 @@
+selector_parameters:
+    sleep_time: 60.
+    lazy_modeling: True # only build new models for 'updated' targets
+
+observatories:
+    astrolab: {"lat": 54.77, "lon": -1.585, "height": 20}
+    palomar: "palomar"
+    lasilla: "lasilla"
+
+paths:
+    project_path: projects/fink_supernovae
+    data_path: $project_path/data
+    outputs_path: $project_path/outputs
+    opp_targets_path: $project_path/opp_targets
+
+
+query_managers:
+
+    atlas:
+        use: True
+
+        token: <token-here>
+
+        query_parameters:
+            max_submitted: 5
+
+    fink:
+        use: True
+
+        kafka_config:
+            username: <username-here>
+            # password: null # don't need for fink.
+            group_id: <group_id-here>
+            bootstrap.servers: <servers-here>
+            topics: ["fink_early_sn_candidates_ztf", "fink_sn_candidates"]
+            
+            n_alerts: 10
+            timeout: 10

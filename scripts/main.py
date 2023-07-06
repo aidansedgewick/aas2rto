@@ -1,5 +1,6 @@
 import logging
 import yaml
+from pathlib import Path
 
 from argparse import ArgumentParser
 
@@ -28,11 +29,26 @@ if __name__ == "__main__":
         logging.config.dictConfig(log_config)
 
     config_file = args.config or paths.config_path / "selector_config.yaml"
+    config_file = Path(args.config)
+
+    if config_file.stem == "fink_supernovae":
+        scoring_function = supernova_peak_score
+        modeling_function = sncosmo_model
+    elif config_file.stem == "alerce_supernovae":
+        scoring_function = supernova_peak_score
+        modeling_function = sncosmo_model
+    else:
+        scoring_function = latest_flux
+        modeling_function = empty_modeling
+
+    logger.info(f"use \033[36;1m {scoring_function.__name__}\033[0m scoring")
+    logger.info(f"use \033[36;1m {modeling_function.__name__}\033[0m model")
+
     selector = TargetSelector.from_config(config_file)
 
     selector.start(
-        scoring_function=latest_flux,
-        modeling_function=empty_modeling,
+        scoring_function=scoring_function,
+        modeling_function=modeling_function,
         iterations=args.iterations,
         existing_targets=args.existing,
     )

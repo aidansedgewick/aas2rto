@@ -1,0 +1,44 @@
+selector_parameters:
+    sleep_time: 60.
+    lazy_modeling: True # only build new models for 'updated' targets
+
+observatories:
+    astrolab: {"lat": 54.77, "lon": -1.585, "height": 20}
+    palomar: "palomar"
+    lasilla: "lasilla"
+
+paths:
+    project_path: projects/alerce_supernovae
+    data_path: $project_path/data
+    outputs_path: $project_path/outputs
+    opp_targets_path: $project_path/opp_targets
+
+
+query_managers:
+
+    alerce:
+        use: True
+
+        object_queries: {
+            #lightcurve_transient: {classifier: lc_classifier_top, class: Transient, probability: 0.9},
+            #lightcurve_snia: {classifier: lc_transient, class: SNIa, probaility: 0.5},
+            stamp_sn: {classifier: stamp_classifier, class: SN, probability: 0.8},
+        }
+
+        query_parameters:
+            n_objects: 25
+            interval: 0.25  # how often to query for new objects
+            update: 2.0  # how often to update each target
+            max_latest_lookback: 20.0  # bad if latest data is older than X days
+            max_earliest_lookback: 50.0  # bad if youngest data is older than X days
+            max_failed_queries: 10 # If more than X queries fail, stop trying for now.
+            max_total_query_time: 300. # X sec to spend on each query type (stamps, magstats)
+
+    atlas:
+        use: True
+
+        token: <token-here>
+
+        query_parameters:
+            max_submitted: 5
+

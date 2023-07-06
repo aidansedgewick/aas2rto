@@ -167,7 +167,7 @@ def supernova_peak_score(
         obs_name = getattr(observatory, "name", None)
         if obs_name is None:
             raise ValueError("observatory has no name!!")
-        obs_info = target.observatory_information.get(obs_name, None)
+        obs_info = target.observatory_info.get(obs_name, None)
         if obs_info is None:
             logger.warning(f"precomputed obs_info is None for {obs_name}")
 

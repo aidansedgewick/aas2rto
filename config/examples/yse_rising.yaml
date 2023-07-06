@@ -1,0 +1,38 @@
+selector_parameters:
+    project_name: yse_tests
+    sleep_time: 10.
+    lazy_modeling: True # only build new models for 'updated' targets
+
+observatories:
+    #astrolab: {"lat": 54.77, "lon": -1.585, "height": 20}
+    palomar: "palomar"
+    lasilla: "lasilla"
+
+paths:
+    project_path: projects/yse_rising
+    data_path: $project_path/data
+    outputs_path: $project_path/outputs
+    opp_targets_path: $project_path/opp_targets
+
+
+query_managers:
+    atlas:
+        use: True
+
+        token: <token-here>
+
+        query_parameters:
+            max_submitted: 5
+
+    yse:
+        use: True
+
+        query_parameters:
+            use_only_yse: True # Remove ATLAS/ZTF data is in yse lcs if True.
+
+        credential_config:
+            username: <username-here>
+            password: <password-here>
+
+        yse_queries:
+            253: {coordinates: [transient_RA, transient_DEC], update_indicator: number_of_detection}
