@@ -41,6 +41,10 @@ def get_empty_atlas_lightcurve():
     return pd.DataFrame([], columns=cols)
 
 
+def get_atlas_query_comment(project_string, object):
+    return f"{objectId}:{project_string}"
+
+
 class AtlasQueryManager(BaseQueryManager):
     name = "atlas"
 
@@ -50,10 +54,12 @@ class AtlasQueryManager(BaseQueryManager):
     QUERY_BAD_REQUEST = 400
     QUERY_THROTTLED = 429
 
+    comment_delim = ":"
+
     default_query_parameters = {
         "lookback_time": 30.0,
         "interval": 2.0,
-        "max_submitted": 10,
+        "max_submitted": 25,
         "requests_timeout": 20.0,
     }
 
@@ -66,6 +72,10 @@ class AtlasQueryManager(BaseQueryManager):
     ):
         self.atlas_config = atlas_config
         self.target_lookup = target_lookup
+
+        self.project_string = self.atlas_config.get("project_string", None)
+        if self.project_string is None:
+            self.project_string = Path(data_path).parent
 
         token = self.atlas_config.get("token", None)
         if token is None:
@@ -84,6 +94,9 @@ class AtlasQueryManager(BaseQueryManager):
 
         self.process_paths(data_path=data_path, create_paths=create_paths)
 
+    def get_atlas_query_comment(self, object):
+        return f"{objectId}{self.comment_delim}{self.project_string}"
+
     def recover_finished_queries(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
@@ -100,10 +113,14 @@ class AtlasQueryManager(BaseQueryManager):
             )
             task_results = task_response["results"]
             for task_result in task_results[::-1]:
-                objectId = task_result.get("comment", None)
+                submit_comment = task_result.get("comment", None)
                 if objectId is None:
                     logger.warning("existing query has no objectId")
                     continue
+                objectId, project_str = submit_comment.split(self.comment_delim)
+                if project_str != self.project_string:
+                    continue
+
                 task_url = task_result.get("url", None)
                 status = self.recover_query_data(objectId, task_url)
                 if status == self.QUERY_SUBMITTED:
@@ -247,13 +264,15 @@ class AtlasQueryManager(BaseQueryManager):
         else:
             mjd_min = target.atlas_data.lightcurve["MJD"].min() - 1e-3
 
+        comment = self.get_atlas_query_comment(objectId)
+
         return dict(
             ra=target.ra,
             dec=target.dec,
             mjd_min=mjd_min,
             mjd_max=t_ref.mjd - 1e-3,
             send_email=False,
-            comment=target.objectId,
+            comment=comment,
         )
 
     def select_query_candidates(self, t_ref: Time = None):
