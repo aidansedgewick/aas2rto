@@ -33,10 +33,13 @@ There are three example configs:
     - As earlier, modify the config and switch ATLAS `use: False` if you don't have the credentials yet.
 - If you do not already have a suitable telegram bot set up, there is a brief description below.
 - Run with `python3 scripts/main.py -c config/fink_kn_bot.yaml`
+
 ### `config/examples/alerce_supernovae.yaml`:
 Note that there are no credentials needed for Alerce!
 - Alerce doesn't have kafka alerts at the moment, so this script periodically queries for new targets.
-- run with `python3 scripts/main.py -c config/fink_kn_bot.yaml`
+- Add Atlas credential, or switch off as earlier.
+- run with `python3 scripts/main.py -c config/alerce_supernovae.yaml`
+
 ### `config/examples/yse_rising.yaml`:
 - Add credentials as before.
 NOTE: the YSE interface is still experimental...!
