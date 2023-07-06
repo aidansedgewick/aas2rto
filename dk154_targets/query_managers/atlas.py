@@ -5,6 +5,7 @@ import requests
 import time
 import yaml
 from logging import getLogger
+from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
@@ -39,10 +40,6 @@ def get_empty_atlas_lightcurve():
         ","
     )
     return pd.DataFrame([], columns=cols)
-
-
-def get_atlas_query_comment(project_string, object):
-    return f"{objectId}:{project_string}"
 
 
 class AtlasQueryManager(BaseQueryManager):
@@ -94,7 +91,7 @@ class AtlasQueryManager(BaseQueryManager):
 
         self.process_paths(data_path=data_path, create_paths=create_paths)
 
-    def get_atlas_query_comment(self, object):
+    def get_atlas_query_comment(self, objectId):
         return f"{objectId}{self.comment_delim}{self.project_string}"
 
     def recover_finished_queries(self, t_ref: Time = None):

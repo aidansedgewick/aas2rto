@@ -617,7 +617,7 @@ def default_plot_lightcurve(
 
 def plot_observing_chart(
     observatory: Observer,
-    target: Target = None,
+    target_list: List[Target] = None,
     t_ref=None,
     fig=None,
     alt_ax=None,
@@ -637,14 +637,17 @@ def plot_observing_chart(
     if observatory is None:
         return fig
 
-    if target.ra is None or target.dec is None:
-        logger.warning(f"plot_oc: \033[33m{target.objectId} has no coordinates!\033[0m")
-        fig.suptitle(f"{target.objectId} has no coordinates!")
-        return fig
+    if target_list is None:
+        target_list = [None]
+    if isinstance(target_list, Target):
+        target_list = [target_list]
+        target0 = target_list
+    else:
+        target0 = target_list[0]
 
     obs_info = None
-    if target is not None:
-        obs_info = target.observatory_info.get(obs_name, None)
+    if target0 is not None:
+        obs_info = target0.observatory_info.get(obs_name, None)
         if obs_info is not None:
             t_grid = obs_info.t_grid
             moon_altaz = obs_info.moon_altaz
@@ -656,7 +659,50 @@ def plot_observing_chart(
         moon_altaz = observatory.moon_altaz(t_grid)
         sun_altaz = observatory.sun_altaz(t_grid)
         obs_info = dict(t_grid=t_grid, moon_altaz=moon_altaz, sun_altaz=sun_altaz)
-        if target is not None:
+
+    alt_ax.plot(t_grid.mjd, moon_altaz.alt.deg, color="0.5", ls="--", label="moon")
+    alt_ax.plot(t_grid.mjd, sun_altaz.alt.deg, color="0.5", ls=":", label="sun")
+    alt_ax.set_ylim(-20, 90)
+    alt_ax.axhline(0, color="k")
+
+    spacing = np.arange(0, 1.01, 4 / 24)
+    xticks = t_grid[0].mjd + spacing
+    xticklabels = [f"+{tl*24:.0f}h" for tl in spacing]
+    xticklabels[0] = "mjd+0h"
+    alt_ax.set_xticks(xticks)
+    alt_ax.set_xticklabels(xticklabels, ha="left")
+    alt_ax.set_xlim(t_grid[0].mjd, t_grid[-1].mjd)
+
+    t0 = t_grid[0]
+    t0_str = t0.strftime("%H:%M")
+    label = f"mjd={t0.mjd:.3f} ({t0_str}UT)"
+    alt_ax.text(t0.mjd, 90.0, label, ha="left", va="bottom")
+
+    alt_ax.set_ylabel("Altitude [deg]", fontsize=16)
+
+    title = f"Observing from {obs_name}"
+    title = title + f"\n starting at {t_ref.strftime('%Y-%m-%d %H:%M:%S')} UTC"
+    title_kwargs = dict(fontsize=14, ha="center", va="top")
+    fig.text(0.5, 0.98, title, transform=fig.transFigure, **title_kwargs)
+
+    # sun_alt = = (91 * u.deg - obs.altaz(time, target).alt) * (1/u.deg)
+
+    sky_ax.set_rlim(bottom=90, top=0)
+    sky_ax.plot(sun_altaz.az.rad, sun_altaz.alt.deg, color="0.5", ls=":")
+    sky_ax.plot(moon_altaz.az.rad, moon_altaz.alt.deg, color="0.5", ls="--")
+
+    for ii, target in enumerate(target_list):
+        if target is None:
+            continue
+        if target.ra is None or target.dec is None:
+            msg = f"plot_oc: \033[33m{target.objectId} has no coordinates!\033[0m"
+            logger.warning(msg)
+            continue
+        obs_info = target.observatory_info.get("obs_name", None)
+        target_altaz = None
+        if obs_info is not None:
+            target_altaz = obs_info.target_altaz
+        if target_altaz is None:
             if warn:
                 msg = (
                     "You're computing info for plotting each target. This is expensive. "
@@ -669,32 +715,21 @@ def plot_observing_chart(
                 logger.warning(msg)
             target_altaz = observatory.altaz(t_grid, target)
 
-    alt_ax.plot(t_grid.mjd, moon_altaz.alt.deg, color="0.5", ls="--", label="moon")
-    alt_ax.plot(t_grid.mjd, sun_altaz.alt.deg, color="0.5", ls=":", label="sun")
-    alt_ax.set_ylim(-20, 90)
-    alt_ax.axhline(0, color="k")
-    alt_ax.set_ylabel("Altitude [deg]", fontsize=16)
-    if target is not None:
-        alt_ax.plot(t_grid.mjd, target_altaz.alt.deg, color="b", label="target")
-
         if all(target_altaz.alt < 30 * u.deg):
             bad_alt_kwargs = dict(
                 color="red", rotation=45, ha="center", va="center", fontsize=18
             )
             text = f"target alt never >30 deg"
-            alt_ax.text(0.5, 0.5, text, transform=alt_ax.transAxes, **bad_alt_kwargs)
+            if len(target_list) == 1:
+                alt_ax.text(
+                    0.5, 0.5, text, transform=alt_ax.transAxes, **bad_alt_kwargs
+                )
 
-    title = f"Observing from {obs_name}"
-    title = title + f"\n starting at {t_ref.strftime('%Y-%m-%d %H:%M:%S')} UTC"
-    title_kwargs = dict(fontsize=14, ha="center", va="bottom")
-    alt_ax.text(0.5, 1.0, title, transform=alt_ax.transAxes, **title_kwargs)
+        target_kwargs = dict(label=target.objectId, color=f"C{ii%8}")
 
-    # sun_alt = = (91 * u.deg - obs.altaz(time, target).alt) * (1/u.deg)
+        alt_ax.plot(t_grid.mjd, target_altaz.alt.deg, **target_kwargs)
+        sky_ax.plot(target_altaz.az.rad, target_altaz.alt.deg, **target_kwargs)
 
-    sky_ax.set_rlim(bottom=90, top=0)
-    sky_ax.plot(sun_altaz.az.rad, sun_altaz.alt.deg, color="0.5", ls=":")
-    sky_ax.plot(moon_altaz.az.rad, moon_altaz.alt.deg, color="0.5", ls="--")
-    if target is not None:
-        sky_ax.plot(target_altaz.az.rad, target_altaz.alt.deg, color="r")
+    alt_ax.legend()
 
     return fig

@@ -390,7 +390,7 @@ def test__default_lightcurve(target_with_data: Target):
 def test__plot_observing_chart(example_target: Target):
     observatory = Observer(location=EarthLocation.of_site("greenwich"))
 
-    t_ref = Time(60010, format="mjd")
+    t_ref = Time(60010.0, format="mjd")
     # Check no errors raised
     oc_fig = target.plot_observing_chart(
         observatory, example_target, t_ref=t_ref, warn=False
