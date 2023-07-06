@@ -495,16 +495,16 @@ class YseQueryManager(BaseQueryManager):
         self.check_coordinates()
         self.query_updates_available = False
 
-    def apply_messenger_updates(self, alerts):
-        for alert in alerts:
-            objectId = alert["objectId"]
-            target = self.target_lookup.get(objectId, None)
-            if target is None:
-                continue
-            target.send_updates = True
-            topic_str = alert["topic"]
-            alert_text = f"ipdates
-            target.update_messages.append(alert_text)
+    # def apply_messenger_updates(self, alerts):
+    #     for alert in alerts:
+    #         objectId = alert["objectId"]
+    #         target = self.target_lookup.get(objectId, None)
+    #         if target is None:
+    #             continue
+    #         target.send_updates = True
+    #         topic_str = alert["topic"]
+    #         alert_text = f"updates from yse {objectId}"
+    #         target.update_messages.append(alert_text)
 
 
 class YseQuery:
