@@ -503,7 +503,7 @@ class YseQueryManager(BaseQueryManager):
                 continue
             target.send_updates = True
             topic_str = alert["topic"]
-            alert_text = f"FINK alert {topic_str}\nsee fink-portal.org/{objectId}"
+            alert_text = f"ipdates
             target.update_messages.append(alert_text)
 
 

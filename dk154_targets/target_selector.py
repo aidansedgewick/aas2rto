@@ -549,11 +549,18 @@ class TargetSelector:
                 target.latest_oc_fig_paths.values()
             )
             if self.telegram_messenger is not None:
+                self.telegram_messenger.message_users(texts=messages)
                 self.telegram_messenger.message_users(
-                    texts=messages, img_paths=img_paths
+                    img_paths=target.latest_lc_fig_path, caption="lightcurve"
+                )
+                self.telegram_messenger.message_users(
+                    img_paths=target.latest_oc_fig_paths.values(),
+                    caption="observing charts",
                 )
             if self.slack_messenger is not None:
-                self.slack_messenger.send_messages(texts=messages, img_paths=img_paths)
+                self.slack_messenger.send_messages(
+                    texts=messages, img_paths=target.latest_lc_fig_path
+                )
 
     def reset_target_figures(self):
         for objectId, target in self.target_lookup.items():

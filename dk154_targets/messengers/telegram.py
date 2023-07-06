@@ -50,30 +50,41 @@ class TelegramMessenger:
             return [l.split("#").strip() for l in lines]
         return []
 
-    def send_to_user(self, user, texts: List[str] = None, img_paths: List[str] = None):
+    def send_to_user(
+        self, user, texts: List[str] = None, img_paths: List[str] = None, caption=None
+    ):
         if isinstance(texts, str):
             texts = [texts]
         if isinstance(img_paths, str) or isinstance(img_paths, Path):
             img_paths = [img_paths]
 
         for text in texts:
-            url = f"{self.http_url}/bot{self.token}/sendMessage?chat_id={user}&text={text}"
-            requests.get(url)
-            # self.bot.send_message(chat_id=user, text=text)
+            # url = f"{self.http_url}/bot{self.token}/sendMessage?chat_id={user}&text={text}"
+            # requests.get(url)
+            self.bot.send_message(chat_id=user, text=text)
+        img_list = []
         for img_path in img_paths:
             if img_path is None:
                 if img_path.exists():
                     logger.warning(f"{img_path.name} does not exist.")
                 continue
+
             with open(img_path, "rb") as img:
-                # url = f"{self.http_url}/bot{self.token}/sendPhoto?chat_id={user}&photo={img}"
-                # response = requests.get(url)
-                # print(response.json())
-                self.bot.send_photo(chat_id=user, photo=img)
+                img_list.append(img)
+            if len(img_list) > 2:
+                media = [telegram.InputMediaPhoto(img) for img in img_list]
+                self.bot.send_media_group(chat_id=user, media=media, caption=caption)
+            else:
+                for img in img_list:
+                    self.bot.send_photo(chat_id=user, photo=img, caption=caption)
         return None
 
     def message_users(
-        self, users=None, texts: List[str] = None, img_paths: List[str] = None
+        self,
+        users=None,
+        texts: List[str] = None,
+        img_paths: List[str] = None,
+        caption=None,
     ):
         if self.bot is None:
             logger.warning("telegram bot did not initialise")
@@ -90,7 +101,9 @@ class TelegramMessenger:
         exceptions = []
         for user in self.users:
             try:
-                self.send_to_user(user, texts=texts, img_paths=img_paths)
+                self.send_to_user(
+                    user, texts=texts, img_paths=img_paths, caption=caption
+                )
             except Exception as e:
                 exceptions.append(f"for user {user}:\n{e}")
         if len(exceptions) > 0:

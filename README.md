@@ -11,6 +11,7 @@ To install
 - Preferably start a new virtualenv: `python3.8 -m virtualenv dk154_env`
     - You may need to `python3.8 -m pip install virtualenv` 
     - Then `source dk154_env/bin/activate` - do this every session!
+- Move to the cloned directory: `cd dk154-targets-py38`
 - Install requirements `python3 -m pip install -r requirements.txt`
 - Install this package: `python3 -m pip install -e .` 
     - ideally install as developer -this is the `-e` flag
