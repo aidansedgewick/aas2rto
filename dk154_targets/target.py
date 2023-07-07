@@ -641,9 +641,7 @@ def plot_observing_chart(
         target_list = [None]
     if isinstance(target_list, Target):
         target_list = [target_list]
-        target0 = target_list
-    else:
-        target0 = target_list[0]
+    target0 = target_list[0]
 
     obs_info = None
     if target0 is not None:

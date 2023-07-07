@@ -31,10 +31,7 @@ if __name__ == "__main__":
     config_file = args.config or paths.config_path / "selector_config.yaml"
     config_file = Path(args.config)
 
-    if config_file.stem == "fink_supernovae":
-        scoring_function = supernova_peak_score
-        modeling_function = sncosmo_model
-    elif config_file.stem == "alerce_supernovae":
+    if "supernovae" in config_file.stem:
         scoring_function = supernova_peak_score
         modeling_function = sncosmo_model
     else:

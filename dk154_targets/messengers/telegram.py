@@ -1,5 +1,6 @@
 import time
 import requests
+import traceback
 from logging import getLogger
 from pathlib import Path
 from typing import Dict, List
@@ -53,31 +54,33 @@ class TelegramMessenger:
     def send_to_user(
         self, user, texts: List[str] = None, img_paths: List[str] = None, caption=None
     ):
-        if isinstance(texts, str):
-            texts = [texts]
-        if isinstance(img_paths, str) or isinstance(img_paths, Path):
-            img_paths = [img_paths]
+        if texts is not None:
+            if isinstance(texts, str):
+                texts = [texts]
+        if img_paths is not None:
+            if isinstance(img_paths, str) or isinstance(img_paths, Path):
+                img_paths = [img_paths]
 
-        for text in texts:
-            # url = f"{self.http_url}/bot{self.token}/sendMessage?chat_id={user}&text={text}"
-            # requests.get(url)
-            self.bot.send_message(chat_id=user, text=text)
-        img_list = []
-        for img_path in img_paths:
-            if img_path is None:
-                if img_path.exists():
-                    logger.warning(f"{img_path.name} does not exist.")
-                continue
-
-            with open(img_path, "rb") as img:
-                img_list.append(img)
+        if texts is not None:
+            for text in texts:
+                # url = f"{self.http_url}/bot{self.token}/sendMessage?chat_id={user}&text={text}"
+                # requests.get(url)
+                self.bot.send_message(chat_id=user, text=text)
+        if img_paths is not None:
+            img_list = []
+            for img_path in img_paths:
+                if not img_path.exists():
+                    logger.warning(f"{Path(img_path).stem} missing")
+                with open(img_path, "rb") as img:
+                    if len(img_paths) > 2:
+                        img_list.append(telegram.InputMediaPhoto(img))
+                    else:
+                        self.bot.send_photo(chat_id=user, photo=img, caption=caption)
             if len(img_list) > 2:
-                media = [telegram.InputMediaPhoto(img) for img in img_list]
-                self.bot.send_media_group(chat_id=user, media=media, caption=caption)
-            else:
-                for img in img_list:
-                    self.bot.send_photo(chat_id=user, photo=img, caption=caption)
-        return None
+                self.bot.send_media_group(chat_id=user, media=img_list)
+
+                        
+            return None
 
     def message_users(
         self,
@@ -105,7 +108,8 @@ class TelegramMessenger:
                     user, texts=texts, img_paths=img_paths, caption=caption
                 )
             except Exception as e:
-                exceptions.append(f"for user {user}:\n{e}")
+                tr = traceback.format_exc()
+                exceptions.append(f"for user {user}:\n{e}\n\n{tr}")
         if len(exceptions) > 0:
             execption_str = "\n\nand\n\n".join(e for e in exceptions)
             msg = "During message_users:\n\n" + execption_str
@@ -113,8 +117,9 @@ class TelegramMessenger:
                 try:
                     self.send_to_user(sudoer, texts=msg)
                 except Exception as e:
+                    tr = traceback.format_exc()
                     logger.warn(
-                        f"Exception while sending error report to telegram sudoers! {e}"
+                        f"Exception while sending error report to telegram sudoers! {e}\n{tr}"
                     )
         return None
 

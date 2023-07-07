@@ -92,7 +92,7 @@ class AtlasQueryManager(BaseQueryManager):
         self.process_paths(data_path=data_path, create_paths=create_paths)
 
     def get_atlas_query_comment(self, objectId):
-        return f"{objectId}{self.comment_delim}{self.project_string}"
+        return f"{objectId}"  # {self.comment_delim}{self.project_string}"
 
     def recover_finished_queries(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -111,12 +111,13 @@ class AtlasQueryManager(BaseQueryManager):
             task_results = task_response["results"]
             for task_result in task_results[::-1]:
                 submit_comment = task_result.get("comment", None)
-                if objectId is None:
-                    logger.warning("existing query has no objectId")
+                if submit_comment is None:
+                    logger.warning("existing query has no comment")
                     continue
-                objectId, project_str = submit_comment.split(self.comment_delim)
-                if project_str != self.project_string:
-                    continue
+                # objectId, project_str = submit_comment.split(self.comment_delim)
+                # if project_str != self.project_string:
+                #    continue
+                objectId = submit_comment
 
                 task_url = task_result.get("url", None)
                 status = self.recover_query_data(objectId, task_url)
@@ -259,9 +260,9 @@ class AtlasQueryManager(BaseQueryManager):
         if target.atlas_data.lightcurve is None:
             mjd_min = t_ref.mjd - self.query_parameters["lookback_time"]
         else:
-            mjd_min = target.atlas_data.lightcurve["MJD"].min() - 1e-3
+            mjd_min = target.atlas_data.lightcurve["mjd"].min() - 1e-3
 
-        comment = self.get_atlas_query_comment(objectId)
+        comment = self.get_atlas_query_comment(target.objectId)
 
         return dict(
             ra=target.ra,

@@ -387,12 +387,37 @@ def test__default_lightcurve(target_with_data: Target):
     plt.close(lc_fig2)
 
 
-def test__plot_observing_chart(example_target: Target):
+def test__plot_observing_chart_no_target():
+    observatory = Observer(location=EarthLocation.of_site("greenwich"))
+    t_ref = Time(60010.0, format="mjd")
+    # Check no errors raised
+    oc_fig = target.plot_observing_chart(observatory, t_ref=t_ref, warn=False)
+    plt.close(fig=oc_fig)
+
+
+def test__plot_observing_chart_one_target(example_target: Target):
     observatory = Observer(location=EarthLocation.of_site("greenwich"))
 
     t_ref = Time(60010.0, format="mjd")
     # Check no errors raised
     oc_fig = target.plot_observing_chart(
         observatory, example_target, t_ref=t_ref, warn=False
+    )
+    plt.close(fig=oc_fig)
+
+
+def test__plot_observing_chart_many_targets():
+    observatory = Observer(location=EarthLocation.of_site("greenwich"))
+
+    target_list = [
+        Target("a", ra=30, dec=45),
+        Target("b", ra=60, dec=45),
+        Target("c", ra=90, dec=45),
+    ]
+
+    t_ref = Time(60010.0, format="mjd")
+    # Check no errors raised
+    oc_fig = target.plot_observing_chart(
+        observatory, target_list, t_ref=t_ref, warn=False
     )
     plt.close(fig=oc_fig)
