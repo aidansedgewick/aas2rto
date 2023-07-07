@@ -615,6 +615,17 @@ def default_plot_lightcurve(
     return fig
 
 
+def _warn_expensive_plotting(objectId=None, obs_name=None):
+    objectId = objectId or "each target!"
+    obs_name = obs_name or "<obs-name>"
+    msg = (
+        f"\033[33mYou're computing expensive info for plotting {objectId}.\033[0m " 
+        f"You should call `selector.compute_observatory_info(t_ref=<Time>)` "
+        f"before scoring/plotting which precomputes this information, and adds it to each target. "
+        f"You can then access the info as my_target.observatory_info['{obs_name}']`"
+    )
+    logger.warning(msg)
+
 def plot_observing_chart(
     observatory: Observer,
     target_list: List[Target] = None,
@@ -653,6 +664,7 @@ def plot_observing_chart(
             target_altaz = obs_info.target_altaz
 
     if obs_info is None:
+        _warn_expensive_plotting()
         t_grid = t_ref + np.linspace(0, 24.0, 24 * 4) * u.hour
         moon_altaz = observatory.moon_altaz(t_grid)
         sun_altaz = observatory.sun_altaz(t_grid)
@@ -696,21 +708,13 @@ def plot_observing_chart(
             msg = f"plot_oc: \033[33m{target.objectId} has no coordinates!\033[0m"
             logger.warning(msg)
             continue
-        obs_info = target.observatory_info.get("obs_name", None)
+        obs_info = target.observatory_info.get(obs_name, None)
         target_altaz = None
         if obs_info is not None:
             target_altaz = obs_info.target_altaz
         if target_altaz is None:
             if warn:
-                msg = (
-                    "You're computing info for plotting each target. This is expensive. "
-                    " You should call `selector.compute_observatory_info(t_ref=<Time>)` "
-                    + "before scoring/plotting"
-                    + "which is less expensive as it precomputes this information, and saves it"
-                    + "In each target. You can then access the info as "
-                    + "`my_target.observatory_info[<obs-name>]`"
-                )
-                logger.warning(msg)
+                _warn_expensive_plotting(target.objectId, obs_name)
             target_altaz = observatory.altaz(t_grid, target)
 
         if all(target_altaz.alt < 30 * u.deg):

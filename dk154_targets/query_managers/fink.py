@@ -57,12 +57,16 @@ def process_fink_lightcurve(detections: pd.DataFrame, non_detections: pd.DataFra
     int -> float conversion does not break these values, and re-concatenate detections.
     """
     # Check to see if we're working with sensible data...
-    if "valid" in np.unique(non_detections["tag"]):
-        ldet = len(detections)
-        lvalid = len(non_detections.query("tag=='valid'"))
-        if not ldet == lvalid:
-            msg = f"mismatch : detections ({ldet}) != 'valid' non_detections ({lvalid})"
-            raise ValueError(msg)
+    if "tag" in non_detections:
+        if "valid" in np.unique(non_detections["tag"]):
+            ldet = len(detections)
+            lvalid = len(non_detections.query("tag=='valid'"))
+            if not ldet == lvalid:
+                msg = f"mismatch : detections ({ldet}) != 'valid' non_detections ({lvalid})"
+                raise ValueError(msg)
+    else:
+        if not detections.empty:
+            raise ValueError("non_detections has no 'tag' (no detections), but detections is not empty")
 
     # fix detections
     detections["tag"] = "valid"
@@ -78,10 +82,16 @@ def process_fink_lightcurve(detections: pd.DataFrame, non_detections: pd.DataFra
             if not all(pd.isnull(non_detections["candid"])):
                 print(non_detections["candid"])
                 raise ValueError("not all non-detections have Null `candid`")
+
     non_detections["candid"] = 0
 
+
     lightcurve = pd.concat([detections, non_detections])
-    lightcurve.sort_values("jd", inplace=True)
+    if not lightcurve.empty:
+        lightcurve.sort_values("jd", inplace=True)
+    else:
+        lightcurve["jd"] = 0 # Fails later without a date column...
+        lightcurve["mjd"] = 0
     return lightcurve
 
 
@@ -306,6 +316,8 @@ class FinkQueryManager(BaseQueryManager):
                 N_failed = N_failed + 1
                 continue
             lightcurve = process_fink_lightcurve(detections, non_detections)
+            if lightcurve.empty:
+                logger.warning(f"\033[33m{objectId} lightcurve empty!\033[0m")
             lightcurve.to_csv(lightcurve_file, index=False)
             successful_queries.append(objectId)
         N_success = len(successful_queries)
@@ -360,7 +372,8 @@ class FinkQueryManager(BaseQueryManager):
                 if existing_lightcurve is not None:
                     if len(lightcurve) == len(existing_lightcurve):
                         continue
-            lightcurve.sort_values("jd", inplace=True)
+            if not lightcurve.empty:
+                lightcurve.sort_values("jd", inplace=True)
             loaded_lightcurves.append(objectId)
             target.fink_data.add_lightcurve(lightcurve)
             target.updated = True
