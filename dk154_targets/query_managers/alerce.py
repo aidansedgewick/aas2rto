@@ -32,6 +32,12 @@ logger = getLogger(__name__.split(".")[-1])
 
 warnings.simplefilter("ignore", category=fits.verify.VerifyWarning)
 
+QUERY_RESULTS_COLUMNS = (
+    "oid ndethist ncovhist mjdstarthist mjdendhist corrected stellar ndet".split()
+    + "g_r_max g_r_max_corr g_r_mean g_r_mean_corr firstmjd lastmjd deltajd".split()
+    + "meanra meandec sigmara sigmadec class classifier probability step_id_corr".split()
+)
+
 
 def process_alerce_lightcurve(
     detections: pd.DataFrame, non_detections: pd.DataFrame
@@ -74,7 +80,7 @@ def target_from_alerce_lightcurve(
     return target
 
 
-def process_query_results(input_query_updates: pd.DataFrame):
+def process_alerce_query_results(input_query_updates: pd.DataFrame):
     query_updates = input_query_updates.copy()
     query_updates.sort_values(["oid", "lastmjd"], inplace=True)
     query_updates.drop_duplicates(subset="oid", keep="last", inplace=True)
@@ -100,8 +106,9 @@ class AlerceQueryManager(BaseQueryManager):
         "n_objects": 25,
         "interval": 0.25,  # how often to query for new objects
         "update": 2.0,  # how often to update each target
-        "max_latest_lookback": 30.0,  # bad if latest data is older than 30 days
-        "max_earliest_lookback": 70.0,  # bad if the younest data is older than 70 days (AGN!)
+        "lookback": 30.0,
+        # "max_latest_lookback": 30.0,  # bad if latest data is older than 30 days
+        # "max_earliest_lookback": 70.0,  # bad if the younest data is older than 70 days (AGN!)
         "max_failed_queries": 10,  # after X failed queries, stop trying
         "max_total_query_time": 600,  # total time to spend in each stage seconds
     }
@@ -148,7 +155,12 @@ class AlerceQueryManager(BaseQueryManager):
         self.query_parameters.update(query_params)
 
     def query_and_collate_pages(
-        self, query_name, query_pattern, t_ref, delete_pages=True
+        self,
+        query_name,
+        query_pattern,
+        t_ref: Time = None,
+        delete_pages=True,
+        sleep=None,
     ):
         page_results_list = []
         page_results_file_list = []
@@ -169,21 +181,36 @@ class AlerceQueryManager(BaseQueryManager):
                     page_results = self.alerce_broker.query_objects(**query_data)
                 except Exception as e:
                     logger.info(f"query {query_name} page {page} failed: break")
-                    page_results = []
+                    page_results = pd.DataFrame([], columns=QUERY_RESULTS_COLUMNS)
                     print(e)
+                    return None
+                if page_results.empty:
                     break
                 page_results.to_csv(page_results_file, index=False)
                 page_results_list.append(page_results)
+                page_results_file_list.append(page_results_file)
+                if sleep is not None:
+                    time.sleep(sleep)
             n_results = len(page_results)
             page = page + 1
 
-        query_results = None
+        query_results = pd.DataFrame([], columns=QUERY_RESULTS_COLUMNS)
         if len(page_results_list) > 0:
             query_results = pd.concat(page_results_list)
-            if delete_pages:
-                for page_results_file in page_results_file_list:
-                    os.remove(page_results_file)  # Don't need to keep page results.
+        if delete_pages:
+            for page_results_file in page_results_file_list:
+                os.remove(page_results_file)  # Don't need to keep page results.
         return query_results
+
+    def prepare_query_data(self, query_pattern: dict, page: int, t_ref: Time):
+        query_data = dict(
+            **query_pattern,
+            page=page,
+            firstmjd=t_ref.mjd - self.query_parameters["lookback"],
+            lastmjd=t_ref.mjd,
+            page_size=self.query_parameters["n_objects"],
+        )
+        return query_data
 
     def query_for_updates(self, t_ref: Time = None) -> pd.DataFrame:
         t_ref = t_ref or Time.now()
@@ -199,7 +226,7 @@ class AlerceQueryManager(BaseQueryManager):
                     raw_query_updates = pd.read_csv(query_results_file)
                     if raw_query_updates.empty:
                         continue
-                    query_updates = process_query_results(raw_query_updates)
+                    query_updates = process_alerce_query_results(raw_query_updates)
                     self.query_updates[query_name] = query_updates
                     # It's fine that we don't make the query now (ie, don't go to "else:")
                     # we just assume that there were no results if the file is tiny.
@@ -218,23 +245,13 @@ class AlerceQueryManager(BaseQueryManager):
                     raw_query_updates.to_csv(query_results_file, index=False)
                     continue
                 raw_query_updates.to_csv(query_results_file, index=False)
-                query_updates = process_query_results(raw_query_updates)
+                query_updates = process_alerce_query_results(raw_query_updates)
                 self.query_updates[query_name] = query_updates
                 t_end = time.perf_counter()
                 logger.info(
                     f"{query_name} returned {len(query_updates)} in {t_end-t_start:.1f}s"
                 )
                 self.query_results_updated = True
-
-    def prepare_query_data(self, query_pattern: dict, page: int, t_ref: Time):
-        query_data = dict(
-            **query_pattern,
-            page=page,
-            lastmjd=t_ref.mjd - self.query_parameters["max_latest_lookback"],
-            firstmjd=t_ref.mjd - self.query_parameters["max_earliest_lookback"],
-            page_size=self.query_parameters["n_objects"],
-        )
-        return query_data
 
     def get_magstats_to_query(self, oid_list: List[str] = None, t_ref: Time = None):
         t_ref = t_ref or Time.now()

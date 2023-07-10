@@ -107,7 +107,52 @@ def sncosmo_model(target: Target):
     else:
         bounds = dict(z=(0.005, 0.5))
 
-    use_mcmc = False
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            lsq_result, lsq_fitted_model = sncosmo.fit_lc(
+                lightcurve, model, fitting_params, bounds=bounds
+            )
+            fitted_model = lsq_fitted_model
+            result = lsq_result
+        model.result = result
+
+    except Exception as e:
+        logger.warning(f"{target.objectId} sncosmo fitting failed")
+        tr = traceback.format_exc()
+        print(tr)
+        fitted_model = None
+
+    return fitted_model
+
+
+def sncosmo_model_emcee(target: Target):
+    if sncosmo is None:
+        msg = "`sncosmo` not imported properly. try:\n    \033[33;1mpython3 -m pip install sncosmo\033[0m"
+        raise ModuleNotFoundError(msg)
+
+    detections = get_detections(target)
+    lightcurve = build_astropy_lightcurve(detections)
+
+    model = initialise_model()
+
+    if sfdq is None:
+        print(sfdq_traceback)
+        msg = "sfd.SDFQuery() not initialised properly. try:\n     scripts/init_sfd_maps.py"
+
+    mwebv = sfdq(target.coord)
+    model.set(mwebv=mwebv)
+
+    fitting_params = model.param_names
+    fitting_params.remove("mwebv")
+
+    known_redshift = target.tns_data.parameters.get("Redshift", None)
+    if known_redshift is not None:
+        logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
+        fitting_params.remove("z")
+        bounds = {}
+    else:
+        bounds = dict(z=(0.005, 0.5))
 
     try:
         with warnings.catch_warnings():
@@ -115,7 +160,7 @@ def sncosmo_model(target: Target):
             lsq_result, lsq_fitted_model = sncosmo.fit_lc(
                 lightcurve, model, fitting_params, bounds=bounds
             )
-            if use_mcmc:
+            try:
                 result, fitted_model = sncosmo.mcmc_lc(
                     lightcurve,
                     lsq_fitted_model,
@@ -124,9 +169,10 @@ def sncosmo_model(target: Target):
                     nwalkers=32,
                     bounds=bounds,
                 )
-            else:
+            except Exception as e:
                 fitted_model = lsq_fitted_model
                 result = lsq_result
+        fitted_model.result = result
 
     except Exception as e:
         logger.warning(f"{target.objectId} sncosmo fitting failed")

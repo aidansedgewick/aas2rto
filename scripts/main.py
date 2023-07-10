@@ -6,7 +6,7 @@ from argparse import ArgumentParser
 
 from dk154_targets import TargetSelector
 from dk154_targets.scoring import latest_flux, supernova_peak_score
-from dk154_targets.modeling import empty_modeling, sncosmo_model
+from dk154_targets.modeling import empty_modeling, sncosmo_model, sncosmo_model_emcee
 
 from dk154_targets import paths
 

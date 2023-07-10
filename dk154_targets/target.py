@@ -477,14 +477,19 @@ def default_plot_lightcurve(
     peak_mag_vals = []
     legend_handles = []
 
-    lightcurve_plot_colours = {}
+    ztf_colors = {"ztfg": "C0", "ztfr": "C1"}
+    atlas_colors = {"atlasc": "C2", "atlaso": "C3"}
+    lightcurve_plot_colours = {**ztf_colors, **atlas_colors}
+
+    model = target.models.get("sncosmo_model_emcee", None)
+    if model is None:
+        model = target.models.get("sncosmo_model", None)
 
     for ii, (band, band_history) in enumerate(
         target.compiled_lightcurve.groupby("band")
     ):
         band_history.sort_values("jd")
-        band_kwargs = dict(color=f"C{ii%8}")
-        lightcurve_plot_colours[band] = f"C{ii%8}"
+        band_kwargs = dict(color=lightcurve_plot_colours.get(band, f"C{ii%10}"))
 
         scatter_handle = ax.errorbar(
             0, 0, yerr=0.1, label=band, **band_kwargs, **det_kwargs
@@ -528,6 +533,29 @@ def default_plot_lightcurve(
             yerr = detections["magerr"]
             ax.errorbar(xdat, ydat, yerr=yerr, **band_kwargs, **det_kwargs)
 
+        ###======== try sncosmo models
+        if model is not None:
+            t_start = target.compiled_lightcurve["jd"].min()
+            t_end = t_ref.jd + forecast_days
+            model_time_grid = np.arange(t_start, t_end, 0.1)
+            for band, color in lightcurve_plot_colours.items():
+                # model_mag = model.bandmag(band, "ab", model_time_grid)
+                model_flux = model.bandflux(band, model_time_grid, zp=8.9, zpsys="ab")
+                pos_mask = model_flux > 0.0
+                model_mag = -2.5 * np.log10(model_flux[pos_mask]) + 8.9
+
+                time_grid_shift = model_time_grid[pos_mask] - t_ref.jd
+                ax.plot(time_grid_shift, model_mag, color=color)
+
+                samples = getattr(model, "result", {}).get("samples", None)
+                if samples is not None:
+                    lower, upper = get_bounds(
+                        model_time_grid[pos_mask], model, sample, band
+                    )
+                    ax.fill_between(
+                        time_grid_shift, lower, upper, color=color, alpha=0.2
+                    )
+
     peak_mag_vals.append(16.0)
     y_bright = np.nanmin(peak_mag_vals)
     ax.set_ylim(22.0, y_bright)
@@ -549,19 +577,6 @@ def default_plot_lightcurve(
     xlabel = f"Days before {date_str}"
     ax.set_xlabel(xlabel)
     ax.set_ylabel("Difference magnitude")
-
-    ##======== try sncosmo models
-    model = target.models.get("sncosmo_model")
-    if model is not None:
-        t_start = target.compiled_lightcurve["jd"].min()
-        t_end = t_ref.jd + forecast_days
-        model_time_grid = np.arange(t_start, t_end, 0.1)
-        for band, color in lightcurve_plot_colours.items():
-            # model_mag = model.bandmag(band, "ab", model_time_grid)
-            model_flux = model.bandflux(band, model_time_grid, zp=8.9, zpsys="ab")
-            pos_mask = model_flux > 0.0
-            model_mag = -2.5 * np.log10(model_flux[pos_mask]) + 8.9
-            ax.plot(model_time_grid[pos_mask] - t_ref.jd, model_mag, color=color)
 
     ##======== add postage stamps
     cutouts = {}
@@ -613,6 +628,21 @@ def default_plot_lightcurve(
                 0.01, 0.01, text, ha="left", va="bottom", transform=fig.transFigure
             )
     return fig
+
+
+def get_bounds(time_grid, model, samples, band, spacing=50):
+    model_copy = copy.deepcopy(model)
+    lc_evaluations = []
+    for p_jj, params in enumerate(samples[::spacing]):
+        pdict = {k: v for k, v in zip(model.res["vparam_names"], params)}
+        model_copy.update(pdict)
+        lc_flux_jj = model_copy.bandflux(band, time_grid, zp=25.0, zpsys="ab")
+        with np.errstate(divide="ignore", invalid="ignore"):
+            lc_mag_jj = -2.5 * np.log10(lc_flux_jj[pos_mask]) + 8.9
+        lc_evaluations.append(lc_mag_jj)
+    lc_evaluations = np.vstack(lc_evaluations)
+    lc_bounds = np.nanquantile(lc_evaluations, q=[0.16, 0.84], axis=0)
+    return lc_bounds
 
 
 def plot_observing_chart(

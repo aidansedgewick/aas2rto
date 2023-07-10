@@ -115,10 +115,21 @@ def target_from_fink_lightcurve(
     return target
 
 
+def process_fink_query_results(raw_query_results: pd.DataFrame):
+    query_results = raw_query_results.copy()
+    query_results.sort_values(["objectId", "ndethist"], inplace=True)
+    query_results.drop_duplicates("objectId", keep="last")
+    query_results.set_index("objectId", verify_integrity=True, inplace=True)
+    return query_results
+
+
 class FinkQueryManager(BaseQueryManager):
     name = "fink"
     default_query_parameters = {
         "interval": 2.0,
+        "update": 1.0,
+        "query_timespan": 0.25,
+        "lookback_time": 20.0,
         "max_failed_queries": 10,
         "max_total_query_time": 300,  # total time to spend in each stage seconds
     }
@@ -156,12 +167,17 @@ class FinkQueryManager(BaseQueryManager):
 
         self.kafka_config = self.get_kafka_parameters()
 
+        object_queries = self.fink_config.get("object_queries", [])
+        if isinstance(object_queries, str):
+            object_queries = [object_queries]
+        self.object_queries = object_queries
+
         self.query_parameters = self.default_query_parameters.copy()
         query_params = self.fink_config.get("query_parameters", {})
         self.query_parameters.update(query_params)
 
-        self.lc_queries_to_retry = []
-        self.alerts_integrations_to_retry = []
+        self.query_results = {}
+        self.query_updates = {}
 
         self.process_paths(data_path=data_path, create_paths=create_paths)
 
@@ -255,6 +271,71 @@ class FinkQueryManager(BaseQueryManager):
                     with open(cutout_file, "wb+") as f:
                         pickle.dump(cutouts, f)
         return processed_alerts
+
+    def query_for_updates(self, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
+        for fink_class in self.object_queries:
+            query_results_file = self.get_query_results_file(fink_class)
+            query_results_file_age = calc_file_age(query_results_file, t_ref)
+            if query_results_file_age < self.query_parameters["update"]:
+                raw_query_updates = pd.read_csv(query_results_file)
+                if raw_query_updates.empty:
+                    continue
+                query_updates = process_fink_query_results(raw_query_updates)
+                self.query_updates[fink_class] = query_updates
+            else:
+                logger.info(f"query for {fink_class}")
+                t_start = time.perf_counter()
+                raw_query_updates = self.query_and_collate_pages(
+                    fink_class, t_ref=t_ref
+                )
+                if raw_query_updates is None:
+                    continue
+                if raw_query_updates.empty:
+                    raw_query_updates.to_csv(query_results_file, index=False)
+                    continue
+                raw_query_updates.to_csv(query_results_file, index=False)
+                query_updates = process_fink_query_results(raw_query_updates)
+                self.query_updates[fink_class] = query_updates
+                t_end = time.perf_counter()
+                logger.info(
+                    f"{fink_class} returned {len(query_updates)} in {t_end-t_start:.1f}s"
+                )
+                self.query_results_updated = True
+
+    def query_and_collate_pages(
+        self, fink_class, lookback=None, step=None, t_ref: Time = None
+    ):
+        t_ref = t_ref or Time.now()
+
+        step = step or self.query_parameters["query_timespan"]
+        lookback = lookback or self.query_parameters["lookback_time"]
+        lookback_grid = t_ref.jd - np.arange(-lookback, step, step)
+
+        update_dfs = []
+
+        for start_jd, stop_jd in zip(lookback_grid[:-1], lookback_grid[1:]):
+            query_data = self.get_query_data(fink_class, start_jd, stop_jd)
+
+            try:
+                updates = FinkQuery.query_latests(**query_data)
+            except Exception as e:
+                logger.warning(f"{fink_class} {start_jd:.1f}<jd<{stop_jd:.1f} failed")
+
+            n = query_data["n"]
+            if len(updates) == n:
+                msg = f"`{fink_class}` query returned max updates={n}. Choose a shorter `query_timespan`!"
+                logger.warning(msg)
+            if len(updates) > 0:
+                update_dfs.append(updates)
+
+        if len(update_dfs) > 0:
+            return pd.concat(update_dfs)
+        return pd.DataFrame([])
+
+    def get_query_data(self, fink_class, start_mjd: float, stop_mjd: float):
+        return dict(class_=fink_class, n=1000, startdate=start_mjd, stopdate=stop_mjd)
 
     def get_lightcurves_to_query(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -526,6 +607,7 @@ class FinkQuery:
 
     @classmethod
     def do_post(cls, service, process=True, fix_keys=True, return_df=True, **kwargs):
+        kwargs = cls.process_kwargs(**kwargs)
         response = requests.post(f"{cls.api_url}/{service}", json=kwargs)
         if response.status_code != 200:
             msg = f"query for {service} returned status {response.status_code}"
@@ -535,6 +617,10 @@ class FinkQuery:
                 response, fix_keys=fix_keys, return_df=return_df
             )
         return response
+
+    @classmethod
+    def process_kwargs(cls, **kwargs):
+        return {k.rstrip("_"): v for k, v in kwargs.items()}
 
     @classmethod
     def query_objects(cls, fix_keys=True, return_df=True, **kwargs):
