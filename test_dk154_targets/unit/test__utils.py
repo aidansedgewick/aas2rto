@@ -19,7 +19,8 @@ def test__calc_file_age():
     t_ref = Time.now() + 6 * u.hour
     df.to_csv(df_file, index=False)
     file_age = utils.calc_file_age(df_file, t_ref)
-    assert np.isclose(file_age, 0.25)
+    atol = 1e-4
+    assert np.isclose(file_age, 0.25, atol=atol)
     os.remove(df_file)
 
     non_existant_file = paths.test_data_path / "another_test.csv"

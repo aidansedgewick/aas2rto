@@ -33,7 +33,7 @@ if __name__ == "__main__":
 
     if "supernovae" in config_file.stem:
         scoring_function = supernova_peak_score
-        modeling_function = sncosmo_model
+        modeling_function = sncosmo_model_emcee
     else:
         scoring_function = latest_flux
         modeling_function = empty_modeling

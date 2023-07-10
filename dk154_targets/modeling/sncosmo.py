@@ -165,11 +165,14 @@ def sncosmo_model_emcee(target: Target):
                     lightcurve,
                     lsq_fitted_model,
                     fitting_params,
-                    nsamples=5000,
-                    nwalkers=32,
+                    nsamples=2000,
+                    nwalkers=16,
                     bounds=bounds,
                 )
             except Exception as e:
+                tr = traceback.format_exc()
+                logger.warning("during emcee fitting")
+                print(tr)
                 fitted_model = lsq_fitted_model
                 result = lsq_result
         fitted_model.result = result

@@ -1,3 +1,4 @@
+import copy
 import traceback
 import warnings
 from logging import getLogger
@@ -109,10 +110,14 @@ class TargetData:
 
 
         """
-        if column not in self.lightcurve.columns:
-            raise ValueError(f"{column} not in both lightcurve columns")
-        if column not in updates.columns:
-            raise ValueError(f"{column} not in both updates columns")
+        if updates is None:
+            logger.warning("updates is None")
+            return None
+        if self.lightcurve is not None:
+            if column not in self.lightcurve.columns:
+                raise ValueError(f"{column} not in both lightcurve columns")
+            if column not in updates.columns:
+                raise ValueError(f"{column} not in both updates columns")
         if timelike:
             updated_lightcurve = self.integrate_timelike(
                 updates, column, keep_updated=keep_updates, nan_values=nan_values
@@ -123,7 +128,7 @@ class TargetData:
                 column,
                 verify_integrity=verify_integrity,
                 nan_values=nan_values,
-            )
+                )
         self.add_lightcurve(updated_lightcurve)
 
     def integrate_timelike(self, updates, column, keep_updated=True):
@@ -489,7 +494,8 @@ def default_plot_lightcurve(
         target.compiled_lightcurve.groupby("band")
     ):
         band_history.sort_values("jd")
-        band_kwargs = dict(color=lightcurve_plot_colours.get(band, f"C{ii%10}"))
+        band_color = lightcurve_plot_colours.get(band, f"C{ii%10}")
+        band_kwargs = dict(color=band_color)
 
         scatter_handle = ax.errorbar(
             0, 0, yerr=0.1, label=band, **band_kwargs, **det_kwargs
@@ -538,25 +544,32 @@ def default_plot_lightcurve(
             t_start = target.compiled_lightcurve["jd"].min()
             t_end = t_ref.jd + forecast_days
             model_time_grid = np.arange(t_start, t_end, 0.1)
-            for band, color in lightcurve_plot_colours.items():
-                # model_mag = model.bandmag(band, "ab", model_time_grid)
-                model_flux = model.bandflux(band, model_time_grid, zp=8.9, zpsys="ab")
-                pos_mask = model_flux > 0.0
-                model_mag = -2.5 * np.log10(model_flux[pos_mask]) + 8.9
+            # model_mag = model.bandmag(band, "ab", model_time_grid)
+            model_flux = model.bandflux(band, model_time_grid, zp=8.9, zpsys="ab")
+            pos_mask = model_flux > 0.0
+            model_mag = -2.5 * np.log10(model_flux[pos_mask]) + 8.9
 
-                time_grid_shift = model_time_grid[pos_mask] - t_ref.jd
-                ax.plot(time_grid_shift, model_mag, color=color)
+            time_grid_shift = model_time_grid[pos_mask] - t_ref.jd
+            samples = getattr(model, "result", {}).get("samples", None)
+            if samples is not None:
+                vparam_names = model.result.get("vparam_names")
+                median = get_median(
+                    model_time_grid[pos_mask], model, samples, band, vparam_names=vparam_names
+                )
+                lower, upper = get_bounds(
+                    model_time_grid[pos_mask], model, samples, band, vparam_names=vparam_names
+                )
+                ax.fill_between(
+                    time_grid_shift, lower, upper, color=band_color, alpha=0.2
+                )
+                ax.plot(time_grid_shift, model_mag, color=band_color, ls="--")
+                ax.plot(time_grid_shift, median, color=band_color)
+            else:                
+                ax.plot(time_grid_shift, model_mag, color=band_color)
 
-                samples = getattr(model, "result", {}).get("samples", None)
-                if samples is not None:
-                    lower, upper = get_bounds(
-                        model_time_grid[pos_mask], model, sample, band
-                    )
-                    ax.fill_between(
-                        time_grid_shift, lower, upper, color=color, alpha=0.2
-                    )
 
-    peak_mag_vals.append(16.0)
+
+    peak_mag_vals.append(17.0)
     y_bright = np.nanmin(peak_mag_vals)
     ax.set_ylim(22.0, y_bright)
     ax.axvline(t_ref.jd - t_ref.jd, color="k")
@@ -629,16 +642,29 @@ def default_plot_lightcurve(
             )
     return fig
 
-
-def get_bounds(time_grid, model, samples, band, spacing=50):
+def get_median(time_grid, model, samples, band, vparam_names=None):
     model_copy = copy.deepcopy(model)
+    vparam_names = vparam_names or model.result.get("vparam_names")
+    median_params = np.nanquantile(samples, q=0.5, axis=0)
+    print(median_params)
+
+    pdict = {k: v for k, v in zip(vparam_names, median_params)}
+    model_copy.update(pdict)
+    lc_flux = model_copy.bandflux(band, time_grid, zp=8.9, zpsys="ab")
+    lc_mag = -2.5 * np.log10(lc_flux) + 8.9
+    return lc_mag
+    
+
+def get_bounds(time_grid, model, samples, band, vparam_names=None, spacing=20):
+    model_copy = copy.deepcopy(model)
+    vparam_names = vparam_names or model.result.get("vparam_names")
     lc_evaluations = []
     for p_jj, params in enumerate(samples[::spacing]):
-        pdict = {k: v for k, v in zip(model.res["vparam_names"], params)}
+        pdict = {k: v for k, v in zip(vparam_names, params)}
         model_copy.update(pdict)
-        lc_flux_jj = model_copy.bandflux(band, time_grid, zp=25.0, zpsys="ab")
+        lc_flux_jj = model_copy.bandflux(band, time_grid, zp=8.9, zpsys="ab")
         with np.errstate(divide="ignore", invalid="ignore"):
-            lc_mag_jj = -2.5 * np.log10(lc_flux_jj[pos_mask]) + 8.9
+            lc_mag_jj = -2.5 * np.log10(lc_flux_jj) + 8.9
         lc_evaluations.append(lc_mag_jj)
     lc_evaluations = np.vstack(lc_evaluations)
     lc_bounds = np.nanquantile(lc_evaluations, q=[0.16, 0.84], axis=0)
