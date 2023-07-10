@@ -529,13 +529,27 @@ class TargetSelector:
             new_lcfig_filename = f"{int(rank):03d}_{target.objectId}_lc.png"
             new_lcfig_file = plots_dir / new_lcfig_filename
             if lcfig_file.exists():
-                shutil.copy2(lcfig_file, new_lcfig_file)
+                try:
+                    shutil.copy2(lcfig_file, new_lcfig_file)
+                except FileNotFoundError as e:
+                    msg = (
+                        f"\033[33moc_fig {lcfig_file} missing!\033[0m"
+                        + f"\n    the likely cause is you have two projects with the"
+                        + f"same project_path, and one has cleared plots"
+                    )
         ocfig_file = target.latest_oc_fig_paths.get(obs_name, None)
         if ocfig_file is not None:
             new_ocfig_filename = f"{int(rank):03d}_{target.objectId}_oc.png"
             new_ocfig_file = plots_dir / new_ocfig_filename
             if ocfig_file.exists():
-                shutil.copy2(ocfig_file, new_ocfig_file)
+                try:
+                    shutil.copy2(ocfig_file, new_ocfig_file)
+                except FileNotFoundError as e:
+                    msg = (
+                        f"\033[33moc_fig {ocfig_file} missing!\033[0m"
+                        + f"\n    the likely cause is you have two projects with the"
+                        + f"same project_path, and one has cleared plots"
+                    )
 
     def perform_messaging_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()

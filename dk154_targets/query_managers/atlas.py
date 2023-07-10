@@ -70,9 +70,14 @@ class AtlasQueryManager(BaseQueryManager):
         self.atlas_config = atlas_config
         self.target_lookup = target_lookup
 
-        self.project_string = self.atlas_config.get("project_string", None)
-        if self.project_string is None:
-            self.project_string = Path(data_path).parent
+        self.project_identifier = self.atlas_config.get("project_identifier", None)
+        if self.project_identifier is None:
+            msg = (
+                f"\n    \033[33matlas_config should contain a unique project_identifier.\033[0m"
+                + f"\n    This is so that any atlas queries aren't deleted by another project."
+            )
+            logger.warning(msg)
+            self.project_identifier = Path(data_path).parent.stem
 
         token = self.atlas_config.get("token", None)
         if token is None:
@@ -92,7 +97,7 @@ class AtlasQueryManager(BaseQueryManager):
         self.process_paths(data_path=data_path, create_paths=create_paths)
 
     def get_atlas_query_comment(self, objectId):
-        return f"{objectId}"  # {self.comment_delim}{self.project_string}"
+        return f"{objectId}{self.comment_delim}{self.project_identifier}"
 
     def recover_finished_queries(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -114,10 +119,12 @@ class AtlasQueryManager(BaseQueryManager):
                 if submit_comment is None:
                     logger.warning("existing query has no comment")
                     continue
-                # objectId, project_str = submit_comment.split(self.comment_delim)
-                # if project_str != self.project_string:
-                #    continue
-                objectId = submit_comment
+                kv_split = submit_comment.split(self.comment_delim, 1)
+                if len(kv_split) != 2:
+                    continue
+                objectId, project_str = kv_split
+                if project_str != self.project_identifier:
+                    continue
 
                 task_url = task_result.get("url", None)
                 status = self.recover_query_data(objectId, task_url)

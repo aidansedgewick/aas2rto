@@ -17,7 +17,7 @@ from dk154_targets.query_managers.alerce import (
     target_from_alerce_lightcurve,
     target_from_alerce_query_row,
     process_alerce_lightcurve,
-    process_query_results,
+    process_alerce_query_results,
 )
 
 from dk154_targets import paths
@@ -25,7 +25,7 @@ from dk154_targets import paths
 
 @pytest.fixture
 def basic_config():
-    return {"query_parameters": {"n_objects": 100, "max_earliest_lookback": 100.0}}
+    return {"query_parameters": {"n_objects": 100, "lookback": 100.0}}
 
 
 @pytest.fixture
@@ -326,23 +326,23 @@ class Test__AlerceQueryManager:
             basic_config, {}, data_path=paths.test_data_path, create_paths=False
         )
         assert np.isclose(
-            qm2.default_query_parameters["max_earliest_lookback"], 70.0
+            qm2.default_query_parameters["lookback"], 30.0
         )  # default is different!
         assert not self.exp_alerce_path.exists()
         assert qm2.query_parameters["n_objects"] == 100
-        assert np.isclose(qm2.query_parameters["max_earliest_lookback"], 100.0)
-        assert np.isclose(qm2.query_parameters["max_latest_lookback"], 30.0)
+        assert np.isclose(qm2.query_parameters["lookback"], 100.0)
+        assert np.isclose(qm2.query_parameters["update"], 2.0)
 
     def test__get_query_data(self, basic_config, query_pattern: dict):
         qm = AlerceQueryManager(
             basic_config, {}, data_path=paths.test_data_path, create_paths=False
         )
 
-        t_ref = Time("2023-02-25T12:00:00", format="isot")
+        t_ref = Time("2023-02-25T00:00:00", format="isot")
         query_data = qm.prepare_query_data(query_pattern, page=10, t_ref=t_ref)
         assert qm.default_query_parameters["n_objects"] == 25
         assert np.isclose(query_data["firstmjd"], 59900.0)
-        assert np.isclose(query_data["lastmjd"], 59970.0)
+        assert np.isclose(query_data["lastmjd"], 60000.0)
         assert query_data["page_size"] == 100
 
     def test__query_and_collate_read_existing(self, page_results_df_list):
@@ -530,10 +530,10 @@ class Test__AlerceQueryManager:
         self._clear_test_directories()
 
         raw_query_results = query_results_df.iloc[[0, 2]]  # ZTF1000 and 'old' ZTF1001
-        query_results = process_query_results(raw_query_results)
+        query_results = process_alerce_query_results(raw_query_results)
         assert set(query_results.index) == set(["ZTF1000", "ZTF1001"])
 
-        query_updates = process_query_results(query_results_df)
+        query_updates = process_alerce_query_results(query_results_df)
         assert len(query_updates) == 3
 
         empty_config = {}
@@ -551,7 +551,7 @@ class Test__AlerceQueryManager:
     def test__new_targets_from_updates(self, query_results_df):
         self._clear_test_directories()
 
-        query_updates = process_query_results(query_results_df)
+        query_updates = process_alerce_query_results(query_results_df)
         assert len(query_updates) == 3
 
         config = {}
