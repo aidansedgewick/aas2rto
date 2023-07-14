@@ -448,7 +448,7 @@ class FinkQueryManager(BaseQueryManager):
         for objectId in objectId_list:
             lightcurve_file = self.get_lightcurve_file(objectId)
             if not lightcurve_file.exists():
-                missing_lightcurves.append(objectId)
+                missing.append(objectId)
                 continue
             target = self.target_lookup.get(objectId, None)
             lightcurve = pd.read_csv(lightcurve_file, dtype={"candid": "Int64"})
