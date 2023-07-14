@@ -14,7 +14,7 @@ class UsingGenericWarning(Warning):
 class GenericQueryManager(BaseQueryManager):
     name = "generic"
 
-    def __init__(self, qm_config, target_lookup, data_path=None):
+    def __init__(self, qm_config, target_lookup, data_path=None, create_paths=True):
         self.config = qm_config
         self.data_path = paths.base_path / paths.default_data_dir
         self.target_lookup = target_lookup

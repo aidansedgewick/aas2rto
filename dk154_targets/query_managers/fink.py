@@ -12,7 +12,7 @@ import numpy as np
 
 import pandas as pd
 
-from astropy import utils as u
+from astropy import units as u
 from astropy.io import fits
 from astropy.time import Time
 
@@ -65,8 +65,10 @@ def process_fink_lightcurve(detections: pd.DataFrame, non_detections: pd.DataFra
                 msg = f"mismatch : detections ({ldet}) != 'valid' non_detections ({lvalid})"
                 raise ValueError(msg)
     else:
-        if not detections.empty:
-            raise ValueError("non_detections has no 'tag' (no detections), but detections is not empty")
+        if (not non_detections.empty) and (not detections.empty):
+            raise ValueError(
+                "non_detections has no 'tag' (no detections), but detections is not empty"
+            )
 
     # fix detections
     detections["tag"] = "valid"
@@ -85,23 +87,26 @@ def process_fink_lightcurve(detections: pd.DataFrame, non_detections: pd.DataFra
 
     non_detections["candid"] = 0
 
-
     lightcurve = pd.concat([detections, non_detections])
     if not lightcurve.empty:
         lightcurve.sort_values("jd", inplace=True)
     else:
-        lightcurve["jd"] = 0 # Fails later without a date column...
+        lightcurve["jd"] = 0  # Fails later without a date column...
         lightcurve["mjd"] = 0
     return lightcurve
 
 
-def target_from_fink_alert(alert: dict, objectId: str, t_ref: Time = None) -> Target:
+def target_from_fink_alert(alert: dict, t_ref: Time = None) -> Target:
+    t_ref = t_ref or Time.now()
+
+    objectId = alert.get("objectId", None)
+    if objectId is None:
+        raise MissingObjectIdError(f"alert has no objectId: {alert.keys()}")
     ra = alert.get("ra", None)
     dec = alert.get("dec", None)
     if (ra is None) or (dec is None):
-        raise
-    target = Target(objectId, ra=ra, dec=dec)
-    return target
+        raise ValueError(f"one of (ra, dec)=({ra}, {dec}) is None")
+    return Target(objectId, ra=ra, dec=dec, t_ref=t_ref)
 
 
 def target_from_fink_lightcurve(
@@ -282,6 +287,20 @@ class FinkQueryManager(BaseQueryManager):
                         pickle.dump(cutouts, f)
         return processed_alerts
 
+    def new_targets_from_alerts(self, alerts: List[Dict], t_ref: None = Time):
+        t_ref = t_ref or Time.now()
+
+        for alert in alerts:
+            objectId = alert.get("objectId", None)
+            if objectId is None:
+                raise MissingObjectIdError("objectId is None in fink_alert")
+            target = self.target_lookup.get(objectId, None)
+            if target is not None:
+                # Don't need to make a target.
+                continue
+            target = target_from_fink_alert(alert, t_ref=t_ref)
+            self.target_lookup[objectId] = target
+
     def query_for_updates(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
@@ -321,7 +340,7 @@ class FinkQueryManager(BaseQueryManager):
 
         step = step or self.query_parameters["query_timespan"]
         lookback = lookback or self.query_parameters["lookback_time"]
-        lookback_grid = t_ref.jd - np.arange(-lookback, step, step)
+        lookback_grid = t_ref + np.arange(-lookback, step, step) * u.day
 
         update_dfs = []
 
@@ -332,6 +351,9 @@ class FinkQueryManager(BaseQueryManager):
                 updates = FinkQuery.query_latests(**query_data)
             except Exception as e:
                 logger.warning(f"{fink_class} {start_jd:.1f}<jd<{stop_jd:.1f} failed")
+                updates = None
+            if updates is None:
+                return None
 
             n = query_data["n"]
             if len(updates) == n:
@@ -344,8 +366,10 @@ class FinkQueryManager(BaseQueryManager):
             return pd.concat(update_dfs)
         return pd.DataFrame([])
 
-    def get_query_data(self, fink_class, start_mjd: float, stop_mjd: float):
-        return dict(class_=fink_class, n=1000, startdate=start_mjd, stopdate=stop_mjd)
+    def get_query_data(self, fink_class, start_jd: Time, stop_jd: Time):
+        return dict(
+            class_=fink_class, n=1000, startdate=start_jd.iso, stopdate=stop_jd.iso
+        )
 
     def get_lightcurves_to_query(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -363,14 +387,15 @@ class FinkQueryManager(BaseQueryManager):
     def perform_lightcurve_queries(self, objectId_list: List[str], t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        successful_queries = []
-        N_failed = 0
         if len(objectId_list) > 0:
             logger.info(f"attempt {len(objectId_list)} lightcurve queries")
+
+        success = []
+        failed = []
         t_start = time.perf_counter()
         for objectId in objectId_list:
             lightcurve_file = self.get_lightcurve_file(objectId)
-            if N_failed > self.query_parameters["max_failed_queries"]:
+            if len(failed) > self.query_parameters["max_failed_queries"]:
                 msg = f"Too many failed queries ({N_failed}), stop for now"
                 logger.info(msg)
                 break
@@ -394,45 +419,32 @@ class FinkQueryManager(BaseQueryManager):
             except Exception as e:
                 print(e)
                 logger.warning(f"{objectId} lightcurve query failed")
-                N_failed = N_failed + 1
+                failed.append(objectId)
                 continue
             lightcurve = process_fink_lightcurve(detections, non_detections)
             if lightcurve.empty:
                 logger.warning(f"\033[33m{objectId} lightcurve empty!\033[0m")
             lightcurve.to_csv(lightcurve_file, index=False)
-            successful_queries.append(objectId)
-        N_success = len(successful_queries)
-        if N_success > 0 or N_failed > 0:
+            success.append(objectId)
+
+        if len(success) > 0 or len(failed) > 0:
             t_end = time.perf_counter()
             logger.info(f"lightcurve queries in {t_end - t_start:.1f}s")
-            logger.info(f"{N_success} successful, {N_failed} failed lc queries")
-        return successful_queries
-
-    def new_targets_from_alerts(self, alerts: List[Dict]):
-        for alert in alerts:
-            objectId = alert.get("objectId", None)
-            if objectId is None:
-                raise MissingObjectIdError("objectId is None in fink_alert")
-            target = self.target_lookup.get(objectId, None)
-            if target is not None:
-                # Don't need to make a target.
-                continue
-            target = Target(objectId=objectId, ra=alert["ra"], dec=alert["dec"])
-            self.target_lookup[objectId] = target
+            logger.info(f"{len(success)} successful, {len(failed)} failed lc queries")
+        return success, failed
 
     def load_target_lightcurves(
         self, objectId_list: List[str] = None, t_ref: Time = None
     ):
         t_ref = t_ref or Time.now()
 
-        loaded_lightcurves = []
-        missing_lightcurves = []
+        loaded = []
+        missing = []
         t_start = time.perf_counter()
 
         if objectId_list is None:
             objectId_list = list(self.target_lookup.keys())
 
-        # for objectId, target in self.target_lookup.items():
         for objectId in objectId_list:
             lightcurve_file = self.get_lightcurve_file(objectId)
             if not lightcurve_file.exists():
@@ -451,19 +463,20 @@ class FinkQueryManager(BaseQueryManager):
             else:
                 existing_lightcurve = target.fink_data.lightcurve
                 if existing_lightcurve is not None:
-                    if len(lightcurve) == len(existing_lightcurve):
+                    if len(lightcurve) <= len(existing_lightcurve):
                         continue
-            if not lightcurve.empty:
-                lightcurve.sort_values("jd", inplace=True)
-            loaded_lightcurves.append(objectId)
+            loaded.append(objectId)
             target.fink_data.add_lightcurve(lightcurve)
             target.updated = True
         t_end = time.perf_counter()
 
-        N_loaded = len(loaded_lightcurves)
+        N_loaded = len(loaded)
+        N_missing = len(missing)
         if N_loaded > 0:
-            logger.info(f"loaded {N_loaded} lightcurves in {t_end-t_start:.1f}s")
-        return loaded_lightcurves, missing_lightcurves
+            logger.info(
+                f"loaded {N_loaded}, missing {N_missing} lightcurves in {t_end-t_start:.1f}s"
+            )
+        return loaded, missing
 
     def load_missing_alerts(self, objectId: str):
         target = self.target_lookup.get(objectId, None)
@@ -531,7 +544,13 @@ class FinkQueryManager(BaseQueryManager):
                 continue
             target.send_updates = True
             topic_str = alert["topic"]
-            alert_text = f"FINK alert {topic_str}\nsee fink-portal.org/{objectId}"
+            timestamp = alert.get("timestamp")
+            alert_jd = alert.get("jd")
+            alert_text = (
+                f"FINK alert from {topic_str}\n"
+                f"     broadcast at jd={alert_jd:.5f}={timestamp}\n"
+                f"     see fink-portal.org/{objectId}"
+            )
             target.update_messages.append(alert_text)
 
     def perform_all_tasks(self, simulated_alerts=False, t_ref: Time = None):
@@ -543,7 +562,7 @@ class FinkQueryManager(BaseQueryManager):
         else:
             alerts = self.listen_for_alerts()
         processed_alerts = self.process_alerts(alerts, t_ref=t_ref)
-        self.new_targets_from_alerts(processed_alerts)
+        self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
 
         lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
         successful_lc_queries = self.perform_lightcurve_queries(lcs_to_query)
@@ -580,36 +599,24 @@ class FinkQuery:
     def __init__(self):
         pass
 
-    # @classmethod
-    # def fix_keys(cls, df):
-    #     column_lookup = {
-    #         col: col.split(":")[1] if ":" in col else col for col in df.columns
-    #     }
-    #     return df.rename(column_lookup, axis=1)
-
     @classmethod
-    def fix_dict_keys(cls, data: List[Dict]):
-        for row_dict in data:
-            key_lookup = {k: k.split(":")[-1] for k in row_dict.keys()}
-            for old_key, new_key in key_lookup.items():
-                # Not dangerous, as not iterating over the dict we're updating.
-                row_dict[new_key] = row_dict.pop(old_key)
+    def fix_dict_keys(cls, data: Dict):
+        key_lookup = {k: k.split(":")[-1] for k in data.keys()}
+        for old_key, new_key in key_lookup.items():
+            # Not dangerous, as not iterating over the dict we're updating.
+            data[new_key] = data.pop(old_key)
 
     @classmethod
     def process_data(cls, data, fix_keys=True, return_df=True, df_kwargs=None):
         if fix_keys:
-            cls.fix_dict_keys(data)
+            for row in data:
+                cls.fix_dict_keys(row)
         if not return_df:
             return data
         return pd.DataFrame(data)
 
     @classmethod
-    def process_response(
-        cls,
-        res,
-        fix_keys=True,
-        return_df=True,
-    ):
+    def process_response(cls, res, fix_keys=True, return_df=True):
         if res.status_code in [404, 500, 504]:
             logger.error("\033[31;1merror rasied\033[0m")
             if res.elapsed.total_seconds() > 58.0:

@@ -72,12 +72,13 @@ class AtlasQueryManager(BaseQueryManager):
 
         self.project_identifier = self.atlas_config.get("project_identifier", None)
         if self.project_identifier is None:
+            self.project_identifier = Path(data_path).parent.stem
             msg = (
-                f"\n    \033[33matlas_config should contain a unique project_identifier.\033[0m"
-                + f"\n    This is so that any atlas queries aren't deleted by another project."
+                f"\033[33mmissing project_identifier set to {self.project_identifier}\033[0m"
+                f"\n    atlas_config should contain a unique project_identifier"
+                f"\n    so that atlas queries aren't deleted by another project on the server."
             )
             logger.warning(msg)
-            self.project_identifier = Path(data_path).parent.stem
 
         token = self.atlas_config.get("token", None)
         if token is None:
@@ -318,8 +319,9 @@ class AtlasQueryManager(BaseQueryManager):
                 else:
                     continue
             loaded.append(objectId)
-            target.updated = True
-            target.update_messages.append("New atlas data!")
+            if len(target.atlas_data.detections) > 0:
+                target.updated = True
+                target.update_messages.append("New atlas data!")
         t_end = time.perf_counter()
         if len(loaded) > 0:
             logger.info(f"{len(loaded)} lightcurves loaded in {(t_end-t_start):.1f}s")

@@ -57,6 +57,7 @@ class TargetData:
     def add_lightcurve(
         self, lightcurve: pd.DataFrame, tag_col="tag", include_badqual=True
     ):
+        lightcurve = lightcurve.copy()
         if ("jd" not in lightcurve.columns) and ("mjd" not in lightcurve.columns):
             raise ValueError("lightcurve should have at least 'jd' or 'mjd'")
         if ("jd" in lightcurve.columns) and ("mjd" not in lightcurve.columns):
@@ -107,7 +108,8 @@ class TargetData:
             pd.DataFrame, the updates you want to include in your updated lightcurve.
         column
             the column to check for matches, and check that repeated rows don't happen
-
+        nan_values
+            values to ignore when checking for repeated values
 
         """
         if updates is None:
@@ -128,7 +130,7 @@ class TargetData:
                 column,
                 verify_integrity=verify_integrity,
                 nan_values=nan_values,
-                )
+            )
         self.add_lightcurve(updated_lightcurve)
 
     def integrate_timelike(self, updates, column, keep_updated=True):
@@ -172,6 +174,7 @@ class Target:
         atlas_data: TargetData = None,
         fink_data: TargetData = None,
         lasair_data: TargetData = None,
+        sdss_data: TargetData = None,
         tns_data: TargetData = None,
         yse_data: TargetData = None,
         base_score: float = None,
@@ -192,6 +195,7 @@ class Target:
         self.atlas_data = atlas_data or TargetData()
         self.fink_data = fink_data or TargetData()
         self.lasair_data = lasair_data or TargetData()
+        self.sdss_data = sdss_data or TargetData()
         self.tns_data = tns_data or TargetData()
         self.yse_data = yse_data or TargetData()
 
@@ -438,6 +442,42 @@ class Target:
             self.latest_oc_fig_paths[obs_name] = figpath
         return oc_fig
 
+    def get_info_string(self, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+        t_ref_str = t_ref.strftime("%y-%m-%d %H:%M")
+        lines = [f"Target {self.objectId} at {t_ref_str}"]
+        if self.ra is not None and self.dec is not None:
+            eq_line = f"    equatorial (ra, dec) = ({self.ra:.4f},{self.dec:+.5f})"
+            lines.append(eq_line)
+        if self.coord is not None:
+            gal = self.coord.galactic
+            gal_line = f"    galactic (l, b) = ({gal.l.deg:.4f},{gal.b.deg:+.5f})"
+            lines.append(gal_line)
+        if self.compiled_lightcurve is not None:
+            ndet = {}
+            last_mag = {}
+            if "band" in self.compiled_lightcurve.columns:
+                for band, band_history in self.compiled_lightcurve.groupby("band"):
+                    if "tag" in band_history.columns:
+                        detections = band_history.query("tag=='valid'")
+                    else:
+                        detections = band_history
+                    if len(detections) > 0 and band.startswith("ztf"):
+                        ndet[band] = len(detections)
+                        last_mag[band] = detections["mag"].iloc[-1]
+            if len(last_mag) > 0:
+                l = "    last " + ", ".join(f"{k}={v:.2f}" for k, v in last_mag.items())
+                lines.append(l)
+            if len(ndet) > 0:
+                l = (
+                    "    "
+                    + ", ".join(f"{v} {k}" for k, v in ndet.items())
+                    + " detections"
+                )
+                lines.append(l)
+
+        return "\n".join(lines)
+
     def reset_figures(self):
         # self.latest_lc_fig = None
         self.latest_lc_fig_path = None
@@ -541,33 +581,31 @@ def default_plot_lightcurve(
 
         ###======== try sncosmo models
         if model is not None:
+            if len(detections) == 0:
+                continue
             t_start = target.compiled_lightcurve["jd"].min()
             t_end = t_ref.jd + forecast_days
-            model_time_grid = np.arange(t_start, t_end, 0.1)
             # model_mag = model.bandmag(band, "ab", model_time_grid)
-            model_flux = model.bandflux(band, model_time_grid, zp=8.9, zpsys="ab")
+            tgrid = np.arange(t_start, t_end, 0.1)
+            model_flux = model.bandflux(band, tgrid, zp=8.9, zpsys="ab")
             pos_mask = model_flux > 0.0
             model_mag = -2.5 * np.log10(model_flux[pos_mask]) + 8.9
 
-            time_grid_shift = model_time_grid[pos_mask] - t_ref.jd
+            tgrid_shift = tgrid[pos_mask] - t_ref.jd
             samples = getattr(model, "result", {}).get("samples", None)
             if samples is not None:
                 vparam_names = model.result.get("vparam_names")
                 median = get_median(
-                    model_time_grid[pos_mask], model, samples, band, vparam_names=vparam_names
+                    tgrid[pos_mask], model, samples, band, vparam_names=vparam_names
                 )
                 lower, upper = get_bounds(
-                    model_time_grid[pos_mask], model, samples, band, vparam_names=vparam_names
+                    tgrid[pos_mask], model, samples, band, vparam_names=vparam_names
                 )
-                ax.fill_between(
-                    time_grid_shift, lower, upper, color=band_color, alpha=0.2
-                )
-                ax.plot(time_grid_shift, model_mag, color=band_color, ls="--")
-                ax.plot(time_grid_shift, median, color=band_color)
-            else:                
-                ax.plot(time_grid_shift, model_mag, color=band_color)
-
-
+                ax.fill_between(tgrid_shift, lower, upper, color=band_color, alpha=0.2)
+                ax.plot(tgrid_shift, model_mag, color=band_color, ls="--")
+                ax.plot(tgrid_shift, median, color=band_color)
+            else:
+                ax.plot(tgrid_shift, model_mag, color=band_color)
 
     peak_mag_vals.append(17.0)
     y_bright = np.nanmin(peak_mag_vals)
@@ -603,10 +641,10 @@ def default_plot_lightcurve(
         break
 
     for ii, imtype in enumerate(["Science", "Template", "Difference"]):
-        if len(fig.axes) == 4:
-            im_ax = fig.axes[ii + 1]
-        else:
-            im_ax = fig.add_subplot(lc_gs[ii : ii + 1, -1:])
+        # if len(fig.axes) > 1:
+        #    im_ax = fig.axes[ii + 1]
+        # else:
+        im_ax = fig.add_subplot(lc_gs[ii : ii + 1, -1:])
 
         im_ax.set_xticks([])
         im_ax.set_yticks([])
@@ -630,6 +668,18 @@ def default_plot_lightcurve(
         # add pointers
         im_ax.plot([0.5 * xl_im, 0.5 * xl_im], [0.2 * yl_im, 0.4 * yl_im], color="r")
         im_ax.plot([0.2 * yl_im, 0.4 * yl_im], [0.5 * yl_im, 0.5 * yl_im], color="r")
+
+    # sdss_color = target.sdss_data.cutouts.get("color_data", None)
+    # if sdss_color is not None:
+    #     im_ax = fig.add_subplot(lc_gs[-1:, -1:])
+    #     im_ax.set_xticks([])
+    #     im_ax.set_yticks([])
+    #     imtext_kwargs = dict(
+    #         rotation=90, transform=im_ax.transAxes, ha="left", va="center"
+    #     )
+    #     im_ax.text(1.02, 0.5, "SDSS color", **imtext_kwargs)
+    #     im_ax.imshow(sdss_color)
+
     fig.tight_layout()
 
     comments = target.score_comments.get("no_observatory", [])
@@ -642,18 +692,18 @@ def default_plot_lightcurve(
             )
     return fig
 
+
 def get_median(time_grid, model, samples, band, vparam_names=None):
     model_copy = copy.deepcopy(model)
     vparam_names = vparam_names or model.result.get("vparam_names")
     median_params = np.nanquantile(samples, q=0.5, axis=0)
-    print(median_params)
 
     pdict = {k: v for k, v in zip(vparam_names, median_params)}
     model_copy.update(pdict)
     lc_flux = model_copy.bandflux(band, time_grid, zp=8.9, zpsys="ab")
     lc_mag = -2.5 * np.log10(lc_flux) + 8.9
     return lc_mag
-    
+
 
 def get_bounds(time_grid, model, samples, band, vparam_names=None, spacing=20):
     model_copy = copy.deepcopy(model)

@@ -65,7 +65,9 @@ class TelegramMessenger:
             for text in texts:
                 # url = f"{self.http_url}/bot{self.token}/sendMessage?chat_id={user}&text={text}"
                 # requests.get(url)
-                self.bot.send_message(chat_id=user, text=text)
+                self.bot.send_message(
+                    chat_id=user, text=text, disable_web_page_preview=True
+                )
         if img_paths is not None:
             img_list = []
             for img_path in img_paths:
@@ -78,8 +80,6 @@ class TelegramMessenger:
                         self.bot.send_photo(chat_id=user, photo=img, caption=caption)
             if len(img_list) > 2:
                 self.bot.send_media_group(chat_id=user, media=img_list)
-
-                        
             return None
 
     def message_users(

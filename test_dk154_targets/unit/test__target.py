@@ -65,6 +65,21 @@ def fink_lc(fink_rows):
 
 
 @pytest.fixture
+def fink_update_rows():
+    return [
+        (0,                      2460007.3, np.nan, np.nan, 16.0, 2, "upperlim"),
+        (23000_10000_20000_5008, 2460007.5, 17.8, 0.1, 19.5, 1, "valid"),
+    ]
+
+
+@pytest.fixture
+def fink_updates(fink_update_rows):
+    return pd.DataFrame(
+        fink_update_rows, columns="candid jd magpsf sigmapsf diffmaglim fid tag".split()
+    )
+
+
+@pytest.fixture
 def atlas_lc():
     mjd_dat = np.arange(60000.1, 60005.1, 0.5)
     rows = [
@@ -134,6 +149,61 @@ class TestTargetData:
         assert td.lightcurve.iloc[1].candid == 20001  # correctly sorted
         assert np.isclose(td.lightcurve.iloc[0].jd - 2460000.0, 0.5)  # jd calc is good
         assert np.isclose(td.lightcurve.iloc[1].jd - 2460000.0, 0.6)
+        assert len(td.detections) == 2
+        assert td.non_detections is None
+
+    def test__target_data_add_lightcurve_with_non_detections(self):
+        td = TargetData()
+        rows = [
+            (60000.1, 0, 18.0, 0.1, "upperlim"),
+            (60000.0, 0, 17.9, 0.1, "upperlim"),
+            (60002.0, 20002, 16.0, 0.1, "valid"),
+            (60001.0, 20001, 17.0, 0.1, "badquality"),  # Mixed up dates
+            (60003.0, 20003, 16.0, 0.1, "valid"),
+            (60004.0, 20004, 16.5, 0.1, "valid"),
+        ]
+        lc = pd.DataFrame(rows, columns="mjd candid mag magerr tag".split())
+        assert "jd" not in lc.columns
+
+        td.add_lightcurve(lc)
+        assert len(td.lightcurve) == 6
+        assert len(td.detections) == 4
+        assert len(td.non_detections) == 2
+        assert td.detections.iloc[0].tag == "badquality"
+        assert all(
+            td.detections.candid.values == np.array([20001, 20002, 20003, 20004])
+        )
+
+        td.add_lightcurve(lc, include_badqual=False)
+        assert len(td.lightcurve) == 6
+        assert len(td.non_detections) == 2  # badqual not included in nondets
+        assert len(td.detections) == 3
+
+    def test__target_data_integrate_equality(self, fink_lc, fink_updates):
+        td = TargetData()
+        td.add_lightcurve(fink_lc)
+        assert len(td.lightcurve) == 7
+        assert len(td.detections) == 4
+        assert len(td.non_detections) == 3
+
+        updated_lc = td.integrate_equality(fink_updates, column="candid")
+        assert len(updated_lc) == 9
+        detections = updated_lc.query("tag=='badquality' or tag=='valid'")
+        assert len(detections) == 5
+        upperlims = updated_lc.query("tag=='upperlim'")
+        assert len(upperlims) == 4
+
+    def test__target_data_integrate_lightcurve(self, fink_lc, fink_updates):
+        td = TargetData()
+        td.add_lightcurve(fink_lc)
+        assert len(td.lightcurve) == 7
+        assert len(td.detections) == 4
+        assert len(td.non_detections) == 3
+
+        td.integrate_lightcurve_updates(fink_updates)
+        assert len(td.lightcurve) == 9
+        assert len(td.detections) == 5
+        assert len(td.non_detections) == 4
 
 
 class TestTarget:

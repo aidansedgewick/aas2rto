@@ -40,10 +40,10 @@ class SlackMessenger:
 
         return
 
-    def send_messages(self, texts, img_paths):
-        if isinstance(texts, str):
+    def send_messages(self, texts=None, img_paths=None, comment=None):
+        if not isinstance(texts, list):
             texts = [texts]
-        if isinstance(img_paths, str) or isinstance(img_paths, Path):
+        if not isinstance(img_paths, list):
             img_paths = [img_paths]
 
         if self.client is None:
@@ -62,7 +62,7 @@ class SlackMessenger:
                 try:
                     result = self.client.files_upload_v2(
                         channel=self.channel_id,
-                        initial_comment="file here :rocket:",
+                        initial_comment=comment,
                         file=img,  # Path(img_path),
                     )
                 except SlackApiError as e:

@@ -1,5 +1,7 @@
 import json
+import time
 from logging import getLogger
+from pathlib import Path
 from typing import Dict, Set, List
 
 import numpy as np
@@ -35,10 +37,14 @@ def process_lasair_lightcurve(lc: Dict, t_ref: Time = None) -> pd.DataFrame:
     for r in det:
         r["candid_int"] = r["candid"]
         r["candid"] = str(r["candid"])
+        r["tag"] = "valid"
 
     for r in non_det:
         assert not r.get("candid")
+        r["candid_int"] = 0
         r["candid"] = ""
+        r["tag"] = "upperlim"
+
     detections = pd.DataFrame(det)
     non_detections = pd.DataFrame(non_det)
     lightcurve = pd.concat([detections, non_detections])
@@ -60,11 +66,59 @@ def target_from_lasair_lightcurve(
     return target
 
 
+def target_from_lasair_alert(alert: Dict, t_ref: Time = None):
+    t_ref = t_ref or Time.now()
+
+    objectId = alert.get("objectId", None)
+    if objectId is None:
+        raise MissingObjectIdError(f"alert has no objectId: {alert.keys()}")
+    for racol, deccol in LasairQueryManager.default_coordinate_guesses:
+        ra = alert.get(racol, None)
+        dec = alert.get(deccol, None)
+        if all([ra is not None, dec is not None]):
+            break
+    topic = alert.get("topic", "<Unknown topic>")
+    if (ra is None) or (dec is None):
+        logger.warning(
+            f"\033[033m{objectId} missing coords\033[0m\n"
+            f"    topic {topic} can't guess coords\n"
+            f"    alert has keys {alert.keys()}"
+        )
+    return Target(objectId, ra=ra, dec=dec, t_ref=t_ref)
+
+
+def _get_alert_timestamp(alert: dict, t_ref: Time = None):
+    t_ref = t_ref or Time.now()
+
+    try:
+        if "timestamp" in alert:
+            timestamp = Time(alert["timestamp"])
+        elif "UTC" in alert:
+            timestamp = Time(alert["UTC"])
+        elif "mjdmax" in alert:
+            timestamp = Time(alert["mjdmax"], format="mjd")
+        elif "jdmax" in alert:
+            timestamp = Time(alert["jdmax"], format="jd")
+        else:
+            logger.warning(f"{objectId} has no timestamp candidates...")
+            timestamp = t_ref
+    except Exception as e:
+        print(e)
+        timestamp = t_ref
+
+    return timestamp.isot
+
+
 class LasairQueryManager(BaseQueryManager):
     name = "lasair"
     default_query_parameters = {"interval": 2.0, "max_failed_queries": 10}
     default_kafka_parameters = {"n_alerts": 10, "timeout": 10.0}
     required_kafka_parameters = ("host", "group_id", "topics")
+
+    default_coordinate_guesses = (
+        ("ramean", "decmean"),
+        ("ra", "dec"),
+    )
 
     def __init__(
         self,
@@ -114,11 +168,12 @@ class LasairQueryManager(BaseQueryManager):
 
         return kafka_parameters
 
-    def listen_for_alerts(self, t_ref: Time = None) -> List[Dict]:
+    def listen_for_alerts(self, dump_alerts=True, t_ref: Time = None) -> List[Dict]:
         t_ref = t_ref or Time.now()
 
         if lasair is None:
             logger.info("no lasair module: can't listen for alerts!")
+            return []
         if not self.kafka_config:
             logger.info("can't listen for alerts: no kafka config!")
             return []
@@ -134,72 +189,116 @@ class LasairQueryManager(BaseQueryManager):
                     break
                 if msg.error():
                     logger.warning(str(msg.error()))
+                    continue
                 data = json.loads(msg.value())
                 data["topic"] = topic
                 new_alerts.append(data)
             logger.info(f"received {len(new_alerts)} {topic} alerts")
         return new_alerts
 
-    def read_simulated_alerts(self, t_ref: Time = None) -> List[Dict]:
+    def process_alerts(self, alerts: List[Dict], save_alerts=True, t_ref: Time = None):
         t_ref = t_ref or Time.now()
-        raise NotImplementedError
+
+        for alert in alerts:
+            objectId = alert.get("objectId")
+
+            timestamp = _get_alert_timestamp(alert)
+            alert["alert_timestamp"] = timestamp
+
+            if save_alerts:
+                alert_file = self.get_alert_file(objectId, timestamp)
+                with open(alert_file, "w") as f:
+                    json.dump(alert, f)
         return alerts
 
-    def find_old_lightcurves(self, t_ref: Time = None) -> List[str]:
+    def read_simulated_alerts(self, t_ref: Time = None) -> List[Dict]:
+        t_ref = t_ref or Time.now()
+        raise NotImplementedError()
+        return alerts
+
+    def new_targets_from_alerts(self, alerts: List[Dict], t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        objectIds_to_update = []
+        for alert in alerts:
+            objectId = alert.get("objectId", None)
+            if objectId is None:
+                logger.warning(
+                    f"\033[33mobjectId is None in alert\033[0m:\n    {alert}"
+                )
+            target = self.target_lookup.get(objectId)
+            if target is None:
+                target = target_from_lasair_alert(alert, t_ref=t_ref)
+                self.add_target(target)
+
+    def get_lightcurves_to_query(self, t_ref: Time = None) -> List[str]:
+        t_ref = t_ref or Time.now()
+
+        to_query = []
         for objectId, target in self.target_lookup.items():
             lightcurve_file = self.get_lightcurve_file(objectId)
             lightcurve_file_age = calc_file_age(
                 lightcurve_file, t_ref, allow_missing=True
             )
             if lightcurve_file_age > self.query_parameters["update"]:
-                objectIds_to_update.append(objectId)
-        return objectIds_to_update
+                to_query.append(objectId)
+        return to_query
 
-    def perform_lightcurve_queries(
-        self, objectId_list: List, t_ref: Time = None, discard_existing=True
-    ):
+    def perform_lightcurve_queries(self, objectId_list: List, t_ref: Time = None):
         t_ref = t_ref or Time.now()
+
         token = self.client_config.get("token", None)
         if token is None:
             err_msg = f"Must provied `client_config`: `token` for lightcurves"
             raise ValueError(err_msg)
-        N_success = 0
-        N_failed = 0
-        lightcurves_queried = []
+
+        if len(objectId_list) > 0:
+            logger.info(f"attempt {len(objectId_list)} lightcurve queries")
+
+        success = []
+        failed = []
+        t_start = time.perf_counter()
         for objectId in objectId_list:
-            if N_failed > self.query_parameters["max_failed_queries"]:
+            if len(failed) > self.query_parameters["max_failed_queries"]:
                 msg = f"Too many failed lightcurve queries ({N_failed}). Stop for now."
                 logger.info(msg)
                 break
-
             client = lasair_client(token)
             try:
                 lc = client.lightcurves([objectId])
-                N_success = N_success + 1
             except Exception as e:
                 logger.warning(e)
-                N_failed = N_failed + 1
+                failed.append(objectId)
                 continue
             assert len(lc) == 1
             lightcurve = process_lasair_lightcurve(lc[0])
             lightcurve_file = self.get_lightcurve_file(objectId)
-
-            lightcurves_queried.append(objectId)
-            if lightcurve_file.exists() and discard_existing:
-                existing_lightcurve = pd.read_csv(lightcurve_file)
-                if existing_lightcurve["jd"].max() >= lightcurve["jd"].max():
-                    continue
             lightcurve.to_csv(lightcurve_file, index=False)
+            success.append(objectId)
 
-        return lightcurves_queried
+        if len(success) > 0 or len(failed) > 0:
+            t_end = time.perf_counter()
+            logger.info(f"lightcurve queries in {t_end - t_start:.1f}s")
+            logger.info(f"{len(success)} successful, {len(failed)} failed lc queries")
+        return success, failed
 
-    def load_target_lightcurves(self, objectId_list: List[str], t_ref: Time = None):
+    def load_target_lightcurves(
+        self, objectId_list: List[str] = None, t_ref: Time = None
+    ):
         t_ref = t_ref or Time.now()
+
+        loaded = []
+        missing = []
+        t_start = time.perf_counter()
+
+        if objectId_list is None:
+            objectId_list = list(self.target_lookup.keys())
+
         for objectId in objectId_list:
             lightcurve_file = self.get_lightcurve_file(objectId)
+            if not lightcurve_file.exists():
+                missing.append(objectId)
+                continue
+
             lightcurve = pd.read_csv(lightcurve_file)
             lightcurve.query(f"jd < @t_ref.jd", inplace=True)
             lightcurve.sort_values("jd", inplace=True)
@@ -210,8 +309,38 @@ class LasairQueryManager(BaseQueryManager):
                 )
                 self.target_lookup[objectId] = target
             else:
-                target.lasair_data.lightcurve = lightcurve
-                target.updated = True
+                existing_lightcurve = target.lasair_data.lightcurve
+                if existing_lightcurve is not None:
+                    if len(lightcurve) <= len(existing_lightcurve):
+                        continue
+            target.lasair_data.add_lightcurve(lightcurve)
+            loaded.append(objectId)
+            target.updated = True
+        t_end = time.perf_counter()
+
+        N_loaded = len(loaded)
+        N_missing = len(missing)
+        if N_loaded > 0:
+            logger.info(
+                f"loaded {N_loaded}, missing {N_missing} lightcurves in {t_end-t_start:.1f}s"
+            )
+        return loaded, missing
+
+    def apply_messenger_updates(self, alerts: List[Dict]):
+        for alert in alerts:
+            objectId = alert["objectId"]
+            target = self.target_lookup.get(objectId, None)
+            if target is None:
+                continue
+            target.send_updates = True
+            topic_str = alert["topic"]
+            timestamp = alert["alert_timestamp"]
+            alert_text = (
+                f"LASAIR alert from {topic_str}\n"
+                f"     broadcast at jd={timestamp}\n"
+                f"     see lasair-ztf.lsst.ac.uk/objects/{objectId}/"
+            )
+            target.update_messages.append(alert_text)
 
     def perform_all_tasks(self, t_ref: Time = None, simulated_alerts=None):
         t_ref = t_ref or Time.now()
@@ -219,26 +348,18 @@ class LasairQueryManager(BaseQueryManager):
             alerts = self.read_simulated_alerts(t_ref=t_ref)
         else:
             alerts = self.listen_for_alerts(t_ref=t_ref)
-        # if simulated_alerts:
-        #    pass
-        # else:
-        alert_objectIds = [alert["objectId"] for alert in alerts]
-        logger.info(f"lightcurves for {len(alert_objectIds)} alerts")
-        alert_lightcurves = self.perform_lightcurve_queries(
-            alert_objectIds, t_ref=t_ref
-        )
-        old_lightcurve_objectIds = self.find_old_lightcurves(t_ref=t_ref)
-        logger.info(f"lightcurves for {len(old_lightcurve_objectIds)}")
-        updated_lightcurves = self.perform_lightcurve_queries(
-            old_lightcurve_objectIds, t_ref=t_ref
-        )
-        objectId_list = list(set(alert_lightcurves + updated_lightcurves))
-        self.load_target_lightcurves(objectId_list)
 
-        for alert in alerts:
-            objectId = alert["objectId"]
-            topic = alert.get("topic", None)
-            target = self.target_lookup[objectId]
-            target.send_updates = True
-            if topic:
-                target.update_messages.append(f"lasair topic {topic}")
+        processed_alerts = self.process_alerts(alerts)
+
+        self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
+
+        # Always query for alert LCs - alert means that the LC should be updated!
+        alert_objectIds = [alert["objectId"] for alert in alerts]
+        success, failed = self.perform_lightcurve_queries(alert_objectIds, t_ref=t_ref)
+
+        to_query = self.get_lightcurves_to_query(t_ref=t_ref)
+        logger.info(f"lightcurves for {len(to_query)}")
+        success, failed = self.perform_lightcurve_queries(to_query, t_ref=t_ref)
+        loaded, missing = self.load_target_lightcurves(t_ref=t_ref)
+
+        self.apply_messenger_updates(processed_alerts)

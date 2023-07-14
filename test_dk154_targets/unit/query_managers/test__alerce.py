@@ -1,5 +1,6 @@
 import os
 import pytest
+import warnings
 
 import numpy as np
 
@@ -139,7 +140,11 @@ def generate_cutouts():
     }
     hdul = fits.HDUList()
     for k, data in cutouts.items():
-        header = fits.Header({"STAMP_TYPE": k})
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", "Keyword name 'STAMP_TYPE' is greater than 8 characters"
+            )
+            header = fits.Header({"STAMP_TYPE": k})
         hdu = fits.ImageHDU(data=data, header=header)
         hdul.append(hdu)
     return hdul
@@ -235,8 +240,27 @@ def test__target_from_alerce_query_row(query_results_df):
     query_results_df
     query_results_df.set_index("oid", inplace=True)
 
-    t1 = target_from_alerce_query_row(query_results_df.index[0], query_results_df)
-    t1.objectId
+    t1 = target_from_alerce_query_row(
+        query_results_df.index[0], query_results_df.iloc[0]
+    )
+    assert t1.objectId == "ZTF1000"
+    print(t1.ra)
+    assert np.isclose(t1.ra, 30.0)
+    assert np.isclose(t1.dec, 45.0)
+
+
+def test__target_from_alerce_query_row_bad_input(query_results_df):
+    t1 = target_from_alerce_query_row("test1", {"meanra": 40.0, "meandec": 60.0})
+    assert isinstance(t1, Target)
+    assert np.isclose(t1.ra, 40.0)
+    assert np.isclose(t1.dec, 60.0)
+
+    row = pd.Series({"blah": 20})
+    t1 = target_from_alerce_query_row("test2", row)
+    assert t1 is None
+
+    with pytest.raises(ValueError):
+        t_failed = target_from_alerce_query_row("test1", query_results_df)
 
 
 def test__target_from_alerce_lightcurve(alerce_lc):
@@ -562,6 +586,18 @@ class Test__AlerceQueryManager:
         assert len(qm.target_lookup) == 3
         assert set(qm.target_lookup.keys()) == set("ZTF1000 ZTF1001 ZTF1002".split())
         self._clear_test_directories()
+
+    def test__new_targets_from_updates_bad_input(self, query_results_df):
+        self._clear_test_directories()
+
+        query_results_df.drop(["meanra"], axis=1, inplace=True)
+        query_updates = process_alerce_query_results(query_results_df)
+
+        config = {}
+        qm = AlerceQueryManager(config, {}, data_path=paths.test_data_path)
+        qm.new_targets_from_updates(query_updates)
+
+        assert len(qm.target_lookup) == 0
 
     def test__get_lightcurves_to_query(self, alerce_lc):
         self._clear_test_directories()

@@ -22,6 +22,7 @@ from dk154_targets.query_managers.fink import (
     FinkQuery,
     process_fink_lightcurve,
     target_from_fink_lightcurve,
+    target_from_fink_alert,
 )
 
 from dk154_targets import paths
@@ -86,6 +87,25 @@ def test__process_fink_lightcurve(det_df, ndet_df):
     assert all(ulim["candid"] == 0)
 
 
+def test__process_fink_lightcurve_empty_input(det_df, ndet_df):
+    ndet_df_ulim = ndet_df.drop("candid", axis=1)
+    ndet_df_ulim.query("tag=='upperlim'", inplace=True)
+    assert "candid" not in ndet_df_ulim.columns
+    lc1 = process_fink_lightcurve(pd.DataFrame([]), ndet_df_ulim)
+    assert len(lc1) == 3
+    assert "candid" in lc1.columns
+
+    assert "tag" not in det_df.columns  # It's not there....
+    lc2 = process_fink_lightcurve(det_df, pd.DataFrame([]))
+    assert len(lc2) == 3
+    assert "tag" in lc2.columns  # Now it is!
+
+    lc3 = process_fink_lightcurve(pd.DataFrame([]), pd.DataFrame([]))
+    assert "candid" in lc3.columns
+    assert "jd" in lc3.columns
+    assert "mjd" in lc3.columns
+
+
 def test__error_on_mismatching_inputs(det_df, ndet_df):
     # test that the checks for sensible input raise ValueError
     bad_det_df = det_df.iloc[:-1]
@@ -124,6 +144,23 @@ def test__target_from_fink_lightcurve(fink_lc):
 
     with pytest.raises(TypeError):
         bad_target = target_from_fink_lightcurve(fink_lc)
+
+
+def test__target_from_alert():
+    alert = dict(objectId="ZTF1000", ra=30.0, dec=60.0)
+
+    t_ref = Time(60000.0, format="mjd")
+    t1 = target_from_fink_alert(alert, t_ref=t_ref)
+    assert t1.objectId == "ZTF1000"
+    assert np.isclose(t1.ra, 30)
+    assert np.isclose(t1.creation_time.mjd, 60000.0)
+
+
+def test__target_from_alert_fails_on_missing_data():
+    alert = dict(ra=40.0, dec=70.0)
+
+    with pytest.raises(MissingObjectIdError):
+        t1 = target_from_fink_alert(alert)
 
 
 class Test__FinkQueryManager:
@@ -429,7 +466,7 @@ class Test__FinkQueryManager:
 
         self._clear_test_directories()
 
-    def test__save_alerts(self, example_config, fake_alert_results):
+    def test__process_alerts_saves_alerts(self, example_config, fake_alert_results):
         self._clear_test_directories()
 
         qm = FinkQueryManager(
@@ -457,6 +494,36 @@ class Test__FinkQueryManager:
         assert not exp_alert_dir.exists()
         assert not self.exp_alerts_path.exists()
         assert not self.exp_fink_path.exists()
+
+    def test__new_targets_from_alerts(self, fink_qm):
+        self._clear_test_directories()
+
+        assert len(fink_qm.target_lookup) == 0
+
+        alert_results = [
+            dict(objectId="ZTF1000", ra=30, dec=45),
+            dict(objectId="ZTF1001", ra=60, dec=45),
+            dict(objectId="ZTF1002", ra=90, dec=45),
+        ]
+
+        t_ref = Time(60000.0, format="mjd")
+        fink_qm.new_targets_from_alerts(alert_results, t_ref=t_ref)
+
+        assert len(fink_qm.target_lookup) == 3
+        assert np.isclose(fink_qm.target_lookup["ZTF1000"].creation_time.mjd, 60000.0)
+
+        new_alerts = [
+            dict(objectId="ZTF1000", ra=30, dec=45),
+            dict(objectId="ZTF1003", ra=120, dec=45),
+        ]
+        t_ref = Time(60001.0, format="mjd")
+        fink_qm.new_targets_from_alerts(new_alerts, t_ref=t_ref)
+        assert len(fink_qm.target_lookup) == 4
+        assert np.isclose(fink_qm.target_lookup["ZTF1000"].creation_time.mjd, 60000.0)
+        # Not added in
+        assert np.isclose(fink_qm.target_lookup["ZTF1003"].creation_time.mjd, 60001.0)
+
+        self._clear_test_directories()
 
     def test__get_lightcurves_to_query(self, fink_qm, fink_lc):
         self._clear_test_directories()
@@ -515,13 +582,14 @@ class Test__FinkQueryManager:
 
         assert fink.FinkQuery.api_url == "https://fink-portal.org/api/v1"
         with monkeypatch.context() as m:
+            # Temp fix FinkQuery to return some made up data.
             m.setattr("dk154_targets.query_managers.fink.FinkQuery", MockFinkQuery)
             assert not hasattr(fink.FinkQuery, "api_url")
             input_list = ["ZTF9999"]
             exp_lc_file = paths.test_data_path / "fink/lightcurves/ZTF9999.csv"
             assert not exp_lc_file.exists()
-            successful = fink_qm.perform_lightcurve_queries(input_list)
-            assert set(input_list) == set(successful)  # boring
+            success, failed = fink_qm.perform_lightcurve_queries(input_list)
+            assert set(input_list) == set(success)  # boring
             assert exp_lc_file.exists()
             lc_result = pd.read_csv(exp_lc_file)
             assert len(lc_result) == 7
@@ -683,3 +751,36 @@ class Test__FinkQuery:
         # Doesn't break on init...
         fq = FinkQuery()
         assert fq.api_url == "https://fink-portal.org/api/v1"
+
+    def test__fix_dict_keys(self):
+        input_dict = {"key1": 10, "i:key2": 20, "v:key3": 30}
+        FinkQuery.fix_dict_keys(input_dict)
+
+        assert set(input_dict.keys()) == set(["key1", "key2", "key3"])
+        assert input_dict["key1"] == 10
+        assert input_dict["key2"] == 20
+        assert input_dict["key3"] == 30
+
+    def test__process_data(self):
+        data = [
+            {"key1": 10, "i:key2": 20, "v:key3": 30},
+            {"key1": 11, "i:key2": 21, "v:key3": 31},
+            {"key1": 12, "i:key2": 22, "v:key3": 32},
+        ]
+        result = FinkQuery.process_data(data)
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 3
+        assert set(result.columns) == set(["key1", "key2", "key3"])
+
+    def test__process_data_no_df(self):
+        data = [
+            {"key1": 10, "i:key2": 20, "v:key3": 30},
+            {"key1": 11, "i:key2": 21, "v:key3": 31},
+            {"key1": 12, "i:key2": 22, "v:key3": 32},
+        ]
+        result = FinkQuery.process_data(data, return_df=False)
+        assert isinstance(result, list)
+        assert len(result) == 3
+        for d in result:
+            assert isinstance(d, dict)
+            assert set(d.keys()) == set(["key1", "key2", "key3"])

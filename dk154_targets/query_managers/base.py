@@ -15,6 +15,13 @@ class BaseQueryManager(abc.ABC):
     def perform_all_tasks(self):
         raise NotImplementedError
 
+    def add_target(self, target):
+        if target.objectId in self.target_lookup:
+            raise ValueError(
+                f"{self.name}: obj {target.objectId} already in target_lookup"
+            )
+        self.target_lookup[target.objectId] = target
+
     def process_paths(self, data_path: Path = None, create_paths=True):
         if data_path is None:
             data_path = paths.base_path / paths.default_data_dir

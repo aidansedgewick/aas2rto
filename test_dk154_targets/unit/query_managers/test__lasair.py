@@ -193,12 +193,12 @@ class Test__LasairQueryManager:
                 config3, {}, data_path=paths.test_data_path, create_paths=False
             )
 
-    # def test__listen_for_alerts(self, mock_lasair_consumer, monkeypatch):
-    #     config = {}
-    #     qm = LasairQueryManager(config, {}, data_path=paths.test_data_path)
+    def test__listen_for_alerts(self, mock_lasair_consumer, monkeypatch):
+        config = {}
+        qm = LasairQueryManager(config, {}, data_path=paths.test_data_path)
 
-    #     with monkeypatch.context() as m:
-    #         m.setattr(
-    #             "dk154_targets.query_managers.lasair.lasair_consumer",
-    #             MockLasairConsumer,
-    #         )
+        with monkeypatch.context() as m:
+            m.setattr(
+                "dk154_targets.query_managers.lasair.lasair_consumer",
+                MockLasairConsumer,
+            )

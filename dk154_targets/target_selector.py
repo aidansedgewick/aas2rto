@@ -55,7 +55,7 @@ class TargetSelector:
     default_unranked_value = 9999
     minimum_score = 0.0
 
-    def __init__(self, selector_config: dict):
+    def __init__(self, selector_config: dict, create_paths=True):
         # Unpack configs.
         self.selector_config = selector_config
         self.selector_parameters = self.selector_config.get("selector_parameters", {})
@@ -69,11 +69,10 @@ class TargetSelector:
         self.target_lookup = self._create_empty_target_lookup()
 
         # Prepare paths
-        self.process_paths()
-        self.make_directories()
+        self.process_paths(create_paths=create_paths)
 
         # Initialise some things.
-        self.initialize_query_managers()
+        self.initialize_query_managers(create_paths=create_paths)
         self.initialize_observatories()
         self.initialize_messengers()
 
@@ -103,16 +102,13 @@ class TargetSelector:
         """Returns an empty dictionary. Only for type hinting."""
         return dict()
 
-    def _create_empty_target_set(self) -> Set[str]:
-        """Returns an empty set. Only for type hinting."""
-        return set()
-
-    def process_paths(self):
+    def process_paths(self, create_paths=True):
         self.base_path = paths.wkdir
         project_path = self.paths_config.pop("project_path", "default")
         if project_path == "default":
             project_path = self.base_path / "projects/default"
         self.project_path = Path(project_path)
+        logger.info(f"set project path at:\n    {self.project_path.absolute()}")
         self.paths = {"base_path": self.base_path, "project_path": self.project_path}
         for location, path in self.paths_config.items():
             parts = path.split("/")
@@ -125,37 +121,47 @@ class TargetSelector:
                 formatted_parts = [Path(p) for p in parts]
             formatted_path = parent.joinpath(*formatted_parts)
             self.paths[location] = formatted_path
+
         if "data_path" not in self.paths:
             self.paths["data_path"] = self.project_path / paths.default_data_dir
         self.data_path = self.paths["data_path"]
+
         if "outputs_path" not in self.paths:
             self.paths["outputs_path"] = self.project_path / paths.default_outputs_dir
         self.outputs_path = self.paths["outputs_path"]
+
         if "opp_targets_path" not in self.paths:
             self.paths["opp_targets_path"] = (
                 self.project_path / paths.default_opp_targets_dir
             )
         self.opp_targets_path = self.paths["opp_targets_path"]
+
         if "scratch_path" not in self.paths:
             self.paths["scratch_path"] = self.project_path / paths.default_scratch_dir
         self.scratch_path = self.paths["scratch_path"]
         self.lc_scratch_path = self.scratch_path / "lc"
-        self.lc_scratch_path.mkdir(exist_ok=True, parents=True)
         self.oc_scratch_path = self.scratch_path / "oc"
-        self.oc_scratch_path.mkdir(exist_ok=True, parents=True)
+
+        if "rejected_targets_path" not in self.paths:
+            self.paths["rejected_targets_path"] = self.project_path / "rejected_targets"
+        self.rejected_targets_path = self.paths["rejected_targets_path"]
+
         if "existing_targets_file" not in self.paths:
             self.paths["existing_targets_file"] = (
                 self.data_path / "existing_targets.csv"
             )
         self.existing_targets_file = self.paths["existing_targets_file"]
 
-    def make_directories(self):
-        for location, path in self.paths.items():
-            if location.endswith("file"):
-                continue
-            path.mkdir(exist_ok=True, parents=True)
+        if create_paths:
+            self.project_path.mkdir(exist_ok=True, parents=True)
+            self.data_path.mkdir(exist_ok=True, parents=True)
+            self.outputs_path.mkdir(exist_ok=True, parents=True)
+            self.opp_targets_path.mkdir(exist_ok=True, parents=True)
+            self.lc_scratch_path.mkdir(exist_ok=True, parents=True)
+            self.oc_scratch_path.mkdir(exist_ok=True, parents=True)
+            self.rejected_targets_path.mkdir(exist_ok=True, parents=True)
 
-    def initialize_query_managers(self):
+    def initialize_query_managers(self, create_paths=True):
         self.query_managers = {}
         self.qm_order = []
         for qm_name, qm_config in self.query_manager_config.items():
@@ -165,7 +171,7 @@ class TargetSelector:
             self.qm_order.append(qm_name)  # In case the config order is very important.
 
             qm_args = (qm_config, self.target_lookup)
-            qm_kwargs = dict(data_path=self.data_path)
+            qm_kwargs = dict(data_path=self.data_path, create_paths=create_paths)
             if qm_name == "alerce":
                 qm = query_managers.AlerceQueryManager(*qm_args, **qm_kwargs)
             elif qm_name == "atlas":
@@ -174,11 +180,15 @@ class TargetSelector:
                 qm = query_managers.FinkQueryManager(*qm_args, **qm_kwargs)
             elif qm_name == "lasair":
                 qm = query_managers.LasairQueryManager(*qm_args, **qm_kwargs)
+            elif qm_name == "sdss":
+                raise NotImplementedError("not implemented.")
+                qm = query_managers.SdssQueryManager(*qm_args, **qm_kwargs)
             elif qm_name == "tns":
                 raise NotImplementedError(f"{qm_name.capitalize()}QueryManager")
             elif qm_name == "yse":
                 qm = query_managers.YseQueryManager(*qm_args, **qm_kwargs)
             else:
+                msg = f"init query manager for {qm_name}"
                 # Mainly for testing.
                 logger.warning(f"no known query manager for {qm_name}")
                 # query_managers.UsingGenericWarning,
@@ -389,6 +399,13 @@ class TargetSelector:
             # self.rejected_targets.add(objectId)
             removed_targets.append(target)
             assert objectId not in self.target_lookup
+            if self.rejected_targets_path.exists():
+                rejected_target_file = self.rejected_targets_path / f"{objectId}.csv"
+                reject_comments = target.reject_comments.get("no_observatory", None)
+                reject_comments = reject_comments or ["no reject_comments_provided"]
+                lines = [f"rejected at {t_ref.iso}"] + reject_comments
+                with open(rejected_target_file, "w+") as f:
+                    f.writelines([l + "\n" for l in lines])
         return removed_targets
 
     def reset_updated_target_flags(self):
@@ -557,24 +574,21 @@ class TargetSelector:
         for objectId, target in self.target_lookup.items():
             if len(target.update_messages) == 0:
                 continue
-            intro = f"Updates for {objectId} at {t_ref.isot}"
-            messages = [intro] + target.update_messages
+            intro = f"Updates for {objectId}"
+            messages = [target.get_info_string()] + target.update_messages
+            message_text = "\n".join(msg for msg in messages)
+
             img_paths = [target.latest_lc_fig_path] + list(
                 target.latest_oc_fig_paths.values()
             )
             if self.telegram_messenger is not None:
-                self.telegram_messenger.message_users(texts=messages)
-                self.telegram_messenger.message_users(
-                    img_paths=target.latest_lc_fig_path, caption="lightcurve"
-                )
-                self.telegram_messenger.message_users(
-                    img_paths=target.latest_oc_fig_paths.values(),
-                    caption="observing charts",
-                )
+                self.telegram_messenger.message_users(texts=message_text)
+                self.telegram_messenger.message_users(img_paths=img_paths)
             if self.slack_messenger is not None:
                 self.slack_messenger.send_messages(
-                    texts=messages, img_paths=target.latest_lc_fig_path
+                    texts=message_text, img_paths=target.latest_lc_fig_path
                 )
+            time.sleep(5.0)
 
     def reset_target_figures(self):
         for objectId, target in self.target_lookup.items():
@@ -639,6 +653,8 @@ class TargetSelector:
         # Get new data
         self.check_for_targets_of_opportunity()
         self.perform_query_manager_tasks(t_ref=t_ref)
+
+        print(self.target_lookup.keys())
 
         # Set some things before modelling and scoring.
         self.compute_observatory_info(t_ref=t_ref)

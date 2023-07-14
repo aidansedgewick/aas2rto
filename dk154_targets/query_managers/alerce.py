@@ -63,7 +63,32 @@ def process_alerce_lightcurve(
     return lightcurve
 
 
+def process_alerce_query_results(input_query_updates: pd.DataFrame):
+    query_updates = input_query_updates.copy()
+    query_updates.sort_values(["oid", "lastmjd"], inplace=True)
+    query_updates.drop_duplicates(subset="oid", keep="last", inplace=True)
+    query_updates.set_index("oid", verify_integrity=True, inplace=True)
+    return query_updates
+
+
 def target_from_alerce_query_row(objectId: str, data: pd.Series):
+    if isinstance(data, dict):
+        data = pd.Series(data)
+    if "meanra" not in data or "meandec" not in data:
+        msg = (
+            f"\033[33m{objectId} target_from_alerce_query_row\033[0m"
+            f"\n     missing 'meanra'/'meandec' from row {data.index}"
+        )
+        logger.warning(msg)
+        return None
+    if isinstance(data, pd.DataFrame):
+        if isinstance(data["meanra"], pd.Series):
+            if len(data["meanra"]) > 1:
+                logger.error(
+                    f"\033[31mtarget_from_alerce_query_row\033[0m has data\n{data}"
+                )
+                raise ValueError("data passed has length greater than>1")
+
     return Target(objectId, ra=data["meanra"], dec=data["meandec"])
 
 
@@ -78,14 +103,6 @@ def target_from_alerce_lightcurve(
     target = Target(objectId, ra=ra, dec=dec, alerce_data=alerce_data)
     target.updated = True
     return target
-
-
-def process_alerce_query_results(input_query_updates: pd.DataFrame):
-    query_updates = input_query_updates.copy()
-    query_updates.sort_values(["oid", "lastmjd"], inplace=True)
-    query_updates.drop_duplicates(subset="oid", keep="last", inplace=True)
-    query_updates.set_index("oid", verify_integrity=True, inplace=True)
-    return query_updates
 
 
 def cutouts_from_fits(cutouts_file: Path) -> Dict[str, np.ndarray]:
@@ -344,6 +361,8 @@ class AlerceQueryManager(BaseQueryManager):
             if target is not None:
                 continue
             target = target_from_alerce_query_row(objectId, row)
+            if target is None:
+                continue
             self.target_lookup[objectId] = target
             new_targets.append(objectId)
         logger.info(f"{len(new_targets)} targets added from updated queries")
