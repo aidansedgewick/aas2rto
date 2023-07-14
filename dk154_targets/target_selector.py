@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 import time
+import traceback
 import warnings
 import yaml
 from pathlib import Path
@@ -590,6 +591,11 @@ class TargetSelector:
                 )
             time.sleep(5.0)
 
+    def send_crash_reports(self):
+        tr = traceback.format_exc()
+        if self.telegram_messenger is not None:
+            self.telegram_messenger.send_crash_reports(tr)
+
     def reset_target_figures(self):
         for objectId, target in self.target_lookup.items():
             target.reset_figures()
@@ -711,20 +717,17 @@ class TargetSelector:
 
         while True:
             t_ref = Time.now()
-            # try:
-            self.perform_iteration(
-                scoring_function=scoring_function,
-                modeling_function=modeling_function,
-                lightcurve_compile_function=lightcurve_compile_function,
-                lc_plotting_function=lc_plotting_function,
-                t_ref=t_ref,
-            )
-            # except Exception as e:
-            #     tr = traceback.format_exc()
-            #     print(tr)
-            #     if self.telegram_messenger is not None:
-            #         self.telegram_messenger.send_crash_reports(tr)
-            #     sys.exit()
+            try:
+                self.perform_iteration(
+                    scoring_function=scoring_function,
+                    modeling_function=modeling_function,
+                    lightcurve_compile_function=lightcurve_compile_function,
+                    lc_plotting_function=lc_plotting_function,
+                    t_ref=t_ref,
+                )
+            except Exception as e:
+                self.send_crash_reports()
+                sys.exit()
 
             # if iterations > 1:
             self.perform_messaging_tasks()
