@@ -726,7 +726,7 @@ class TargetSelector:
                     t_ref=t_ref,
                 )
             except Exception as e:
-                self.send_crash_reports()
+                self.send_crash_report()
                 sys.exit()
 
             # if iterations > 1:

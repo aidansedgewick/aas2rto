@@ -3,6 +3,7 @@ import getpass
 import io
 import requests
 import time
+import traceback
 import yaml
 from logging import getLogger
 from pathlib import Path
@@ -111,9 +112,15 @@ class AtlasQueryManager(BaseQueryManager):
         next_url = AtlasQuery.atlas_default_queue_url
 
         while next_url is not None:
-            task_response = AtlasQuery.get_existing_queries(
-                headers=self.atlas_headers, url=next_url
-            )
+            try:
+                task_response = AtlasQuery.get_existing_queries(
+                    headers=self.atlas_headers, url=next_url
+                )
+            except Exception as e:
+                logger.warning("\033[33mget_existing_queries failed.\033[0m")
+                tr = traceback.format_exc()
+                print(tr)
+                break
             task_results = task_response["results"]
             for task_result in task_results[::-1]:
                 submit_comment = task_result.get("comment", None)
