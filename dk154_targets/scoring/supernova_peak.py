@@ -1,3 +1,4 @@
+import copy
 from logging import getLogger
 from typing import Dict, List, Tuple
 
@@ -115,7 +116,7 @@ def supernova_peak_score(
         f"timespan f={factors['timespan']:.2f} from timspan={timespan:.1f}d"
     )
     scoring_comments.append(timespan_comment)
-    if timespan > 35:
+    if timespan > 15:
         reject = True
         reject_comments.append(f"target is {timespan:.2f} days old")
 
@@ -133,8 +134,17 @@ def supernova_peak_score(
                 f"rising_fraction {fid} is {rising_fraction_fid:.2f}"
             )
 
-    sncosmo_model = target.models.get("sncosmo_model", None)
+    model = target.models.get("sncosmo_model_emcee", None)
+    sncosmo_model = copy.deepcopy(model)
     if sncosmo_model is not None:
+        samples = getattr(model, "result", {}).get("samples", None)
+        if samples is not None:
+            vparam_names = model.result.get("vparam_names")
+            median_params = np.nanquantile(samples, q=0.5, axis=0)
+
+            pdict = {k: v for k, v in zip(vparam_names, median_params)}
+            sncosmo_model.update(pdict)
+
         ###===== Time from peak?
         peak_dt = t_ref.jd - sncosmo_model["t0"]
         interest_factor = peak_only_interest_function(peak_dt)
