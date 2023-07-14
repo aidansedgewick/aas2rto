@@ -594,7 +594,7 @@ class TargetSelector:
     def send_crash_reports(self):
         tr = traceback.format_exc()
         if self.telegram_messenger is not None:
-            self.telegram_messenger.send_crash_reports(tr)
+            self.telegram_messenger.send_crash_report(tr)
 
     def reset_target_figures(self):
         for objectId, target in self.target_lookup.items():
@@ -726,7 +726,7 @@ class TargetSelector:
                     t_ref=t_ref,
                 )
             except Exception as e:
-                self.send_crash_report()
+                self.send_crash_reports()
                 sys.exit()
 
             # if iterations > 1:
