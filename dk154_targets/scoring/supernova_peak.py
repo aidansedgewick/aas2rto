@@ -1,4 +1,5 @@
 import copy
+import traceback
 from logging import getLogger
 from typing import Dict, List, Tuple
 
@@ -69,166 +70,200 @@ def calc_observatory_factor(alt_grid, min_alt=30.0, norm_alt=45.0):
     return 1.0 / (integral / norm)
 
 
-def supernova_peak_score(
-    target: Target, observatory: Observer, t_ref: Time = None
-) -> Tuple[float, List, List]:
-    t_ref = t_ref or Time.now()
+class supernova_peak_score:
+    
 
-    # to keep track
-    scoring_comments = []
-    reject_comments = []
-    factors = {}
-    reject = False
-    exclude = False  # If true, don't reject, but not interesting right now.
+    def __init__(self):
 
-    source_priority = ("fink", "lasair", "alerce")
-    ztf_source = None
-    for source in source_priority:
-        potential_ztf_source = getattr(target, f"{source}_data", None)
-        if potential_ztf_source is None:
-            continue
-        if potential_ztf_source.lightcurve is None:
-            continue
-        ztf_source = potential_ztf_source
-        break
+        self.__name__ = self.__class__.__name__
+        self.source_priority = ("fink", "lasair", "alerce")
+        self.mag_lim = 19.5
+        self.max_timespan = 15.0
+        self.min_rising_fraction = 0.4
+        self.min_altitude = 30.
+        self.default_color_factor = 0.1
+        self.min_ztf_detections = 3
 
-    if ztf_source is None:
-        scoring_comments.append(f"no ztf_source data in any of {source_priority}")
-        return -1.0, scoring_comments, reject_comments
+    def __call__(
+        self, target: Target, observatory: Observer, t_ref: Time = None
+    ) -> Tuple[float, List, List]:
+        t_ref = t_ref or Time.now()
 
-    ztf_detections = ztf_source.detections
+        # to keep track
+        scoring_comments = []
+        reject_comments = []
+        factors = {}
+        reject = False
+        exclude = False  # If true, don't reject, but not interesting right now.
 
-    ###===== Is it bright enough =======###
-    last_mag = ztf_detections["magpsf"].values[-1]
-    last_band = ztf_detections["fid"].values[-1]
-    mag_factor = calc_mag_factor(last_mag)
-    scoring_comments.append(f"mag_factor={mag_factor:.2f} from mag={last_mag:.1f}")
-    if last_mag > 20.5:
-        exclude = True
-        scoring_comments.append(
-            f"latest mag {last_mag:.1f} too faint: exclude from ranking"
-        )
+        ztf_source = None
+        for source in self.source_priority:
+            potential_ztf_source = getattr(target, f"{source}_data", None)
+            if potential_ztf_source is None:
+                continue
+            if potential_ztf_source.lightcurve is None:
+                continue
+            ztf_source = potential_ztf_source
+            break
 
-    ###===== Is the target very old? ======###
-    timespan = t_ref.jd - ztf_detections["jd"].min()
-    factors["timespan"] = calc_timespan_factor(timespan)
-    timespan_comment = (
-        f"timespan f={factors['timespan']:.2f} from timspan={timespan:.1f}d"
-    )
-    scoring_comments.append(timespan_comment)
-    if timespan > 15:
-        reject = True
-        reject_comments.append(f"target is {timespan:.2f} days old")
+        if ztf_source is None:
+            scoring_comments.append(f"no ztf_source data in any of {source_priority}")
+            return -1.0, scoring_comments, reject_comments
 
-    ###===== Is the target still rising ======###
-    for fid, fid_history in ztf_detections.groupby("fid"):
-        fid_history.sort_values("jd", inplace=True)
-        rising_fraction_fid = calc_rising_fraction(fid_history)
-        scoring_comments.append(
-            f"f_rising={rising_fraction_fid:.2f} for {len(fid_history)} band {fid} obs"
-        )
-        factors[f"rising_fraction_{fid}"] = rising_fraction_fid
-        if rising_fraction_fid < 0.4:
-            reject = True
-            reject_comments.append(
-                f"rising_fraction {fid} is {rising_fraction_fid:.2f}"
-            )
+        ztf_detections = ztf_source.detections
 
-    model = target.models.get("sncosmo_model_emcee", None)
-    sncosmo_model = copy.deepcopy(model)
-    if sncosmo_model is not None:
-        samples = getattr(model, "result", {}).get("samples", None)
-        if samples is not None:
-            vparam_names = model.result.get("vparam_names")
-            median_params = np.nanquantile(samples, q=0.5, axis=0)
-
-            pdict = {k: v for k, v in zip(vparam_names, median_params)}
-            sncosmo_model.update(pdict)
-
-        ###===== Time from peak?
-        peak_dt = t_ref.jd - sncosmo_model["t0"]
-        interest_factor = peak_only_interest_function(peak_dt)
-        factors["interest_factor"] = interest_factor
-        interest_comment = f"interest {interest_factor:.2f} from peak_dt={peak_dt:.2f}d"
-        scoring_comments.append(interest_comment)
-
-        if peak_dt > 15.0:
-            reject = True
-            reject_comments.append(f"too far past peak {peak_dt:.1f}")
-
-        ###===== Blue colour?
-        ztfg_mag = sncosmo_model.bandmag("ztfg", "ab", t_ref.jd)
-        ztfr_mag = sncosmo_model.bandmag("ztfr", "ab", t_ref.jd)
-        color_factor = calc_color_factor(ztfg_mag, ztfr_mag)
-        if not np.isfinite(color_factor):
-            color_factor = 0.1
-            color_comment = f"infinite color factor set as {color_factor:1f} (g={ztfg_mag}, r={ztfr_mag}"
-            scoring_comments.append(color_comment)
-        else:
-            scoring_comments.append(
-                f"color factor={color_factor:.2f} from model g-r={ztfg_mag-ztfr_mag:.2f}"
-            )
-
-        factors["color_factor"] = color_factor
-
-    if observatory is not None:
-        min_alt = 30.0
-
-        obs_name = getattr(observatory, "name", None)
-        if obs_name is None:
-            raise ValueError("observatory has no name!!")
-        obs_info = target.observatory_info.get(obs_name, None)
-        if obs_info is None:
-            logger.warning(f"precomputed obs_info is None for {obs_name}")
-
-        t_grid = obs_info.t_grid
-        sunset = obs_info.sunset
-        sunrise = obs_info.sunrise
-        target_altaz = obs_info.target_altaz
-
-        if sunrise is None or sunset is None:
-            scoring_comments.append(f"sun never sets at this observatory")
+        ###===== Is it bright enough =======###
+        last_mag = ztf_detections["magpsf"].values[-1]
+        last_band = ztf_detections["fid"].values[-1]
+        mag_factor = calc_mag_factor(last_mag)
+        scoring_comments.append(f"mag_factor={mag_factor:.2f} from mag={last_mag:.1f}")
+        if last_mag > self.mag_lim:
             exclude = True
-        else:
-            if target_altaz is not None:
-                night_mask = (sunset.jd < t_grid.jd) & (t_grid.jd < sunrise.jd)
-                night_alt = target_altaz.alt.deg[night_mask]
-                next_alt = night_alt[0]
+            scoring_comments.append(
+                f"latest mag {last_mag:.1f} too faint ({self.mag_lim}): exclude from ranking"
+            )
 
-                if all(night_alt < min_alt):
-                    exclude = True  # NOT reject - it might be interesting elsewhere.
-                else:
-                    if next_alt < min_alt:
-                        exclude = True
-                        comment = f"alt={next_alt:.1f} < min_alt={min_alt:.1f} at {sunset.isot}, {obs_name}"
-                        scoring_comments.append(comment)
-                    else:
-                        observing_factor = calc_observatory_factor(
-                            night_alt, min_alt=min_alt, norm_alt=45.0
-                        )
-                        factors["observing_factor"] = observing_factor
-                        scoring_comments.append(f"obeserving factor {observing_factor}")
+        ###===== Is the target very old? ======###
+        timespan = t_ref.jd - ztf_detections["jd"].min()
+        factors["timespan"] = calc_timespan_factor(timespan)
+        timespan_comment = (
+            f"timespan f={factors['timespan']:.2f} from timspan={timespan:.1f}d"
+        )
+        scoring_comments.append(timespan_comment)
+        if timespan > self.max_timespan:
+            reject = True
+            reject_comments.append(f"target is {timespan:.2f} days old")
+
+        ###===== Is the target still rising ======###
+        for fid, fid_history in ztf_detections.groupby("fid"):
+            fid_history.sort_values("jd", inplace=True)
+            rising_fraction_fid = calc_rising_fraction(fid_history)
+            scoring_comments.append(
+                f"f_rising={rising_fraction_fid:.2f} for {len(fid_history)} band {fid} obs"
+            )
+            factors[f"rising_fraction_{fid}"] = rising_fraction_fid
+            if rising_fraction_fid < self.min_rising_fraction:
+                reject = True
+                reject_comments.append(
+                    f"rising_fraction {fid} is {rising_fraction_fid:.2f} < {self.min_rising_fraction}"
+                )
+
+        ###===== How many observations =====###
+        N_detections = {}
+        for fid, fid_history in ztf_detections.groupby("fid"):
+            N_detections[fid] = len(fid_history)
+        if N_detections.get(1, 0) < 2 and N_detections.get(2, 0) < 2:
+            scoring_comments.append(f"exclude as detections {N_detections} insufficient")
+            exclude = True
+        if len(ztf_detections) < self.min_ztf_detections:
+            scoring_comments.append(f"exclude as detections {N_detections} insufficient")
+            exclude = True
+
+        model = target.models.get("sncosmo_model_emcee", None)
+        sncosmo_model = copy.deepcopy(model)
+        if sncosmo_model is not None:
+            samples = getattr(model, "result", {}).get("samples", None)
+            if samples is not None:
+                vparam_names = model.result.get("vparam_names")
+                median_params = np.nanquantile(samples, q=0.5, axis=0)
+
+                pdict = {k: v for k, v in zip(vparam_names, median_params)}
+                sncosmo_model.update(pdict)
+
+            ###===== Time from peak?
+            peak_dt = t_ref.jd - sncosmo_model["t0"]
+            interest_factor = peak_only_interest_function(peak_dt)
+            factors["interest_factor"] = interest_factor
+            interest_comment = f"interest {interest_factor:.2f} from peak_dt={peak_dt:.2f}d"
+            scoring_comments.append(interest_comment)
+
+            if peak_dt > self.max_timespan:
+                reject = True
+                reject_comments.append(f"too far past peak {peak_dt:.1f}")
+
+            ###===== Blue colour?
+            ztfg_mag = sncosmo_model.bandmag("ztfg", "ab", t_ref.jd)
+            ztfr_mag = sncosmo_model.bandmag("ztfr", "ab", t_ref.jd)
+            color_factor = calc_color_factor(ztfg_mag, ztfr_mag)
+            if not np.isfinite(color_factor):
+                color_factor = self.default_color_factor
+                color_comment = f"infinite color factor set as {color_factor:1f} (g={ztfg_mag}, r={ztfr_mag}"
+                scoring_comments.append(color_comment)
             else:
-                logger.warning(f"target {target.objectId} has no target_altaz!")
+                scoring_comments.append(
+                    f"color factor={color_factor:.2f} from model g-r={ztfg_mag-ztfr_mag:.2f}"
+                )
 
-    scoring_factors = np.array(list(factors.values()))
-    if not all(scoring_factors > 0):
-        neg_factors = "\n".join(f"    {k}={v}" for k, v in factors.items() if not v > 0)
-        reject_comments.append(neg_factors)
-        logger.warning(f"{target.objectId} has negative factors:{neg_factors}")
-        reject = True
+            factors["color_factor"] = color_factor
 
-    combined_factors = np.prod(scoring_factors)
-    final_score = target.base_score * combined_factors
+        if observatory is not None:
+            min_alt = self.min_altitude
 
-    # scoring_str = "\n".join(f"    {k}={v:.3f}" for k, v in factors.items())
-    scoring_str = "\n".join(f"   {comm}" for comm in scoring_comments)
-    logger.debug(f"{target.objectId} has factors:\n {scoring_str}")
+            obs_name = getattr(observatory, "name", None)
+            if obs_name is None:
+                raise ValueError("observatory has no name!!")
+            obs_info = target.observatory_info.get(obs_name, None)
+            if obs_info is None:
+                logger.warning(f"precomputed obs_info is None for {obs_name}")
 
-    if exclude:
-        final_score = -1.0
-    if reject:
-        reject_str = "\n".join(f"    {comm}" for comm in reject_comments)
-        logger.debug(f"{target.objectId}")
-        final_score = -np.inf
-    return final_score, scoring_comments, reject_comments
+            t_grid = obs_info.t_grid
+            sunset = obs_info.sunset
+            sunrise = obs_info.sunrise
+            target_altaz = obs_info.target_altaz
+
+            if sunrise is None or sunset is None:
+                scoring_comments.append(f"sun never sets at this observatory")
+                exclude = True
+            else:
+                if target_altaz is not None:
+                    night_mask = (sunset.jd < t_grid.jd) & (t_grid.jd < sunrise.jd)
+                    night_alt = target_altaz.alt.deg[night_mask]
+                    try:
+                        next_alt = night_alt[0]
+                    except Exception as e:
+                        print(f"t_ref {t_ref.jd}")
+                        print(f"night_alt is {night_alt}")
+                        print(f"t_grid 0, -1: {t_grid[0].jd}, {t_grid[-1].jd}")
+                        print(f"sunset, sunrise {sunset.jd}, {sunrise.jd}")
+                        print(f"night_mask True: {sum(night_mask)} / {len(night_mask)}")
+                        tr = traceback.format_exc()
+                        print(tr)
+                        raise ValueError(e)
+
+                    if all(night_alt < min_alt):
+                        exclude = True  # NOT reject - it might be interesting elsewhere.
+                    else:
+                        if next_alt < min_alt:
+                            exclude = True
+                            comment = f"alt={next_alt:.1f} < min_alt={min_alt:.1f} at {sunset.isot}, {obs_name}"
+                            scoring_comments.append(comment)
+                        else:
+                            observing_factor = calc_observatory_factor(
+                                night_alt, min_alt=min_alt, norm_alt=45.0
+                            )
+                            factors["observing_factor"] = observing_factor
+                            scoring_comments.append(f"obeserving factor {observing_factor}")
+                else:
+                    logger.warning(f"target {target.objectId} has no target_altaz!")
+
+        scoring_factors = np.array(list(factors.values()))
+        if not all(scoring_factors > 0):
+            neg_factors = "\n".join(f"    {k}={v}" for k, v in factors.items() if not v > 0)
+            reject_comments.append(neg_factors)
+            logger.warning(f"{target.objectId} has negative factors:\n{neg_factors}")
+            reject = True
+
+        combined_factors = np.prod(scoring_factors)
+        final_score = target.base_score * combined_factors
+
+        # scoring_str = "\n".join(f"    {k}={v:.3f}" for k, v in factors.items())
+        scoring_str = "\n".join(f"   {comm}" for comm in scoring_comments)
+        logger.debug(f"{target.objectId} has factors:\n {scoring_str}")
+
+        if exclude:
+            final_score = -1.0
+        if reject:
+            reject_str = "\n".join(f"    {comm}" for comm in reject_comments)
+            logger.debug(f"{target.objectId}")
+            final_score = -np.inf
+        return final_score, scoring_comments, reject_comments

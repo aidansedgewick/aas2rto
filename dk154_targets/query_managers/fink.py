@@ -290,6 +290,8 @@ class FinkQueryManager(BaseQueryManager):
     def new_targets_from_alerts(self, alerts: List[Dict], t_ref: None = Time):
         t_ref = t_ref or Time.now()
 
+        added = []
+        existing = []
         for alert in alerts:
             objectId = alert.get("objectId", None)
             if objectId is None:
@@ -297,9 +299,14 @@ class FinkQueryManager(BaseQueryManager):
             target = self.target_lookup.get(objectId, None)
             if target is not None:
                 # Don't need to make a target.
+                existing.append(objectId)
                 continue
             target = target_from_fink_alert(alert, t_ref=t_ref)
             self.target_lookup[objectId] = target
+            added.append(objectId)
+        if len(added) > 0 or len(existing) > 0:
+            logger.info(f"{len(added)} targets init, {len(existing)} existing skipped")
+        return added, existing
 
     def query_for_updates(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -528,12 +535,13 @@ class FinkQueryManager(BaseQueryManager):
                     if cutouts_candid == candid:
                         # If the existing cutouts are from this candid,
                         # they must already be the latest (as we're searching in rev.)
-                        continue
+                        break
                     with open(cutouts_file, "rb") as f:
                         cutouts = pickle.load(f)
                     target.fink_data.cutouts = cutouts
                     target.fink_data.meta["cutouts_candid"] = candid
                     loaded_cutouts.append(objectId)
+                    break # Leave candid loop, back to outer target loop
         logger.info(f"{len(loaded_cutouts)} cutouts loaded")
 
     def apply_messenger_updates(self, alerts):
@@ -564,8 +572,11 @@ class FinkQueryManager(BaseQueryManager):
         processed_alerts = self.process_alerts(alerts, t_ref=t_ref)
         self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
 
+        new_alerts = set([alert["objectId"] for alert in processed_alerts])
+        success, failed = self.perform_lightcurve_queries(new_alerts)
+
         lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
-        successful_lc_queries = self.perform_lightcurve_queries(lcs_to_query)
+        success, failed = self.perform_lightcurve_queries(lcs_to_query)
 
         loaded_lcs, missing_lcs = self.load_target_lightcurves(t_ref=t_ref)
         self.integrate_alerts()

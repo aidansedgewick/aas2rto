@@ -5,6 +5,7 @@ from logging import getLogger
 from pathlib import Path
 from typing import Dict, List
 
+from astropy.time import Time
 try:
     import telegram
 except ModuleNotFoundError as e:
@@ -123,9 +124,7 @@ class TelegramMessenger:
                     )
         return None
 
-    def send_crash_report(self, texts: List[str] = None):
-        t_ref = t_ref or Time.now()
+    def send_crash_report(self, texts: List[str] = None, t_ref: Time = None):
+        self.message_users(users="sudoers", texts=texts)
 
-        t_str = t_ref.strftime("%Y%m%d %H:%M:%S")
-        crash_reports = [f"CRASH at UT {t_str}"] + texts
-        self.message_users(users="sudoers", texts=crash_reports)
+

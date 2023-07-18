@@ -1,7 +1,9 @@
 import copy
+import time
 import traceback
 import warnings
 from logging import getLogger
+from pathlib import Path
 from typing import Callable, Dict, List
 
 import numpy as np
@@ -9,6 +11,8 @@ import numpy as np
 import pandas as pd
 
 import matplotlib.pyplot as plt
+
+from scipy.interpolate import CubicSpline
 
 from astropy import units as u
 from astropy.coordinates import SkyCoord
@@ -478,6 +482,49 @@ class Target:
 
         return "\n".join(lines)
 
+    def write_comments(self, outdir: Path, t_ref: Time=None):
+        t_ref = t_ref or Time.now()
+
+        outdir = Path(outdir)
+        outdir.mkdir(exist_ok=True, parents=True)
+        
+        missing_score_comments = ["no score_comments provided"]
+        missing_reject_comments = ["no reject_comments provided"]
+        
+        lines = self.get_info_string().split("\n")
+        last_score = self.get_last_score()
+        lines.append(f"score = {last_score:.3f} for no_observatory")
+
+        score_comments = self.score_comments.get("no_observatory", None) 
+        score_comments = score_comments or missing_score_comments
+        for comm in score_comments:
+            lines.append(f"    {comm}")
+        
+        for obs_name, comments in self.score_comments.items():
+            if obs_name == "no_observatory":
+                continue
+            if comments is None:
+                continue
+            obs_comments = [comm for comm in comments if comm not in score_comments]
+            if len(obs_comments) == 0:
+                continue
+            obs_last_score = self.get_last_score(obs_name)
+            lines.append(f"score = {obs_last_score:.3f} for {obs_name}")
+            for comm in obs_comments:
+                lines.append(f"    {comm}")
+
+        if self.to_reject or not np.isfinite(last_score):
+            lines.append(f"{self.objectId} rejected at {t_ref.iso}")
+            reject_comments = self.reject_comments.get("no_observatory", None)
+            reject_comments = reject_comments or missing_reject_comments
+            for comm in reject_comments:
+                lines.append(f"    {comm}")
+            
+        comments_file = outdir / f"{self.objectId}.txt"
+        with open(comments_file, "w+") as f:
+            f.writelines([l + "\n" for l in lines])
+        return lines
+
     def reset_figures(self):
         # self.latest_lc_fig = None
         self.latest_lc_fig_path = None
@@ -501,7 +548,7 @@ zscaler = ZScaleInterval()
 
 
 def default_plot_lightcurve(
-    target: Target, t_ref: Time = None, fig=None, forecast_days=10.0
+    target: Target, t_ref: Time = None, fig=None, forecast_days=15.0
 ) -> plt.Figure:
     t_ref = t_ref or Time.now()
 
@@ -571,7 +618,7 @@ def default_plot_lightcurve(
             detections = band_history
 
         if any(np.isfinite(detections["mag"])):
-            peak_mag_vals.append(np.nanmin(detections["mag"]))
+            peak_mag_vals.append(np.nanmin(detections["mag"]) - 0.2)
 
         if len(detections) > 0:
             xdat = detections["jd"] - t_ref.jd
@@ -586,27 +633,54 @@ def default_plot_lightcurve(
             t_start = target.compiled_lightcurve["jd"].min()
             t_end = t_ref.jd + forecast_days
             # model_mag = model.bandmag(band, "ab", model_time_grid)
-            tgrid = np.arange(t_start, t_end, 0.1)
+            dt = 0.1
+            tgrid = np.arange(t_start, t_end+dt, dt)
+
             model_flux = model.bandflux(band, tgrid, zp=8.9, zpsys="ab")
             pos_mask = model_flux > 0.0
-            model_mag = -2.5 * np.log10(model_flux[pos_mask]) + 8.9
+            model_flux = model_flux[ pos_mask ]
+            tgrid = tgrid[ pos_mask ]
 
-            tgrid_shift = tgrid[pos_mask] - t_ref.jd
+            tgrid_shift = tgrid - t_ref.jd
+            dt = 1.0
+            samples_tgrid = np.arange(tgrid[0]-dt, tgrid[-1]+1.5*dt, + dt)
+            samples_tgrid_shift = samples_tgrid - t_ref.jd
+
+            model_mag = -2.5 * np.log10(model_flux) + 8.9
+            peak_mag_vals.append(np.nanmin(model_mag) - 0.2)
+
             samples = getattr(model, "result", {}).get("samples", None)
             if samples is not None:
                 vparam_names = model.result.get("vparam_names")
-                median = get_median(
-                    tgrid[pos_mask], model, samples, band, vparam_names=vparam_names
+                median_model = get_model_median_params(model, vparam_names=vparam_names)
+
+                model_med_flux = median_model.bandflux(band, tgrid, zp=8.9, zpsys="ab")
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=RuntimeWarning)
+                    model_med_mag = -2.5 * np.log10(model_med_flux) + 8.9
+                
+                ax.plot(tgrid_shift, model_mag, color=band_color, ls=":")
+                ax.plot(tgrid_shift, model_med_mag, color=band_color)
+
+                # Now deal with samples.
+                samples_lb, samples_med, samples_ub = get_sample_quartiles(
+                    samples_tgrid, model, band, q=[0.16, 0.5, 0.84], vparam_names=vparam_names
                 )
-                lower, upper = get_bounds(
-                    tgrid[pos_mask], model, samples, band, vparam_names=vparam_names
+                ax.fill_between(
+                    samples_tgrid_shift, samples_lb, samples_ub, color=band_color, alpha=0.2
                 )
-                ax.fill_between(tgrid_shift, lower, upper, color=band_color, alpha=0.2)
-                ax.plot(tgrid_shift, model_mag, color=band_color, ls="--")
-                ax.plot(tgrid_shift, median, color=band_color)
+                ax.plot(samples_tgrid_shift, samples_med, color=band_color, ls="--")
             else:
                 ax.plot(tgrid_shift, model_mag, color=band_color)
 
+            if ii == 0:    
+                l0 = ax.plot([0,0], [23,23], ls="-", color="k", label="median parameters")
+                l2 = ax.plot([0,0], [23,23], ls=":", color="k", label="mean parameters")
+                l1 = ax.plot([0,0], [23,23], ls="--", color="k", label="LC samples median")
+                lines_legend = ax.legend(handles=[l0[0],l1[0],l2[0]], loc=1)
+                # extra [0] indexing because ax.plot reutrns LIST of n-1 lines for n points.
+                ax.add_artist(lines_legend)
+            
     peak_mag_vals.append(17.0)
     y_bright = np.nanmin(peak_mag_vals)
     ax.set_ylim(22.0, y_bright)
@@ -614,6 +688,8 @@ def default_plot_lightcurve(
 
     legend = ax.legend(handles=legend_handles, loc=2)
     ax.add_artist(legend)
+
+    
 
     title = str(target)
     known_redshift = target.tns_data.parameters.get("Redshift", None)
@@ -641,9 +717,6 @@ def default_plot_lightcurve(
         break
 
     for ii, imtype in enumerate(["Science", "Template", "Difference"]):
-        # if len(fig.axes) > 1:
-        #    im_ax = fig.axes[ii + 1]
-        # else:
         im_ax = fig.add_subplot(lc_gs[ii : ii + 1, -1:])
 
         im_ax.set_xticks([])
@@ -693,22 +766,33 @@ def default_plot_lightcurve(
     return fig
 
 
-def get_median(time_grid, model, samples, band, vparam_names=None):
+def get_model_median_params(model, vparam_names=None, samples=None):
     model_copy = copy.deepcopy(model)
     vparam_names = vparam_names or model.result.get("vparam_names")
+    samples = samples or model.result.get("samples", None)
+    if samples is None:
+        msg = f"model result {model.get('result', {}).keys()} has no samples"
+        raise ValueError(msg)
+        
     median_params = np.nanquantile(samples, q=0.5, axis=0)
 
     pdict = {k: v for k, v in zip(vparam_names, median_params)}
     model_copy.update(pdict)
-    lc_flux = model_copy.bandflux(band, time_grid, zp=8.9, zpsys="ab")
-    lc_mag = -2.5 * np.log10(lc_flux) + 8.9
-    return lc_mag
+    return model_copy
 
 
-def get_bounds(time_grid, model, samples, band, vparam_names=None, spacing=20):
+def get_sample_quartiles(
+    time_grid, model, band, samples=None, vparam_names=None, q=0.5, spacing=20
+):
     model_copy = copy.deepcopy(model)
     vparam_names = vparam_names or model.result.get("vparam_names")
+    samples = samples or model.result.get("samples", None)
+    if samples is None:
+        msg = f"model result {model.get('result', {}).keys()} has no samples"
+        raise ValueError(msg)
+
     lc_evaluations = []
+    t_start = time.perf_counter()
     for p_jj, params in enumerate(samples[::spacing]):
         pdict = {k: v for k, v in zip(vparam_names, params)}
         model_copy.update(pdict)
@@ -716,16 +800,30 @@ def get_bounds(time_grid, model, samples, band, vparam_names=None, spacing=20):
         with np.errstate(divide="ignore", invalid="ignore"):
             lc_mag_jj = -2.5 * np.log10(lc_flux_jj) + 8.9
         lc_evaluations.append(lc_mag_jj)
+    t_end = time.perf_counter()
+
     lc_evaluations = np.vstack(lc_evaluations)
-    lc_bounds = np.nanquantile(lc_evaluations, q=[0.16, 0.84], axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=RuntimeWarning)
+    lc_bounds = np.nanquantile(lc_evaluations, q=q, axis=0)
     return lc_bounds
+
+def spline_and_sample(x, y, xnew):
+    ypos_mask = np.isfinite(y)
+    xpos = x[ypos_mask]
+    ypos = y[ypos_mask]
+    spl = CubicSpline(xpos, ypos)
+    xprime_mask = (xpos[0] < xnew) & (xnew < xpos[-1])
+    xprime = xnew[xprime_mask]
+    yprime = spl(xprime[xprime_mask])
+    return xprime, yprime    
 
 
 def _warn_expensive_plotting(objectId=None, obs_name=None):
     objectId = objectId or "each target!"
     obs_name = obs_name or "<obs-name>"
     msg = (
-        f"\033[33mYou're computing expensive info for plotting {objectId}.\033[0m "
+        f"\033[33mYou compute expensive info for plotting {objectId}\033[0m\n"
         f"You should call `selector.compute_observatory_info(t_ref=<Time>)` "
         f"before scoring/plotting which precomputes this information, and adds it to each target. "
         f"You can then access the info as my_target.observatory_info['{obs_name}']`"
@@ -826,7 +924,7 @@ def plot_observing_chart(
 
         if all(target_altaz.alt < 30 * u.deg):
             bad_alt_kwargs = dict(
-                color="red", rotation=45, ha="center", va="center", fontsize=18
+                color="red", rotation=45, ha="center", va="center", fontsize=18, zorder=10
             )
             text = f"target alt never >30 deg"
             if len(target_list) == 1:

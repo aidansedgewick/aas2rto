@@ -27,7 +27,7 @@ from dk154_targets import query_managers
 from dk154_targets import messengers
 from dk154_targets.lightcurve_compilers import default_compile_lightcurve
 from dk154_targets.obs_info import ObservatoryInfo
-from dk154_targets.utils import print_header
+from dk154_targets.utils import print_header, calc_file_age
 
 from dk154_targets import paths
 
@@ -143,6 +143,10 @@ class TargetSelector:
         self.lc_scratch_path = self.scratch_path / "lc"
         self.oc_scratch_path = self.scratch_path / "oc"
 
+        if "comments_path" not in self.paths:
+            self.paths["comments_path"] = self.project_path / "comments"
+        self.comments_path = self.paths["comments_path"]
+
         if "rejected_targets_path" not in self.paths:
             self.paths["rejected_targets_path"] = self.project_path / "rejected_targets"
         self.rejected_targets_path = self.paths["rejected_targets_path"]
@@ -160,6 +164,7 @@ class TargetSelector:
             self.opp_targets_path.mkdir(exist_ok=True, parents=True)
             self.lc_scratch_path.mkdir(exist_ok=True, parents=True)
             self.oc_scratch_path.mkdir(exist_ok=True, parents=True)
+            self.comments_path.mkdir(exist_ok=True, parents=True)
             self.rejected_targets_path.mkdir(exist_ok=True, parents=True)
 
     def initialize_query_managers(self, create_paths=True):
@@ -367,9 +372,20 @@ class TargetSelector:
     def evaluate_all_targets_at_observatory(
         self, scoring_function: Callable, observatory: Observer, t_ref: Time = None
     ):
-        t_ref = t_ref or Time()
+        t_ref = t_ref or Time.now()
+
         for objectId, target in self.target_lookup.items():
-            target.evaluate_target(scoring_function, observatory, t_ref=t_ref)
+            try:
+                target.evaluate_target(scoring_function, observatory, t_ref=t_ref)
+            except Exception as e:
+                target.evaluate_target(lambda targ, obs, t: -1.0, observatory, t_ref=t_ref)
+                obs_name = getattr(observatory, "name", "no_observatory")
+                details = [
+                    "For target {object_id} at obs {obs_name} at {t_ref.isot}, "
+                    "scoring with {scoring_function.__name__} failed. "
+                    "Set score to -1.0, to exclude."
+                ]
+                self.send_crash_reports(text=details)
 
     def new_target_initial_check(self, scoring_function: Callable, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -383,8 +399,8 @@ class TargetSelector:
             new_scores.append(score)
             new_targets.append(objectId)
         return new_targets
-
-    def remove_bad_targets(self, t_ref=None):
+        
+    def remove_bad_targets(self, t_ref=None, write_comments=True):
         t_ref = t_ref or Time.now()
 
         to_remove = []
@@ -400,48 +416,78 @@ class TargetSelector:
             # self.rejected_targets.add(objectId)
             removed_targets.append(target)
             assert objectId not in self.target_lookup
-            if self.rejected_targets_path.exists():
-                rejected_target_file = self.rejected_targets_path / f"{objectId}.csv"
-                reject_comments = target.reject_comments.get("no_observatory", None)
-                reject_comments = reject_comments or ["no reject_comments_provided"]
-                lines = [f"rejected at {t_ref.iso}"] + reject_comments
-                with open(rejected_target_file, "w+") as f:
-                    f.writelines([l + "\n" for l in lines])
-        return removed_targets
+            if write_comments:
+                target.write_comments(self.rejected_targets_path, t_ref=t_ref)
+                target.write_comments(self.comments_path, t_ref=t_ref)
 
-    def reset_updated_target_flags(self):
-        for objectId, target in self.target_lookup.items():
-            target.updated = False
+        return removed_targets
 
     def build_target_models(
         self, modeling_functions: Callable, t_ref: Time = None, lazy=True
     ):
         t_ref = t_ref or Time.now()
 
-        logger.info(f"build models for {len(self.target_lookup)} targets")
+        logger.info(f"build models for targets")
 
         if not isinstance(modeling_functions, list):
             modeling_functions = [modeling_functions]
         failed_models = {func.__name__: 0 for func in modeling_functions}
-        for objectId, target in self.target_lookup.items():
-            for func in modeling_functions:
-                target.build_model(func, t_ref=t_ref, lazy=lazy)
+        for func in modeling_functions:
+
+            models_built = []
+            for objectId, target in self.target_lookup.items():
+                model = target.build_model(func, t_ref=t_ref, lazy=lazy)
+                if model is not None:
+                    models_built.append(objectId)        
                 if target.models.get(func.__name__, None) is None:
                     failed_models[func.__name__] = failed_models[func.__name__] + 1
+            if len(models_built) > 0:
+                logger.info(f"{func.__name__}: {len(models_built)} models")
         for func_name, N_failed in failed_models.items():
             if N_failed > 0:
                 logger.warning(f"{func_name} failed for {N_failed} targets")
 
-    def build_lightcurve_plots(
-        self, lc_plotting_function: Callable = None, t_ref: Time = None
+    def write_target_comments(
+        self, target_list: List[Target] = None, outdir: Path = None, t_ref: Time = None
     ):
-        logger.info(f"build {len(self.target_lookup)} lightcurve plots")
+        t_ref = t_ref or Time.now()
+
+        outdir = outdir or self.comments_path
+        outdir = Path(outdir)
+        
+        if target_list is None:
+            target_list = [t for o,t in self.target_list.items()]
+
+        for objectId, target in self.target_lookup.items():
+            target.write_comments(outdir, t_ref=t_ref)
+
+    def build_lightcurve_plots(
+        self, 
+        lc_plotting_function: Callable = None, 
+        lazy=True, 
+        interval=0.125,
+        t_ref: Time = None,
+    ):
+        plotted = []
+        skipped = []
+        logger.info(f"plot lightcurves") 
+        if lazy:
+            logger.info(f"re-use lightcurve plots <{interval*24:.1f}hr old")
         for objectId, target in self.target_lookup.items():
             figpath = self.lc_scratch_path / f"{objectId}_lc.png"
+            fig_age = calc_file_age(figpath, t_ref, allow_missing=True)
+            if lazy:
+                if not target.updated and fig_age < interval:
+                    skipped.append(objectId)
+                    continue
             fig = target.plot_lightcurve(
                 lc_plotting_function=lc_plotting_function, t_ref=t_ref, figpath=figpath
             )
             plt.close(fig=fig)
+            plotted.append(objectId)
+        if len(plotted) > 0 or len(skipped) > 0:
+            msg = f"plotted {len(plotted)}, re-use {len(skipped)} recent LCs"
+            logger.info(msg)
 
     def build_observing_charts(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -551,10 +597,11 @@ class TargetSelector:
                     shutil.copy2(lcfig_file, new_lcfig_file)
                 except FileNotFoundError as e:
                     msg = (
-                        f"\033[33moc_fig {lcfig_file} missing!\033[0m"
+                        f"\033[33mlc_fig {lcfig_file} missing!\033[0m"
                         + f"\n    the likely cause is you have two projects with the"
                         + f"same project_path, and one has cleared plots"
                     )
+                    logger.error(msg)
         ocfig_file = target.latest_oc_fig_paths.get(obs_name, None)
         if ocfig_file is not None:
             new_ocfig_filename = f"{int(rank):03d}_{target.objectId}_oc.png"
@@ -567,14 +614,21 @@ class TargetSelector:
                         f"\033[33moc_fig {ocfig_file} missing!\033[0m"
                         + f"\n    the likely cause is you have two projects with the"
                         + f"same project_path, and one has cleared plots"
-                    )
+                    )                    
+                    logger.error(msg)
 
     def perform_messaging_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
+        skipped = []
         for objectId, target in self.target_lookup.items():
             if len(target.update_messages) == 0:
                 continue
+            last_score = target.get_last_score()
+            if last_score < self.minimum_score:
+                skipped.append(objectId)
+                continue
+
             intro = f"Updates for {objectId}"
             messages = [target.get_info_string()] + target.update_messages
             message_text = "\n".join(msg for msg in messages)
@@ -591,8 +645,16 @@ class TargetSelector:
                 )
             time.sleep(5.0)
 
-    def send_crash_reports(self):
-        tr = traceback.format_exc()
+        if len(skipped) > 0:
+            logger.info(f"skipped messages for {len(skipped)} targets")
+
+    def send_crash_reports(self, text=None):
+        if text is None:
+            text = []
+        if isinstance(text, str):
+            text = [text]
+        tr = text + [traceback.format_exc()]
+        logger.error("\n" + "\n".join(tr))
         if self.telegram_messenger is not None:
             self.telegram_messenger.send_crash_report(tr)
 
@@ -654,13 +716,11 @@ class TargetSelector:
         t_str = t_ref.strftime("%Y-%m-%d %H:%M:%S")
         print_header(f"iteration at {t_str}")
 
-        self.clear_scratch_plots()
+        # self.clear_scratch_plots() # NO - lazy plotting re-uses existing plots.
 
         # Get new data
         self.check_for_targets_of_opportunity()
         self.perform_query_manager_tasks(t_ref=t_ref)
-
-        print(self.target_lookup.keys())
 
         # Set some things before modelling and scoring.
         self.compute_observatory_info(t_ref=t_ref)
@@ -680,15 +740,21 @@ class TargetSelector:
 
         # Do the scoring, remove the bad targets
         self.evaluate_all_targets(scoring_function)
-        logger.info(f"{len(self.target_lookup)} targets before removing bad")
+        logger.info(f"{len(self.target_lookup)} targets before rejecting")
         removed_targets = self.remove_bad_targets()
         logger.info(
             f"removed {len(removed_targets)} targets, {len(self.target_lookup)} remain"
         )
+        self.write_target_comments()
 
         # Plotting
+        lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
+        plotting_interval = self.selector_parameters.get("plotting_interval", 0.25)
         self.build_lightcurve_plots(
-            lc_plotting_function=lc_plotting_function, t_ref=t_ref
+            lc_plotting_function=lc_plotting_function, 
+            lazy=lazy_plotting, 
+            interval=plotting_interval, 
+            t_ref=t_ref
         )
         self.build_observing_charts(t_ref=t_ref)
 
@@ -726,13 +792,15 @@ class TargetSelector:
                     t_ref=t_ref,
                 )
             except Exception as e:
-                self.send_crash_reports()
+                t_str = t_ref.strftime("%Y%m%d %H:%M:%S")
+                crash_text = [f"CRASH at UT {t_str}"]
+                self.send_crash_reports(text=crash_text)
                 sys.exit()
 
             # if iterations > 1:
             self.perform_messaging_tasks()
 
-            self.reset_target_figures()
+            #self.reset_target_figures() # NO - lazy plotting instead.
             self.reset_updated_targets()
 
             if existing_targets:

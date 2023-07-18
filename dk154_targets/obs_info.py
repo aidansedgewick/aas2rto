@@ -1,5 +1,5 @@
 import copy
-
+import warnings
 from logging import getLogger
 
 import numpy as np
@@ -7,6 +7,7 @@ import numpy as np
 from astropy import units as u
 from astropy.coordinates import AltAz
 from astropy.time import Time
+from astropy.utils.exceptions import AstropyDeprecationWarning
 
 from astroplan import Observer
 
@@ -41,7 +42,10 @@ class ObservatoryInfo:
         cls, observatory: Observer, horizon=-18 * u.deg, t_ref: Time = None
     ):
         t_grid = t_ref + np.linspace(0, 24.0, 24 * 4) * u.hour
-        moon_altaz = observatory.moon_altaz(t_grid)
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=AstropyDeprecationWarning)
+            moon_altaz = observatory.moon_altaz(t_grid)
         sun_altaz = observatory.sun_altaz(t_grid)
         try:
             sunset, sunrise = observatory.tonight(t_ref, horizon=horizon)

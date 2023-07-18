@@ -32,7 +32,7 @@ if __name__ == "__main__":
     config_file = Path(args.config)
 
     if "supernovae" in config_file.stem:
-        scoring_function = supernova_peak_score
+        scoring_function = supernova_peak_score() # This is a class - initialise it!
         modeling_function = sncosmo_model_emcee
     else:
         scoring_function = latest_flux
