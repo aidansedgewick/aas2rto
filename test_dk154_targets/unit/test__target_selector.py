@@ -631,7 +631,7 @@ class TestTargetSelector:
         for objectId, target in selector.target_lookup.items():
             assert target.updated
 
-        selector.reset_updated_target_flags()
+        selector.reset_updated_targets()
         for target in test_target_list:
             assert not target.updated
         for objectId, target in selector.target_lookup.items():

@@ -85,7 +85,7 @@ class supernova_peak_score:
         self.min_ztf_detections = 3
 
     def __call__(
-        self, target: Target, observatory: Observer, t_ref: Time = None
+        self, target: Target, observatory: Observer, t_ref: Time
     ) -> Tuple[float, List, List]:
         t_ref = t_ref or Time.now()
 

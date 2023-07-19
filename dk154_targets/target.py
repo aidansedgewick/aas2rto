@@ -270,7 +270,7 @@ class Target:
         if obs_name == "no_observatory":
             assert observatory is None
 
-        scoring_result = scoring_function(self, observatory)  # `self` is first arg!
+        scoring_result = scoring_function(self, observatory, t_ref)  # `self` is first arg!
 
         ##===== TODO: Check signature of function! =====##
         error_msg = (

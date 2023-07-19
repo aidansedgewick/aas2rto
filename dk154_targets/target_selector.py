@@ -378,13 +378,13 @@ class TargetSelector:
             try:
                 target.evaluate_target(scoring_function, observatory, t_ref=t_ref)
             except Exception as e:
-                target.evaluate_target(lambda targ, obs, t: -1.0, observatory, t_ref=t_ref)
-                obs_name = getattr(observatory, "name", "no_observatory")
                 details = [
                     "For target {object_id} at obs {obs_name} at {t_ref.isot}, "
                     "scoring with {scoring_function.__name__} failed. "
                     "Set score to -1.0, to exclude."
                 ]
+                target.evaluate_target(lambda targ, obs, t: (-1.0, details, []))
+                obs_name = getattr(observatory, "name", "no_observatory")
                 self.send_crash_reports(text=details)
 
     def new_target_initial_check(self, scoring_function: Callable, t_ref: Time = None):
