@@ -77,7 +77,7 @@ class supernova_peak_score:
 
         self.__name__ = self.__class__.__name__
         self.source_priority = ("fink", "lasair", "alerce")
-        self.mag_lim = 19.5
+        self.mag_lim = 19.0
         self.max_timespan = 15.0
         self.min_rising_fraction = 0.4
         self.min_altitude = 30.

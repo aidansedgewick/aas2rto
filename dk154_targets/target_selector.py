@@ -452,11 +452,13 @@ class TargetSelector:
     ):
         t_ref = t_ref or Time.now()
 
+        logger.info("writing target comments")
+
         outdir = outdir or self.comments_path
         outdir = Path(outdir)
         
         if target_list is None:
-            target_list = [t for o,t in self.target_list.items()]
+            target_list = [t for o,t in self.target_lookup.items()]
 
         for objectId, target in self.target_lookup.items():
             target.write_comments(outdir, t_ref=t_ref)
@@ -728,10 +730,12 @@ class TargetSelector:
             t_ref=t_ref, compile_function=lightcurve_compile_function
         )
 
+        write_comments = self.selector_parameters.get("write_comments", True)
+
         # Remove any targets that aren't interesting.
         logger.info(f"{len(self.target_lookup)} targets before check")
         self.new_target_initial_check(scoring_function, t_ref=t_ref)
-        removed_before_modeling = self.remove_bad_targets()
+        removed_before_modeling = self.remove_bad_targets(write_comments=write_comments)
         logger.info(f"removed {len(removed_before_modeling)} before modelling")
 
         # Build models
@@ -741,11 +745,12 @@ class TargetSelector:
         # Do the scoring, remove the bad targets
         self.evaluate_all_targets(scoring_function)
         logger.info(f"{len(self.target_lookup)} targets before rejecting")
-        removed_targets = self.remove_bad_targets()
+        removed_targets = self.remove_bad_targets(write_comments=write_comments)
         logger.info(
             f"removed {len(removed_targets)} targets, {len(self.target_lookup)} remain"
         )
-        self.write_target_comments()
+        if write_comments:
+            self.write_target_comments()
 
         # Plotting
         lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
