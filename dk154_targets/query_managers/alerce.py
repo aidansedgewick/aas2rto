@@ -306,7 +306,7 @@ class AlerceQueryManager(BaseQueryManager):
                 print(f"failed", e)
                 continue
             magstats_file = self.get_magstats_file(oid)
-            magstats.to_csv(magstats_file)
+            magstats.to_csv(magstats_file, index=False)
         N_success = len(success)
         N_failed = len(failed)
         if N_success > 0 or N_failed > 0:
@@ -390,7 +390,7 @@ class AlerceQueryManager(BaseQueryManager):
             lightcurve_file_age = calc_file_age(
                 lightcurve_file, t_ref, allow_missing=True
             )
-            if lightcurve_file_age > self.query_parameters["update"]:
+            if lightcurve_file_age > self.query_parameters["interval"]:
                 old_lightcurve_list.append(oid)
         return old_lightcurve_list
 

@@ -67,7 +67,7 @@ def fink_lc(fink_rows):
 @pytest.fixture
 def fink_update_rows():
     return [
-        (0,                      2460007.3, np.nan, np.nan, 16.0, 2, "upperlim"),
+        (0, 2460007.3, np.nan, np.nan, 16.0, 2, "upperlim"),
         (23000_10000_20000_5008, 2460007.5, 17.8, 0.1, 19.5, 1, "valid"),
     ]
 
@@ -227,7 +227,7 @@ class TestTarget:
         assert not t1.updated
 
     def test__basic_evaluate_target(self, example_target: Target):
-        def basic_score(target, observer):
+        def basic_score(target, observer, t_ref):
             return 50.0
 
         t1 = Target("test1", ra=45.0, dec=45.0)
@@ -255,10 +255,10 @@ class TestTarget:
         assert example_target.reject_comments["test_obs"] is None
 
     def test__evaluate_target_with_comments(self):
-        def score_with_comments(target, observer):
+        def score_with_comments(target, observer, t_ref):
             return 50.0, ["this is a comment"], None
 
-        example_target = Target("tesexample_target", ra=45.0, dec=45.0)
+        example_target = Target("test_example_target", ra=45.0, dec=45.0)
 
         t_ref = Time("2023-02-25T00:00:00", format="isot")  # mjd=60000.
         test_obs = Observer(location=EarthLocation.of_site("palomar"), name="test_obs")
@@ -284,7 +284,7 @@ class TestTarget:
         assert example_target.reject_comments["test_obs"] is None
 
     def test__evaluate_target_bad_functions(self):
-        def bad_return_function(target, observer):
+        def bad_return_function(target, observer, t_ref):
             return 1.5, ["blah blah"]
 
         no_obs = None
@@ -293,14 +293,14 @@ class TestTarget:
         with pytest.raises(ValueError):
             t1.evaluate_target(bad_return_function, no_obs)
 
-        def other_bad_return_function(target, obs):
+        def other_bad_return_function(target, obs, t_ref):
             return 10.0, [], [], []
 
         with pytest.raises(ValueError):
             t1.evaluate_target(other_bad_return_function, no_obs)
 
     def test__get_last_score(self):
-        def increasing_score(target, obs):
+        def increasing_score(target, obs, t_ref):
             if obs is None:
                 obs_name = "no_observatory"
             else:

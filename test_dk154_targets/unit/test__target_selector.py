@@ -326,7 +326,7 @@ class TestTargetSelector:
             "observatories": {"palomar": "palomar"},
         }
 
-        def reject_high_ra_targets(target, obs):
+        def reject_high_ra_targets(target, obs, t_ref):
             score = 80 - target.ra
             if target.ra > 80.0:
                 score = -np.inf
@@ -365,7 +365,7 @@ class TestTargetSelector:
             "observatories": {"palomar": "palomar"},
         }
 
-        def test_score_with_obs(target, obs):
+        def test_score_with_obs(target, obs, t_ref):
             factor = 2.0 if obs else 1.0
             return target.ra * factor
 
@@ -395,7 +395,7 @@ class TestTargetSelector:
             "observatories": {"palomar": "palomar"},
         }
 
-        def reject_high_ra_targets(target, obs):
+        def reject_high_ra_targets(target, obs, t_ref):
             score = 80 - target.ra
             if target.ra > 80.0:
                 score = -np.inf

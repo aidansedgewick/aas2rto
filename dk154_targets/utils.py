@@ -25,11 +25,11 @@ def calc_file_age(filepath, t_ref, allow_missing=True):
 
 def print_header(s):
     try:
-        tsize = shutil.get((80, 24))
+        tsize = shutil.get_terminal_size()
         cols = tsize.columns
-    except:
+    except Exception as e:
         cols = 60
-    pad = cols - (len(s) + 2) - 6
+    pad = (cols - (len(s) + 2) - 6) // 2
 
     pad = max(pad, 1)
     fmt_s = "\n###" + "=" * pad + f" {s} " + "=" * pad + "###"

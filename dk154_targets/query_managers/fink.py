@@ -133,17 +133,38 @@ def target_from_fink_lightcurve(
 def process_fink_query_results(raw_query_results: pd.DataFrame):
     query_results = raw_query_results.copy()
     query_results.sort_values(["objectId", "ndethist"], inplace=True)
-    query_results.drop_duplicates("objectId", keep="last")
+    query_results.drop_duplicates("objectId", keep="last", inplace=True)
     query_results.set_index("objectId", verify_integrity=True, inplace=True)
     return query_results
+
+
+def target_from_fink_query_row(objectId: str, data: pd.Series):
+    if isinstance(data, dict):
+        data = pd.Series(data)
+    if "ra" not in data or "dec" not in data:
+        msg = (
+            f"\033[33m{objectId} target_from_alerce_query_row\033[0m"
+            f"\n     missing 'meanra'/'meandec' from row {data.index}"
+        )
+        logger.warning(msg)
+        return None
+    if isinstance(data, pd.DataFrame):
+        if isinstance(data["ra"], pd.Series):
+            if len(data["ra"]) > 1:
+                logger.error(
+                    f"\033[31mtarget_from_alerce_query_row\033[0m has data\n{data}"
+                )
+                raise ValueError("data passed has length greater than>1")
+
+    return Target(objectId, ra=data["ra"], dec=data["dec"])
 
 
 class FinkQueryManager(BaseQueryManager):
     name = "fink"
     default_query_parameters = {
-        "interval": 2.0,
         "update": 1.0,
-        "query_timespan": 0.25,
+        "interval": 2.0,
+        "query_timespan": 0.1,
         "lookback_time": 20.0,
         "max_failed_queries": 10,
         "max_total_query_time": 300,  # total time to spend in each stage seconds
@@ -308,17 +329,19 @@ class FinkQueryManager(BaseQueryManager):
             logger.info(f"{len(added)} targets init, {len(existing)} existing skipped")
         return added, existing
 
-    def query_for_updates(self, t_ref: Time = None):
+    def query_for_updates(self, results_stem=None, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
         for fink_class in self.object_queries:
-            query_results_file = self.get_query_results_file(fink_class)
+            results_stem = results_stem or fink_class
+            query_results_file = self.get_query_results_file(results_stem)
             query_results_file_age = calc_file_age(query_results_file, t_ref)
             if query_results_file_age < self.query_parameters["update"]:
                 raw_query_updates = pd.read_csv(query_results_file)
                 if raw_query_updates.empty:
-                    continue
-                query_updates = process_fink_query_results(raw_query_updates)
+                    query_updates = raw_query_updates
+                else:
+                    query_updates = process_fink_query_results(raw_query_updates)
                 self.query_updates[fink_class] = query_updates
             else:
                 logger.info(f"query for {fink_class}")
@@ -328,11 +351,11 @@ class FinkQueryManager(BaseQueryManager):
                 )
                 if raw_query_updates is None:
                     continue
-                if raw_query_updates.empty:
-                    raw_query_updates.to_csv(query_results_file, index=False)
-                    continue
                 raw_query_updates.to_csv(query_results_file, index=False)
-                query_updates = process_fink_query_results(raw_query_updates)
+                if raw_query_updates.empty:
+                    query_updates = raw_query_updates
+                else:
+                    query_updates = process_fink_query_results(raw_query_updates)
                 self.query_updates[fink_class] = query_updates
                 t_end = time.perf_counter()
                 logger.info(
@@ -371,12 +394,65 @@ class FinkQueryManager(BaseQueryManager):
 
         if len(update_dfs) > 0:
             return pd.concat(update_dfs)
-        return pd.DataFrame([])
+        return pd.DataFrame([], columns=["objectId"])
 
     def get_query_data(self, fink_class, start_jd: Time, stop_jd: Time):
         return dict(
             class_=fink_class, n=1000, startdate=start_jd.iso, stopdate=stop_jd.iso
         )
+
+    def target_updates_from_query_results(self, t_ref: Time = None) -> pd.DataFrame:
+        t_ref = t_ref or Time.now()
+
+        update_dfs = []
+        for query_name, updated_results in self.query_updates.items():
+            # updated_results.sort_values(["oid", "lastmjd"], inplace=True)
+            updated_targets = []
+            existing_results = self.query_results.get(query_name, None)
+            if existing_results is None:
+                self.query_results[query_name] = updated_results
+                logger.info(
+                    f"no existing {query_name} results, use updates {len(updated_results)}"
+                )
+                continue
+            # existing_results.sort_values(["oid", "lastmjd"], inplace=True)
+            for objectId, updated_row in updated_results.iterrows():
+                if objectId in existing_results.index:
+                    existing_row = existing_results.loc[objectId]
+                    if updated_row["ndethist"] > existing_row["ndethist"]:
+                        updated_targets.append(objectId)
+                else:
+                    updated_targets.append(objectId)
+            self.query_results[query_name] = updated_results
+            updated = updated_results.loc[updated_targets]
+            update_dfs.append(updated)
+
+        if len(update_dfs) > 0:
+            # alerce_updates = updated_results.loc[updated_targets]
+            fink_updates = pd.concat(update_dfs)
+            logger.info(f"{len(fink_updates)} alerce targets updates")
+        else:
+            fink_updates = None
+        return fink_updates
+
+    def new_targets_from_updates(self, updates: pd.DataFrame, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
+        new_targets = []
+        if updates is None:
+            return new_targets
+
+        for objectId, row in updates.iterrows():
+            target = self.target_lookup.get(objectId, None)
+            if target is not None:
+                continue
+            target = target_from_fink_query_row(objectId, row)
+            if target is None:
+                continue
+            self.target_lookup[objectId] = target
+            new_targets.append(objectId)
+        logger.info(f"{len(new_targets)} targets added from updated queries")
+        return new_targets
 
     def get_lightcurves_to_query(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -541,7 +617,7 @@ class FinkQueryManager(BaseQueryManager):
                     target.fink_data.cutouts = cutouts
                     target.fink_data.meta["cutouts_candid"] = candid
                     loaded_cutouts.append(objectId)
-                    break # Leave candid loop, back to outer target loop
+                    break  # Leave candid loop, back to outer target loop
         logger.info(f"{len(loaded_cutouts)} cutouts loaded")
 
     def apply_messenger_updates(self, alerts):
