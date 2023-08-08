@@ -78,6 +78,7 @@ class supernova_peak_score:
         self.__name__ = self.__class__.__name__
         self.source_priority = ("fink", "lasair", "alerce")
         self.mag_lim = 19.0
+        self.min_timespan = 1.0
         self.max_timespan = 15.0
         self.min_rising_fraction = 0.4
         self.min_altitude = 30.
@@ -133,6 +134,13 @@ class supernova_peak_score:
         if timespan > self.max_timespan:
             reject = True
             reject_comments.append(f"target is {timespan:.2f} days old")
+
+        if timespan < self.min_timespan:
+            ##==== or much too young!? ====##
+            exclude = True
+            exclude_comment = f"timespan less than min={self.min_timespan}"
+            scoring_comments.append(exclude_comment)
+
 
         ###===== Is the target still rising ======###
         for fid, fid_history in ztf_detections.groupby("fid"):

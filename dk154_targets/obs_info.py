@@ -38,23 +38,51 @@ class ObservatoryInfo:
         self.t_ref = t_ref
 
     @classmethod
+    def observatory_tonight(
+        cls, observatory: Observer, horizon=-18.0 * u.deg, t_ref = Time
+    ):
+        try:
+            sunset, sunrise = observatory.tonight(t_ref, horizon=horizon)
+        except TypeError as e:
+            sunset, sunrise = None, None
+        if sunrise is not None and not isinstance(sunrise.jd, float):
+            sunrise = None  # During permanent night.        
+        return sunset, sunrise
+
+    @classmethod
     def from_observatory(
-        cls, observatory: Observer, horizon=-18 * u.deg, t_ref: Time = None
+        cls, observatory: Observer, horizon=-18.0 * u.deg, t_ref: Time = None
     ):
         t_grid = t_ref + np.linspace(0, 24.0, 24 * 4) * u.hour
+        delta_t = t_grid[1] - t_grid[0]
 
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=AstropyDeprecationWarning)
             moon_altaz = observatory.moon_altaz(t_grid)
         sun_altaz = observatory.sun_altaz(t_grid)
-        try:
-            sunset, sunrise = observatory.tonight(t_ref, horizon=horizon)
-        except TypeError as e:
-            sunset, sunrise = None, None
-        if sunrise is not None:
-            if not isinstance(sunrise.jd, float):
-                # During permanent night.
-                sunrise = None
+
+        sunset, sunrise = cls.observatory_tonight(
+            observatory, horizon=horizon, t_ref=t_ref
+        )
+        if sunset is not None and sunrise is not None:
+            time_to_sunrise = sunrise - sunset
+            if time_to_sunrise < 2. * delta_t:
+                old_sunset = sunset
+                old_sunrise = sunrise
+                t_ref_shift = sunrise + delta_t
+                sunset, sunrise = cls.observatory_tonight(
+                    observatory, horizon=horizon, t_ref=t_ref_shift
+                )
+                msg = (
+                    f"    At t_ref={t_ref.strftime('%y-%m-%d %H:%M')}, "
+                    f"sunrise {time_to_sunrise.to(u.min):.2f} away "
+                    f"(sunrise={old_sunrise.strftime('%y-%m-%d %H:%M')}).\n"
+                    f"    Compute next sunset/rise from "
+                    f"{t_ref_shift.strftime('%y-%m-%d %H:%M')}."
+                )
+                logger.warning(
+                    f"\033[33mBad sunset for {observatory.name} (too near)\033[0m\n{msg}"
+                )
 
         return cls(
             t_grid=t_grid,

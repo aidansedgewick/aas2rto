@@ -378,13 +378,14 @@ class TargetSelector:
             try:
                 target.evaluate_target(scoring_function, observatory, t_ref=t_ref)
             except Exception as e:
+                obs_name = getattr(observatory, "name", "no_observatory")
                 details = [
                     "For target {object_id} at obs {obs_name} at {t_ref.isot}, "
                     "scoring with {scoring_function.__name__} failed. "
                     "Set score to -1.0, to exclude."
                 ]
-                target.evaluate_target(lambda targ, obs, t: (-1.0, details, []))
-                obs_name = getattr(observatory, "name", "no_observatory")
+                temp_exclude = lambda targ, obs, t: (-1.0, details, [])
+                target.evaluate_target(temp_exclude, observatory, t_ref=t_ref)
                 self.send_crash_reports(text=details)
 
     def new_target_initial_check(self, scoring_function: Callable, t_ref: Time = None):
@@ -623,6 +624,7 @@ class TargetSelector:
         t_ref = t_ref or Time.now()
 
         skipped = []
+        sent = []
         for objectId, target in self.target_lookup.items():
             if len(target.update_messages) == 0:
                 continue
@@ -645,10 +647,13 @@ class TargetSelector:
                 self.slack_messenger.send_messages(
                     texts=message_text, img_paths=target.latest_lc_fig_path
                 )
+            sent.append(objectId)
             time.sleep(5.0)
 
         if len(skipped) > 0:
             logger.info(f"skipped messages for {len(skipped)} targets")
+        if len(sent) > 0:
+            logger.info(f"sent messages for {len(sent)} targets")
 
     def send_crash_reports(self, text=None):
         if text is None:

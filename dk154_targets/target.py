@@ -618,7 +618,7 @@ def default_plot_lightcurve(
             detections = band_history
 
         if any(np.isfinite(detections["mag"])):
-            peak_mag_vals.append(np.nanmin(detections["mag"]) - 0.2)
+            peak_mag_vals.append(np.nanmin(detections["mag"]))
 
         if len(detections) > 0:
             xdat = detections["jd"] - t_ref.jd
@@ -627,27 +627,34 @@ def default_plot_lightcurve(
             ax.errorbar(xdat, ydat, yerr=yerr, **band_kwargs, **det_kwargs)
 
         ###======== try sncosmo models
-        if model is not None:
+        t_start = target.compiled_lightcurve["jd"].min()
+        t_end = t_ref.jd + forecast_days
+        dt = 0.1
+        tgrid = np.arange(t_start, t_end+dt, dt)
+        if len(tgrid) == 0:
+            logger.warning(f"{target.objectId} has bad tgrid in plot...")
+
+        if model is not None and len(tgrid) > 0:
             if len(detections) == 0:
                 continue
-            t_start = target.compiled_lightcurve["jd"].min()
-            t_end = t_ref.jd + forecast_days
             # model_mag = model.bandmag(band, "ab", model_time_grid)
-            dt = 0.1
-            tgrid = np.arange(t_start, t_end+dt, dt)
 
             model_flux = model.bandflux(band, tgrid, zp=8.9, zpsys="ab")
             pos_mask = model_flux > 0.0
+
+            if sum(pos_mask) == 0:
+                logger.warning(f"{target.objectId} no pos flux for model {band}")
+                continue
+
             model_flux = model_flux[ pos_mask ]
             tgrid = tgrid[ pos_mask ]
 
             tgrid_shift = tgrid - t_ref.jd
-            dt = 1.0
             samples_tgrid = np.arange(tgrid[0]-dt, tgrid[-1]+1.5*dt, + dt)
             samples_tgrid_shift = samples_tgrid - t_ref.jd
 
             model_mag = -2.5 * np.log10(model_flux) + 8.9
-            peak_mag_vals.append(np.nanmin(model_mag) - 0.2)
+            peak_mag_vals.append(np.nanmin(model_mag))
 
             samples = getattr(model, "result", {}).get("samples", None)
             if samples is not None:
@@ -663,13 +670,15 @@ def default_plot_lightcurve(
                 ax.plot(tgrid_shift, model_med_mag, color=band_color)
 
                 # Now deal with samples.
-                samples_lb, samples_med, samples_ub = get_sample_quartiles(
-                    samples_tgrid, model, band, q=[0.16, 0.5, 0.84], vparam_names=vparam_names
-                )
-                ax.fill_between(
-                    samples_tgrid_shift, samples_lb, samples_ub, color=band_color, alpha=0.2
-                )
-                ax.plot(samples_tgrid_shift, samples_med, color=band_color, ls="--")
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=RuntimeWarning)
+                    samples_lb, samples_med, samples_ub = get_sample_quartiles(
+                        samples_tgrid, model, band, q=[0.16, 0.5, 0.84], vparam_names=vparam_names
+                    )
+                    ax.fill_between(
+                        samples_tgrid_shift, samples_lb, samples_ub, color=band_color, alpha=0.2
+                    )
+                    ax.plot(samples_tgrid_shift, samples_med, color=band_color, ls="--")
             else:
                 ax.plot(tgrid_shift, model_mag, color=band_color)
 
@@ -677,12 +686,12 @@ def default_plot_lightcurve(
                 l0 = ax.plot([0,0], [23,23], ls="-", color="k", label="median parameters")
                 l2 = ax.plot([0,0], [23,23], ls=":", color="k", label="mean parameters")
                 l1 = ax.plot([0,0], [23,23], ls="--", color="k", label="LC samples median")
-                lines_legend = ax.legend(handles=[l0[0],l1[0],l2[0]], loc=1)
+                lines_legend = ax.legend(handles=[l0[0],l1[0],l2[0]], loc=4)
                 # extra [0] indexing because ax.plot reutrns LIST of n-1 lines for n points.
                 ax.add_artist(lines_legend)
             
-    peak_mag_vals.append(17.0)
-    y_bright = np.nanmin(peak_mag_vals)
+    peak_mag_vals.append(17.2)
+    y_bright = np.nanmin(peak_mag_vals) - 0.2
     ax.set_ylim(22.0, y_bright)
     ax.axvline(t_ref.jd - t_ref.jd, color="k")
 

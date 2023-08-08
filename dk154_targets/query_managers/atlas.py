@@ -185,7 +185,13 @@ class AtlasQueryManager(BaseQueryManager):
                 if lightcurve_file.exists():
                     # If there is existing data, might as well keep it, and update
                     # the file timestamp, so we don't just try again needlessly.
-                    lightcurve = pd.read_csv()
+                    lightcurve = pd.read_csv(lightcurve_file)
+                    if len(lightcurve) > 0:
+                        logger.warning(
+                            f"\033[33matlas returned no data\033[0m\n"
+                            f"existing {objectId} lightcurve has" 
+                            f"len {len(lightcurve)}, but new query returned zero!"
+                        )
             # else:
             #    if lightcurve_file.exists():
             lightcurve.to_csv(lightcurve_file, index=False)
