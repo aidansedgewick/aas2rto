@@ -599,7 +599,7 @@ class FinkQueryManager(BaseQueryManager):
                 target.fink_data.lightcurve.to_csv(lightcurve_file, index=False)
             integrated_alerts.append(objectId)
         if len(integrated_alerts):
-            logger.info("integrate alerts into LC for {len(integrated_alerts)} targets")
+            logger.info(f"integrate alerts into LC for {len(integrated_alerts)} targets")
 
 
     def load_cutouts(self):

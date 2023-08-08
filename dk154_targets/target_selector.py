@@ -781,6 +781,8 @@ class TargetSelector:
         existing_targets=True,
         iterations=None,
     ):
+        t_ref = Time.now()
+
         N_iterations = 0
         sleep_time = self.selector_parameters.get("sleep_time", self.default_sleep_time)
 
@@ -790,6 +792,10 @@ class TargetSelector:
             logger.warning("clear existing targets...")
             if self.existing_targets_file.exists():
                 os.remove(self.existing_targets_file)
+
+        if self.telegram_messenger is not None:
+            msg = f"starting at {t_ref.isot}"
+            self.message_users(users="sudoers", texts=msg)
 
         while True:
             t_ref = Time.now()
