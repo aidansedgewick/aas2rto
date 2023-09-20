@@ -273,7 +273,9 @@ class Target:
         if obs_name == "no_observatory":
             assert observatory is None
 
-        scoring_result = scoring_function(self, observatory, t_ref)  # `self` is first arg!
+        scoring_result = scoring_function(
+            self, observatory, t_ref
+        )  # `self` is first arg!
 
         ##===== TODO: Check signature of function! =====##
         error_msg = (
@@ -360,7 +362,7 @@ class Target:
             logger.debug(f"{self.objectId}: skip compile, not updated and lazy=True")
             return
 
-        if compile_function is None:
+        if lightcurve_compiler is None:
             logger.warning("no light curve compiled.")
             return
 
@@ -485,24 +487,24 @@ class Target:
 
         return "\n".join(lines)
 
-    def write_comments(self, outdir: Path, t_ref: Time=None):
+    def write_comments(self, outdir: Path, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
         outdir = Path(outdir)
         outdir.mkdir(exist_ok=True, parents=True)
-        
+
         missing_score_comments = ["no score_comments provided"]
         missing_reject_comments = ["no reject_comments provided"]
-        
+
         lines = self.get_info_string().split("\n")
         last_score = self.get_last_score()
         lines.append(f"score = {last_score:.3f} for no_observatory")
 
-        score_comments = self.score_comments.get("no_observatory", None) 
+        score_comments = self.score_comments.get("no_observatory", None)
         score_comments = score_comments or missing_score_comments
         for comm in score_comments:
             lines.append(f"    {comm}")
-        
+
         for obs_name, comments in self.score_comments.items():
             if obs_name == "no_observatory":
                 continue
@@ -522,7 +524,7 @@ class Target:
             reject_comments = reject_comments or missing_reject_comments
             for comm in reject_comments:
                 lines.append(f"    {comm}")
-            
+
         comments_file = outdir / f"{self.objectId}.txt"
         with open(comments_file, "w+") as f:
             f.writelines([l + "\n" for l in lines])
@@ -633,7 +635,7 @@ def default_plot_lightcurve(
         t_start = target.compiled_lightcurve["jd"].min()
         t_end = t_ref.jd + forecast_days
         dt = 0.1
-        tgrid = np.arange(t_start, t_end+dt, dt)
+        tgrid = np.arange(t_start, t_end + dt, dt)
         if len(tgrid) == 0:
             logger.warning(f"{target.objectId} has bad tgrid in plot...")
 
@@ -649,11 +651,11 @@ def default_plot_lightcurve(
                 logger.warning(f"{target.objectId} no pos flux for model {band}")
                 continue
 
-            model_flux = model_flux[ pos_mask ]
-            tgrid = tgrid[ pos_mask ]
+            model_flux = model_flux[pos_mask]
+            tgrid = tgrid[pos_mask]
 
             tgrid_shift = tgrid - t_ref.jd
-            samples_tgrid = np.arange(tgrid[0]-dt, tgrid[-1]+1.5*dt, + dt)
+            samples_tgrid = np.arange(tgrid[0] - dt, tgrid[-1] + 1.5 * dt, +dt)
             samples_tgrid_shift = samples_tgrid - t_ref.jd
 
             model_mag = -2.5 * np.log10(model_flux) + 8.9
@@ -668,7 +670,7 @@ def default_plot_lightcurve(
                 with warnings.catch_warnings():
                     warnings.filterwarnings("ignore", category=RuntimeWarning)
                     model_med_mag = -2.5 * np.log10(model_med_flux) + 8.9
-                
+
                 ax.plot(tgrid_shift, model_mag, color=band_color, ls=":")
                 ax.plot(tgrid_shift, model_med_mag, color=band_color)
 
@@ -676,23 +678,37 @@ def default_plot_lightcurve(
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", category=RuntimeWarning)
                     samples_lb, samples_med, samples_ub = get_sample_quartiles(
-                        samples_tgrid, model, band, q=[0.16, 0.5, 0.84], vparam_names=vparam_names
+                        samples_tgrid,
+                        model,
+                        band,
+                        q=[0.16, 0.5, 0.84],
+                        vparam_names=vparam_names,
                     )
                     ax.fill_between(
-                        samples_tgrid_shift, samples_lb, samples_ub, color=band_color, alpha=0.2
+                        samples_tgrid_shift,
+                        samples_lb,
+                        samples_ub,
+                        color=band_color,
+                        alpha=0.2,
                     )
                     ax.plot(samples_tgrid_shift, samples_med, color=band_color, ls="--")
             else:
                 ax.plot(tgrid_shift, model_mag, color=band_color)
 
-            if ii == 0:    
-                l0 = ax.plot([0,0], [23,23], ls="-", color="k", label="median parameters")
-                l2 = ax.plot([0,0], [23,23], ls=":", color="k", label="mean parameters")
-                l1 = ax.plot([0,0], [23,23], ls="--", color="k", label="LC samples median")
-                lines_legend = ax.legend(handles=[l0[0],l1[0],l2[0]], loc=4)
+            if ii == 0:
+                l0 = ax.plot(
+                    [0, 0], [23, 23], ls="-", color="k", label="median parameters"
+                )
+                l2 = ax.plot(
+                    [0, 0], [23, 23], ls=":", color="k", label="mean parameters"
+                )
+                l1 = ax.plot(
+                    [0, 0], [23, 23], ls="--", color="k", label="LC samples median"
+                )
+                lines_legend = ax.legend(handles=[l0[0], l1[0], l2[0]], loc=4)
                 # extra [0] indexing because ax.plot reutrns LIST of n-1 lines for n points.
                 ax.add_artist(lines_legend)
-            
+
     peak_mag_vals.append(17.2)
     y_bright = np.nanmin(peak_mag_vals) - 0.2
     ax.set_ylim(22.0, y_bright)
@@ -700,8 +716,6 @@ def default_plot_lightcurve(
 
     legend = ax.legend(handles=legend_handles, loc=2)
     ax.add_artist(legend)
-
-    
 
     title = str(target)
     known_redshift = target.tns_data.parameters.get("Redshift", None)
@@ -785,7 +799,7 @@ def get_model_median_params(model, vparam_names=None, samples=None):
     if samples is None:
         msg = f"model result {model.get('result', {}).keys()} has no samples"
         raise ValueError(msg)
-        
+
     median_params = np.nanquantile(samples, q=0.5, axis=0)
 
     pdict = {k: v for k, v in zip(vparam_names, median_params)}
@@ -820,6 +834,7 @@ def get_sample_quartiles(
     lc_bounds = np.nanquantile(lc_evaluations, q=q, axis=0)
     return lc_bounds
 
+
 def spline_and_sample(x, y, xnew):
     ypos_mask = np.isfinite(y)
     xpos = x[ypos_mask]
@@ -828,7 +843,7 @@ def spline_and_sample(x, y, xnew):
     xprime_mask = (xpos[0] < xnew) & (xnew < xpos[-1])
     xprime = xnew[xprime_mask]
     yprime = spl(xprime[xprime_mask])
-    return xprime, yprime    
+    return xprime, yprime
 
 
 def _warn_expensive_plotting(objectId=None, obs_name=None):
@@ -936,7 +951,12 @@ def plot_observing_chart(
 
         if all(target_altaz.alt < 30 * u.deg):
             bad_alt_kwargs = dict(
-                color="red", rotation=45, ha="center", va="center", fontsize=18, zorder=10
+                color="red",
+                rotation=45,
+                ha="center",
+                va="center",
+                fontsize=18,
+                zorder=10,
             )
             text = f"target alt never >30 deg"
             if len(target_list) == 1:

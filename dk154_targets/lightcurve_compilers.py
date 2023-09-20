@@ -28,7 +28,7 @@ def prepare_ztf_data(ztf_data: pd.DataFrame):
     return ztf_df
 
 
-def prepare_atlas_data(atlas_data: pd.DataFrame, compute_average=True):
+def prepare_atlas_data(atlas_data: pd.DataFrame, average_epochs=True):
     atlas_band_lookup = {"o": "atlaso", "c": "atlasc"}
 
     atlas_cols = ["m", "dm", "mag5sig"]
@@ -38,27 +38,35 @@ def prepare_atlas_data(atlas_data: pd.DataFrame, compute_average=True):
 
     # atlas_df["snr"] = atlas_df["uJy"] / atlas_df["duJy"]
     atlas_df["snr"] = 2.5 / (np.log(10.0) * atlas_df["dm"])
-    atlas_df["flux"] = 10 ** (-0.4 * (abs(atlas_df["m"]) - 23.9)) * np.sign(
-        atlas_df["m"]
-    )
+
+    flux_vals = 10 ** (-0.4 * (abs(atlas_df["m"]) - 23.9))
+    flux_sign = flux_vals / abs(flux_vals)
+    atlas_df["flux"] = flux_vals * flux_sign
     atlas_df["fluxerr"] = atlas_df["flux"] / atlas_df["snr"]
 
-    atlas_df.query("abs(snr) > 3", inplace=True)
+    atlas_df.sort_values("mjd", inplace=True)
 
-    if compute_average:
+    if average_epochs:
         atlas_df.sort_values("mjd")
         mjd_group = (atlas_df["mjd"] > atlas_df["mjd"].shift() + 0.1).cumsum()
         atlas_df["mjd_group"] = mjd_group
 
         row_list = []
-        for (mjd_id, f_id), group in atlas_df.groupby("group_id", "F"):
-            row = group.average()
+        for (mjd_id, f_id), group in atlas_df.groupby(["mjd_group", "F"]):
+            group.drop(["Obs", "F"], inplace=True, axis=1)
+
+            row = group.mean()
 
             row["F"] = f_id
             if len(group) == 1:
                 row_list.append(row)
 
-            row["fluxerr"] = np.sqrt(np.sum(group["fluxerr"]) ** 2 / (len(group) - 1))
+            weights = 1.0 / (group["fluxerr"] ** 2)
+            flux = np.sum(weights * group["flux"]) / np.sum(weights)
+            fluxerr = 1.0 / np.sqrt(np.sum(weights))
+            row["flux"] = flux
+            row["fluxerr"] = fluxerr
+
             row_list.append(row)
 
         atlas_df = pd.DataFrame(row_list)
@@ -68,6 +76,9 @@ def prepare_atlas_data(atlas_data: pd.DataFrame, compute_average=True):
         flux_sign = np.sign(atlas_df["flux"])
         atlas_df["m"] = (-2.5 * np.log10(abs(atlas_df["flux"])) + 23.9) * flux_sign
         atlas_df["dm"] = (np.log(10) / 2.5) / abs(atlas_df["snr"])
+
+        print("NEW ATLAS DATA:")
+        print(atlas_df)
 
     atlas_df.reset_index(drop=True, inplace=True)
 

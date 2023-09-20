@@ -5,7 +5,10 @@ from pathlib import Path
 from argparse import ArgumentParser
 
 from dk154_targets import TargetSelector
-from dk154_targets.scoring import latest_flux, supernova_peak_score
+from dk154_targets.scoring import (
+    example_functions,
+    supernova_peak_score,
+)
 from dk154_targets.modeling import empty_modeling, sncosmo_model, sncosmo_model_emcee
 
 from dk154_targets import paths
@@ -32,10 +35,13 @@ if __name__ == "__main__":
     config_file = Path(args.config)
 
     if "supernovae" in config_file.stem:
-        scoring_function = supernova_peak_score() # This is a class - initialise it!
+        scoring_function = supernova_peak_score()  # This is a class - initialise it!
         modeling_function = sncosmo_model_emcee
+    elif "atlas_test" in config_file.stem:
+        scoring_function = example_functions.latest_flux_atlas_requirement
+        modeling_function = empty_modeling
     else:
-        scoring_function = latest_flux
+        scoring_function = example_functions.latest_flux
         modeling_function = empty_modeling
 
     logger.info(f"use \033[36;1m {scoring_function.__name__}\033[0m scoring")
