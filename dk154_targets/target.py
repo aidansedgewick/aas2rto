@@ -347,7 +347,7 @@ class Target:
 
     def build_compiled_lightcurve(
         self,
-        compile_function: Callable,
+        lightcurve_compiler: Callable,
         t_ref: Time = None,
         lazy=True,
         broker_priority: list = None,
@@ -361,7 +361,7 @@ class Target:
             logger.warning("no light curve compiled.")
             return
 
-        compiled_lightcurve = compile_function(self)
+        compiled_lightcurve = lightcurve_compiler(self)
         if compiled_lightcurve is not None:
             compiled_lightcurve.sort_values("jd", inplace=True)
             compiled_lightcurve.query(f"jd < @t_ref.jd", inplace=True)

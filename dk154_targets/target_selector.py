@@ -25,7 +25,7 @@ from astroplan.plots import plot_altitude
 from dk154_targets import Target
 from dk154_targets import query_managers
 from dk154_targets import messengers
-from dk154_targets.lightcurve_compilers import default_compile_lightcurve
+from dk154_targets.lightcurve_compilers import DefaultLightcurveCompiler
 from dk154_targets.obs_info import ObservatoryInfo
 from dk154_targets.utils import print_header, calc_file_age
 
@@ -64,6 +64,7 @@ class TargetSelector:
         self.observatory_config = self.selector_config.get("observatories", {})
         self.messenger_config = self.selector_config.get("messengers", {})
         self.modelling_config = self.selector_config.get("modelling", {})
+        self.compiler_config = self.selector_config.get("lightcurve_compiler", {})
         self.paths_config = self.selector_config.get("paths", {})
 
         # to keep the targets. Do this here as initQM needs to know about it.
@@ -315,18 +316,18 @@ class TargetSelector:
 
         return successful_targets, existing_targets, failed_targets
 
-    def compile_target_lightcurves(self, t_ref=None, compile_function: Callable = None):
+    def compile_target_lightcurves(
+        self, t_ref=None, lightcurve_compiler: Callable = None
+    ):
         t_ref = t_ref or Time.now()
 
-        if compile_function is None:
-            compile_function = default_compile_lightcurve
+        if lightcurve_compiler is None:
+            lightcurve_compiler = default_compile_lightcurve
         logger.info("compile photometric data")
 
         not_compiled = []
         for objectId, target in self.target_lookup.items():
-            target.build_compiled_lightcurve(
-                compile_function=compile_function, t_ref=t_ref
-            )
+            target.build_compiled_lightcurve(lightcurve_compiler, t_ref=t_ref)
             if target.compiled_lightcurve is None:
                 not_compiled.append(objectId)
         if len(not_compiled) > 0:
@@ -400,7 +401,7 @@ class TargetSelector:
             new_scores.append(score)
             new_targets.append(objectId)
         return new_targets
-        
+
     def remove_bad_targets(self, t_ref=None, write_comments=True):
         t_ref = t_ref or Time.now()
 
@@ -434,12 +435,11 @@ class TargetSelector:
             modeling_functions = [modeling_functions]
         failed_models = {func.__name__: 0 for func in modeling_functions}
         for func in modeling_functions:
-
             models_built = []
             for objectId, target in self.target_lookup.items():
                 model = target.build_model(func, t_ref=t_ref, lazy=lazy)
                 if model is not None:
-                    models_built.append(objectId)        
+                    models_built.append(objectId)
                 if target.models.get(func.__name__, None) is None:
                     failed_models[func.__name__] = failed_models[func.__name__] + 1
             if len(models_built) > 0:
@@ -457,23 +457,23 @@ class TargetSelector:
 
         outdir = outdir or self.comments_path
         outdir = Path(outdir)
-        
+
         if target_list is None:
-            target_list = [t for o,t in self.target_lookup.items()]
+            target_list = [t for o, t in self.target_lookup.items()]
 
         for objectId, target in self.target_lookup.items():
             target.write_comments(outdir, t_ref=t_ref)
 
     def build_lightcurve_plots(
-        self, 
-        lc_plotting_function: Callable = None, 
-        lazy=True, 
+        self,
+        lc_plotting_function: Callable = None,
+        lazy=True,
         interval=0.125,
         t_ref: Time = None,
     ):
         plotted = []
         skipped = []
-        logger.info(f"plot lightcurves") 
+        logger.info(f"plot lightcurves")
         if lazy:
             logger.info(f"re-use lightcurve plots <{interval*24:.1f}hr old")
         for objectId, target in self.target_lookup.items():
@@ -617,7 +617,7 @@ class TargetSelector:
                         f"\033[33moc_fig {ocfig_file} missing!\033[0m"
                         + f"\n    the likely cause is you have two projects with the"
                         + f"same project_path, and one has cleared plots"
-                    )                    
+                    )
                     logger.error(msg)
 
     def perform_messaging_tasks(self, t_ref: Time = None):
@@ -714,7 +714,7 @@ class TargetSelector:
         self,
         scoring_function: Callable = None,
         modeling_function: Callable = None,
-        lightcurve_compile_function: Callable = None,
+        lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
         t_ref: Time = None,
     ):
@@ -732,7 +732,7 @@ class TargetSelector:
         # Set some things before modelling and scoring.
         self.compute_observatory_info(t_ref=t_ref)
         self.compile_target_lightcurves(
-            t_ref=t_ref, compile_function=lightcurve_compile_function
+            t_ref=t_ref, lightcurve_compiler=lightcurve_compiler
         )
 
         write_comments = self.selector_parameters.get("write_comments", True)
@@ -761,10 +761,10 @@ class TargetSelector:
         lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
         plotting_interval = self.selector_parameters.get("plotting_interval", 0.25)
         self.build_lightcurve_plots(
-            lc_plotting_function=lc_plotting_function, 
-            lazy=lazy_plotting, 
-            interval=plotting_interval, 
-            t_ref=t_ref
+            lc_plotting_function=lc_plotting_function,
+            lazy=lazy_plotting,
+            interval=plotting_interval,
+            t_ref=t_ref,
         )
         self.build_observing_charts(t_ref=t_ref)
 
@@ -776,7 +776,7 @@ class TargetSelector:
         self,
         scoring_function: Callable = None,
         modeling_function: List[Callable] = None,
-        lightcurve_compile_function: Callable = None,
+        lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
         existing_targets=True,
         iterations=None,
@@ -791,13 +791,16 @@ class TargetSelector:
             if self.existing_targets_file.exists():
                 os.remove(self.existing_targets_file)
 
+        if lightcurve_compiler is None:
+            lightcurve_compiler = DefaultLightcurveCompiler(**self.compiler_config)
+
         while True:
             t_ref = Time.now()
             try:
                 self.perform_iteration(
                     scoring_function=scoring_function,
                     modeling_function=modeling_function,
-                    lightcurve_compile_function=lightcurve_compile_function,
+                    lightcurve_compiler=lightcurve_compiler,
                     lc_plotting_function=lc_plotting_function,
                     t_ref=t_ref,
                 )
@@ -810,7 +813,7 @@ class TargetSelector:
             # if iterations > 1:
             self.perform_messaging_tasks()
 
-            #self.reset_target_figures() # NO - lazy plotting instead.
+            # self.reset_target_figures() # NO - lazy plotting instead.
             self.reset_updated_targets()
 
             if existing_targets:
