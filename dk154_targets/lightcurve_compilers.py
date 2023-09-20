@@ -77,9 +77,6 @@ def prepare_atlas_data(atlas_data: pd.DataFrame, average_epochs=True):
         atlas_df["m"] = (-2.5 * np.log10(abs(atlas_df["flux"])) + 23.9) * flux_sign
         atlas_df["dm"] = (np.log(10) / 2.5) / abs(atlas_df["snr"])
 
-        print("NEW ATLAS DATA:")
-        print(atlas_df)
-
     atlas_df.reset_index(drop=True, inplace=True)
 
     tag_data = np.full(len(atlas_df), "valid", dtype="object")
