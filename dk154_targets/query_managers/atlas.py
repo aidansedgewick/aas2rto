@@ -189,7 +189,7 @@ class AtlasQueryManager(BaseQueryManager):
                     if len(lightcurve) > 0:
                         logger.warning(
                             f"\033[33matlas returned no data\033[0m\n"
-                            f"existing {objectId} lightcurve has" 
+                            f"existing {objectId} lightcurve has"
                             f"len {len(lightcurve)}, but new query returned zero!"
                         )
             # else:
