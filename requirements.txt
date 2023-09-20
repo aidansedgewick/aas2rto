@@ -16,7 +16,7 @@ python-telegram-bot==13.12
 slack_sdk
 
 # brokers
-fink_client
+fink-client
 lasair
 alerce
 
