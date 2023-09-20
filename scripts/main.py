@@ -43,9 +43,15 @@ if __name__ == "__main__":
 
     selector = TargetSelector.from_config(config_file)
 
-    selector.start(
-        scoring_function=scoring_function,
-        modeling_function=modeling_function,
-        iterations=args.iterations,
-        existing_targets=args.existing,
-    )
+    try:
+        selector.start(
+            scoring_function=scoring_function,
+            modeling_function=modeling_function,
+            iterations=args.iterations,
+            existing_targets=args.existing,
+        )
+    except Exception as e:
+        if selector.telegram_messenger is not None:
+            selector.telegram_messenger.send_crash_report(
+                texts="CRASH!\nexception caught in main try/except"
+            )

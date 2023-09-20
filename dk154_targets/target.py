@@ -10,6 +10,7 @@ import numpy as np
 
 import pandas as pd
 
+import matplotlib
 import matplotlib.pyplot as plt
 
 from scipy.interpolate import CubicSpline
@@ -23,6 +24,8 @@ from astroplan import FixedTarget, Observer
 from astroplan.plots import plot_altitude
 
 logger = getLogger(__name__.split(".")[-1])
+
+matplotlib.use("Agg")
 
 DEFAULT_ZTF_BROKER_PRIORITY = ("fink", "alerce", "lasair", "antares")
 

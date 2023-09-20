@@ -479,7 +479,7 @@ class FinkQueryManager(BaseQueryManager):
         for objectId in objectId_list:
             lightcurve_file = self.get_lightcurve_file(objectId)
             if len(failed) > self.query_parameters["max_failed_queries"]:
-                msg = f"Too many failed queries ({N_failed}), stop for now"
+                msg = f"Too many failed queries ({len(failed)}), stop for now"
                 logger.info(msg)
                 break
             t_now = time.perf_counter()

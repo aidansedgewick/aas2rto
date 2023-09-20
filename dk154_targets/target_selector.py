@@ -13,6 +13,7 @@ import numpy as np
 
 import pandas as pd
 
+import matplotlib
 import matplotlib.pyplot as plt
 
 import astropy.units as u
@@ -33,6 +34,7 @@ from dk154_targets import paths
 
 logger = logging.getLogger(__name__.split(".")[-1])
 
+matplotlib.use("Agg")
 
 class TargetSelector:
     """
@@ -794,8 +796,12 @@ class TargetSelector:
                 os.remove(self.existing_targets_file)
 
         if self.telegram_messenger is not None:
-            msg = f"starting at {t_ref.isot}"
-            self.message_users(users="sudoers", texts=msg)
+            msg = (
+                f"starting at {t_ref.isot} with:\n"
+                f"query_managers: {','.join(k for k in self.query_managers)}\n"
+                f"scoring_function {scoring_function.__name__}"
+            )
+            self.telegram_messenger.message_users(users="sudoers", texts=msg)
 
         while True:
             t_ref = Time.now()
