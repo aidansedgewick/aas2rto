@@ -13,7 +13,7 @@ import pandas as pd
 
 from astropy import units as u
 from astropy.coordinates import SkyCoord, search_around_sky
-from astropy.time import Time
+from astropy.time import Time, TimeDelta
 
 from dk154_targets import Target, TargetData
 from dk154_targets.query_managers.base import BaseQueryManager
@@ -89,6 +89,7 @@ class TnsQueryManager(BaseQueryManager):
 
     default_query_parameters = {
         "query_interval": 1.0,
+        "lookback_time": 60.0,
     }
 
     def __init__(
@@ -125,10 +126,17 @@ class TnsQueryManager(BaseQueryManager):
 
         self.process_paths(data_path=data_path, create_paths=create_paths)
 
-    def perform_query(self, tns_parameters: dict = None):
+    def perform_query(self, tns_parameters: dict = None, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
         tns_parameters = tns_parameters or {}
+
         search_params = copy.deepcopy(self.tns_parameters)
         search_params.update(tns_parameters)
+
+        if search_params("date_start[date]", None) is None:
+            date_start = t_ref - TimeDelta(60.0) * u.day
+            search_params["date_start[date]"] = date_start.iso.split()[0]
 
         return TnsQuery.query(search_params, self.tns_headers)
 
