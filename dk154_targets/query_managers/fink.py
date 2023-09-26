@@ -599,8 +599,9 @@ class FinkQueryManager(BaseQueryManager):
                 target.fink_data.lightcurve.to_csv(lightcurve_file, index=False)
             integrated_alerts.append(objectId)
         if len(integrated_alerts):
-            logger.info(f"integrate alerts into LC for {len(integrated_alerts)} targets")
-
+            logger.info(
+                f"integrate alerts into LC for {len(integrated_alerts)} targets"
+            )
 
     def load_cutouts(self):
         loaded_cutouts = []
@@ -637,7 +638,6 @@ class FinkQueryManager(BaseQueryManager):
             alert_text = (
                 f"FINK alert from {topic_str}\n"
                 f"     broadcast at jd={alert_jd:.5f}={timestamp}\n"
-                f"     see fink-portal.org/{objectId}"
             )
             target.update_messages.append(alert_text)
 

@@ -24,11 +24,11 @@ from dk154_targets.query_managers.fink import (
     target_from_fink_lightcurve,
 )
 
-from dk154_targets.query_managers.lasair import (
-    LasairQueryManager,
-    process_lasair_lightcurve,
-    target_from_lasair_lightcurve,
-)
+# from dk154_targets.query_managers.lasair import (
+#     LasairQueryManager,
+#     process_lasair_lightcurve,
+#     target_from_lasair_lightcurve,
+# )
 
 # from dk154_targets.query_managers.sdss import (
 #     SdssQueryManager,

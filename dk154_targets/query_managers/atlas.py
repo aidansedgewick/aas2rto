@@ -334,7 +334,7 @@ class AtlasQueryManager(BaseQueryManager):
             loaded.append(objectId)
             if len(target.atlas_data.detections) > 0:
                 target.updated = True
-                target.update_messages.append("New atlas data!")
+                target.update_messages.append("Atlas data updated")
         t_end = time.perf_counter()
         if len(loaded) > 0:
             logger.info(f"{len(loaded)} lightcurves loaded in {(t_end-t_start):.1f}s")

@@ -454,7 +454,20 @@ class Target:
     def get_info_string(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
         t_ref_str = t_ref.strftime("%y-%m-%d %H:%M")
-        lines = [f"Target {self.objectId} at {t_ref_str}"]
+        lines = [f"Target {self.objectId} at {t_ref_str}, see:"]
+        broker_lines = (
+            f"    FINK: fink-portal.org/{self.objectId}\n"
+            f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.objectId}\n"
+            f"    ALeRCE: alerce.online/object/{self.objectId}"
+        )
+        lines.append(broker_lines)
+
+        if self.tns_data.parameters:
+            tns_name = self.tns_data.parameters["Name"]
+            tns_code = tns_name.split()
+            lines.append(f"    TNS: wis-tns.org/object/{tns_code}\n")
+
+        lines.append("coordinates:\n")
         if self.ra is not None and self.dec is not None:
             eq_line = f"    equatorial (ra, dec) = ({self.ra:.4f},{self.dec:+.5f})"
             lines.append(eq_line)
