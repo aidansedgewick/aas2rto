@@ -23,6 +23,16 @@ from astropy.visualization import ZScaleInterval
 from astroplan import FixedTarget, Observer
 from astroplan.plots import plot_altitude
 
+#try:
+#    import pygtc
+#except ModuleNotFoundError as e:
+#    pygtc = None
+try:
+    import corner
+except ModuleNotFoundError as e:
+    logger.warning("\033\[031;1mNo module corner\033[0m")
+    corner = None
+
 logger = getLogger(__name__.split(".")[-1])
 
 matplotlib.use("Agg")
@@ -437,6 +447,23 @@ class Target:
             self.latest_lc_fig_path = figpath
         return lc_fig
 
+    #def plot_models(
+    #    self,
+    #    model,
+    #    t_ref: Time = None,
+    #    model_plotting_function: Callable = None,
+    #    fig=None,
+    #    figpath=None,
+    #):
+    #    t_ref = t_ref or Time.now()
+    #  
+    #    if model_plotting_function is None:
+    #        model_plotting_function = default_model_plotting_function
+    #    model_fig = model_plotting_function(self, t_ref=t_ref, fig=fig)
+    #    if figpath is not None and model_fig is not None:
+    #        model_fig.savefig(figpath)
+    #        self.latest_model_fig_paths
+
     def plot_observing_chart(self, observatory, t_ref: Time = None, figpath=None):
         obs_name = getattr(observatory, "name", "no_observatory")
         t_ref = t_ref or Time.now()
@@ -464,10 +491,10 @@ class Target:
 
         if self.tns_data.parameters:
             tns_name = self.tns_data.parameters["Name"]
-            tns_code = tns_name.split()
-            lines.append(f"    TNS: wis-tns.org/object/{tns_code}\n")
+            tns_code = tns_name.split()[1]
+            lines.append(f"    TNS: wis-tns.org/object/{tns_code}")
 
-        lines.append("coordinates:\n")
+        lines.append("coordinates:")
         if self.ra is not None and self.dec is not None:
             eq_line = f"    equatorial (ra, dec) = ({self.ra:.4f},{self.dec:+.5f})"
             lines.append(eq_line)
@@ -578,6 +605,7 @@ def default_plot_lightcurve(
         ax = fig.axes[0]
 
     if target.compiled_lightcurve is None:
+        logger.warning(f"{target.objectId} has no compiled lightcurve for plotting.")
         return fig
 
     det_kwargs = dict(ls="none", marker="o")
@@ -792,16 +820,26 @@ def default_plot_lightcurve(
     #     im_ax.text(1.02, 0.5, "SDSS color", **imtext_kwargs)
     #     im_ax.imshow(sdss_color)
 
+
     fig.tight_layout()
 
     comments = target.score_comments.get("no_observatory", [])
     if comments is not None:
         if len(comments) > 0:
-            fig.subplots_adjust(bottom=0.3)
+            fig.subplots_adjust(bottom=0.35)
             text = "score comments:\n" + "\n".join(f"    {comm}" for comm in comments)
             fig.text(
                 0.01, 0.01, text, ha="left", va="bottom", transform=fig.transFigure
             )
+
+    #samples = getattr(model, "result", {}).get("samples", None)
+    #vparam_names = getattr(model, "result", {}).get("vparam_names", None)
+    #if corner is not None and samples is not None:
+    #    gs2 = fig.add_gridspec(5, 2)
+    #    subfig = fig.add_subfigure(gs2[3:,1:])
+    #    corner.corner(data=samples, fig=subfig, labels=vparam_names)
+    
+
     return fig
 
 
@@ -847,7 +885,6 @@ def get_sample_quartiles(
     lc_bounds = np.nanquantile(lc_evaluations, q=q, axis=0)
     return lc_bounds
 
-
 def spline_and_sample(x, y, xnew):
     ypos_mask = np.isfinite(y)
     xpos = x[ypos_mask]
@@ -869,7 +906,6 @@ def _warn_expensive_plotting(objectId=None, obs_name=None):
         f"You can then access the info as my_target.observatory_info['{obs_name}']`"
     )
     logger.warning(msg)
-
 
 def plot_observing_chart(
     observatory: Observer,

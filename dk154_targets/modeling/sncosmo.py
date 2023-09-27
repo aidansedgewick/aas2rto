@@ -149,10 +149,11 @@ def sncosmo_model_emcee(target: Target):
     known_redshift = target.tns_data.parameters.get("Redshift", None)
     if known_redshift is not None:
         logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
+        model.set(z=known_redshift)
         fitting_params.remove("z")
         bounds = {}
     else:
-        bounds = dict(z=(0.005, 0.5))
+        bounds = dict(z=(0.001, 0.2))
 
     try:
         with warnings.catch_warnings():
@@ -160,21 +161,26 @@ def sncosmo_model_emcee(target: Target):
             lsq_result, lsq_fitted_model = sncosmo.fit_lc(
                 lightcurve, model, fitting_params, bounds=bounds
             )
+            existing_models = target.models
+            #if len(target.models) > 0:
             try:
                 result, fitted_model = sncosmo.mcmc_lc(
                     lightcurve,
                     lsq_fitted_model,
                     fitting_params,
-                    nsamples=2000,
-                    nwalkers=16,
+                    nsamples=1500,
+                    nwalkers=12,
                     bounds=bounds,
                 )
             except Exception as e:
                 tr = traceback.format_exc()
-                logger.warning("during emcee fitting")
+                logger.warning(f"{target.objectId} during emcee fitting")
                 print(tr)
                 fitted_model = lsq_fitted_model
                 result = lsq_result
+            #else:
+            #    logger.debug"{target.objectId} first attempt: lsq is good enough!")
+            #    result, fitted_model = lsq_result, lsq_fitted_model
         fitted_model.result = result
 
     except Exception as e:

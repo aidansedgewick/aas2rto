@@ -134,8 +134,8 @@ class TnsQueryManager(BaseQueryManager):
         search_params = copy.deepcopy(self.tns_parameters)
         search_params.update(tns_parameters)
 
-        if search_params("date_start[date]", None) is None:
-            date_start = t_ref - TimeDelta(60.0) * u.day
+        if search_params.get("date_start[date]", None) is None:
+            date_start = t_ref - TimeDelta(60.0, format="jd")
             search_params["date_start[date]"] = date_start.iso.split()[0]
 
         return TnsQuery.query(search_params, self.tns_headers)
@@ -164,10 +164,11 @@ class TnsQueryManager(BaseQueryManager):
 
     def match_tns_on_names(self, t_ref=None):
         t_ref = t_ref or Time.now()
+        logger.info("match TNS data by objectId")
 
         unmatched_rows = []
         matched = 0
-        for row in self.tns_results.iterrows():
+        for idx, row in self.tns_results.iterrows():
             disc_name = row["Disc. Internal Name"]
             if disc_name in self.target_lookup:
                 target = self.target_lookup[disc_name]
@@ -176,11 +177,12 @@ class TnsQueryManager(BaseQueryManager):
             else:
                 unmatched_rows.append(row)
 
-        logger.info(f"matched {matched} TNS objects")
-        self.tns_results = self.concat(unmatched_rows)
+        logger.info(f"matched {matched} TNS objects by name")
+        self.tns_results = pd.concat(unmatched_rows)
 
     def match_tns_on_coordinates(self, seplimit=5 * u.arcsec, t_ref=None):
         t_ref = t_ref or Time.now()
+        logger.info(f"match TNS data on coords <{seplimit:.1f}")
 
         tns_candidate_coords = SkyCoord(
             self.tns_results["RA"], self.tns_results["DEC"], unit=(u.hourangle, u.deg)
@@ -196,23 +198,38 @@ class TnsQueryManager(BaseQueryManager):
             target_candidate_coords.append(target.coord)
             target_candidate_objectIds.append(objectId)
 
-        target_candidate_coords = SkyCoord(target_candidate_coords)
+        if len(target_candidate_coords) == 0:
+            logger.info("no targets left to TNS match")
+            return
 
+        target_candidate_coords = SkyCoord(target_candidate_coords)
+            
         target_match_idx, tns_match_idx, skysep, _ = search_around_sky(
             target_candidate_coords, tns_candidate_coords, seplimit
         )
 
-        if not np.unique(idx1) == len(idx1):
+        if not len(np.unique(target_match_idx)) == len(target_match_idx):
             logger.warning("target matches multiple TNS rows")
-        if not np.unique(idx2) == len(idx2):
+        if not len(np.unique(tns_match_idx)) == len(tns_match_idx):
             logger.warning("TNS row matches multiple targets")
 
-        for ii, (idx1, idx2) in enumerate(zip(target_match_idx, tns_match_idx)):
+        logger.info(f"coordinate match for {len(target_match_idx)} TNS objects")
+        for ii, (idx1, idx2, skysep) in enumerate(zip(target_match_idx, tns_match_idx, skysep)):
             objectId = target_candidate_objectIds[idx1]
             target = self.target_lookup[objectId]
 
-            tns_data = self.tns_results.iloc[idx2].to_dict()
-            target.tns_data.parameters = tns_data
+            tns_data = self.tns_results.iloc[idx2]
+            try:
+                target.tns_data.parameters = tns_data.to_dict()
+            except Exception as e:
+                print(e)
+                print(objectId)
+                print(tns_data)
+                raise ValueError(e)
+
+        self.recent_coordinate_searches.update(target_candidate_objectIds)
+        # This set is emptied every time TNS-results is read in.
+        
 
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -234,6 +251,7 @@ class TnsQueryManager(BaseQueryManager):
             logger.info("read TNS results from file")
             results = pd.read_csv(existing_results_path)
             self.tns_results = results
+            self.recent_coordinate_searches = set()
 
         self.match_tns_on_names(t_ref=t_ref)  # If the "Disc. Name" directly matches...
         self.match_tns_on_coordinates(t_ref=t_ref)

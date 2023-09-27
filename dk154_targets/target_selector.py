@@ -190,10 +190,10 @@ class TargetSelector:
             elif qm_name == "lasair":
                 qm = query_managers.LasairQueryManager(*qm_args, **qm_kwargs)
             elif qm_name == "sdss":
-                raise NotImplementedError("not implemented.")
+                raise NotImplementedError("sdss qm not implemented.")
                 qm = query_managers.SdssQueryManager(*qm_args, **qm_kwargs)
             elif qm_name == "tns":
-                raise NotImplementedError(f"{qm_name.capitalize()}QueryManager")
+                qm = query_managers.TnsQueryManager(*qm_args, **qm_kwargs)
             elif qm_name == "yse":
                 qm = query_managers.YseQueryManager(*qm_args, **qm_kwargs)
             else:
@@ -799,10 +799,16 @@ class TargetSelector:
             lightcurve_compiler = DefaultLightcurveCompiler(**self.compiler_config)
 
         if self.telegram_messenger is not None:
+            try:
+                nodename = os.uname().nodename
+            except Exception as e:
+                nodename = "<unknown node>"
             msg = (
-                f"starting at {t_ref.isot} with:\n"
+                f"starting at {t_ref.isot} on {nodename} with:\n"
+                f"observatories: {','.join(k for k in self.observatories)}\n"
                 f"query_managers: {','.join(k for k in self.query_managers)}\n"
-                f"scoring_function {scoring_function.__name__}"
+                f"modeling_function: {modeling_function.__name__}\n"
+                f"scoring_function: {scoring_function.__name__}"
             )
             self.telegram_messenger.message_users(users="sudoers", texts=msg)
 
@@ -817,7 +823,7 @@ class TargetSelector:
                     t_ref=t_ref,
                 )
             except Exception as e:
-                t_str = t_ref.strftime("%Y%m%d %H:%M:%S")
+                t_str = t_ref.strftime("%Y-%m-%d %H:%M:%S")
                 crash_text = [f"CRASH at UT {t_str}"]
                 self.send_crash_reports(text=crash_text)
                 sys.exit()
