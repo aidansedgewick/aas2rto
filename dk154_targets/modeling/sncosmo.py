@@ -102,10 +102,11 @@ def sncosmo_model(target: Target):
     known_redshift = target.tns_data.parameters.get("Redshift", None)
     if known_redshift is not None:
         logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
+        fitting_parameters()
         fitting_params.remove("z")
         bounds = {}
     else:
-        bounds = dict(z=(0.005, 0.5))
+        bounds = dict(z=(0.005, 0.2))
 
     try:
         with warnings.catch_warnings():
@@ -162,7 +163,7 @@ def sncosmo_model_emcee(target: Target):
                 lightcurve, model, fitting_params, bounds=bounds
             )
             existing_models = target.models
-            #if len(target.models) > 0:
+            # if len(target.models) > 0:
             try:
                 result, fitted_model = sncosmo.mcmc_lc(
                     lightcurve,
@@ -178,7 +179,7 @@ def sncosmo_model_emcee(target: Target):
                 print(tr)
                 fitted_model = lsq_fitted_model
                 result = lsq_result
-            #else:
+            # else:
             #    logger.debug"{target.objectId} first attempt: lsq is good enough!")
             #    result, fitted_model = lsq_result, lsq_fitted_model
         fitted_model.result = result
@@ -190,3 +191,88 @@ def sncosmo_model_emcee(target: Target):
         fitted_model = None
 
     return fitted_model
+
+
+class sncosmo_salt:
+    def __init__(self, use_emcee=True):
+        self.__name__ = self.__class__.__name__
+        self.use_emcee = use_emcee
+
+    def __call__(self, target: Target):
+        if sncosmo is None:
+            msg = "`sncosmo` not imported properly. try:\n    \033[33;1mpython3 -m pip install sncosmo\033[0m"
+            raise ModuleNotFoundError(msg)
+
+        detections = get_detections(target)
+        lightcurve = build_astropy_lightcurve(detections)
+
+        if detections["mag"].min() > 18.5:
+            return None
+
+        N_detections = {}
+        for fid, fid_history in target.fink_data.detections.groupby("fid"):
+            N_detections[fid] = len(fid_history)
+
+        enough_detections = N_detections.get(1, 0) > 1 and N_detections.get(2, 0) > 1
+        if not enough_detections:
+            return
+
+        model = initialise_model()
+
+        if sfdq is None:
+            print(sfdq_traceback)
+            msg = "sfd.SDFQuery() not initialised properly. try:\n     scripts/init_sfd_maps.py"
+
+        mwebv = sfdq(target.coord)
+        model.set(mwebv=mwebv)
+
+        fitting_params = model.param_names
+        fitting_params.remove("mwebv")
+
+        known_redshift = target.tns_data.parameters.get("Redshift", None)
+        if known_redshift is not None and np.isfinite(known_redshift):
+            logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
+            model.set(z=known_redshift)
+            fitting_params.remove("z")
+            bounds = {}
+        else:
+            bounds = dict(z=(0.001, 0.2))
+
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                lsq_result, lsq_fitted_model = sncosmo.fit_lc(
+                    lightcurve, model, fitting_params, bounds=bounds
+                )
+                existing_models = target.models
+                if self.use_emcee:
+                    try:
+                        result, fitted_model = sncosmo.mcmc_lc(
+                            lightcurve,
+                            lsq_fitted_model,
+                            fitting_params,
+                            nsamples=1500,
+                            nwalkers=12,
+                            bounds=bounds,
+                        )
+                    except Exception as e:
+                        tr = traceback.format_exc()
+                        logger.warning(f"{target.objectId} during emcee fitting")
+                        print(tr)
+                        fitted_model = lsq_fitted_model
+                        result = lsq_result
+                    # else:
+                    #    logger.debug"{target.objectId} first attempt: lsq is good enough!")
+                    #    result, fitted_model = lsq_result, lsq_fitted_model
+                else:
+                    fitted_model = lsq_fitted_model
+                    result = lsq_result
+            fitted_model.result = result
+
+        except Exception as e:
+            logger.warning(f"{target.objectId} sncosmo fitting failed")
+            tr = traceback.format_exc()
+            print(tr)
+            fitted_model = None
+
+        return fitted_model

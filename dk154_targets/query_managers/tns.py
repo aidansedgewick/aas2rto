@@ -357,7 +357,7 @@ class TnsQuery:
         if not df_list:
             return pd.DataFrame()  # empty dataframe.
 
-        results_df = pd.concat(df_list, ignore_index=True)
+        results_df = pd.DataFrame(df_list, ignore_index=True)
         return results_df
 
 

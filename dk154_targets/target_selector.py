@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__.split(".")[-1])
 
 matplotlib.use("Agg")
 
+
 class TargetSelector:
     """
     The main api.
@@ -170,8 +171,14 @@ class TargetSelector:
             self.comments_path.mkdir(exist_ok=True, parents=True)
             self.rejected_targets_path.mkdir(exist_ok=True, parents=True)
 
+    def _initialise_query_manager_lookup(
+        self,
+    ) -> (str, query_managers.BaseQueryManager):
+        """Only for type hinting..."""
+        return {}
+
     def initialize_query_managers(self, create_paths=True):
-        self.query_managers = {}
+        self.query_managers = self._initialise_query_manager_lookup()
         self.qm_order = []
         for qm_name, qm_config in self.query_manager_config.items():
             if not qm_config.get("use", True):
@@ -183,19 +190,25 @@ class TargetSelector:
             qm_kwargs = dict(data_path=self.data_path, create_paths=create_paths)
             if qm_name == "alerce":
                 qm = query_managers.AlerceQueryManager(*qm_args, **qm_kwargs)
+                self.alerce_query_manager = qm
             elif qm_name == "atlas":
                 qm = query_managers.AtlasQueryManager(*qm_args, **qm_kwargs)
+                self.atlas_query_manager = qm
             elif qm_name == "fink":
                 qm = query_managers.FinkQueryManager(*qm_args, **qm_kwargs)
+                self.fink_query_manager = qm
             elif qm_name == "lasair":
                 qm = query_managers.LasairQueryManager(*qm_args, **qm_kwargs)
+                self.lasair_query_manager = qm
             elif qm_name == "sdss":
                 raise NotImplementedError("sdss qm not implemented.")
                 qm = query_managers.SdssQueryManager(*qm_args, **qm_kwargs)
             elif qm_name == "tns":
                 qm = query_managers.TnsQueryManager(*qm_args, **qm_kwargs)
+                self.tns_query_manager = qm
             elif qm_name == "yse":
                 qm = query_managers.YseQueryManager(*qm_args, **qm_kwargs)
+                self.yse_query_manager = qm
             else:
                 msg = f"init query manager for {qm_name}"
                 # Mainly for testing.
@@ -324,7 +337,7 @@ class TargetSelector:
         t_ref = t_ref or Time.now()
 
         if lightcurve_compiler is None:
-            lightcurve_compiler = default_compile_lightcurve
+            lightcurve_compiler = DefaultLightcurveCompiler()
         logger.info("compile photometric data")
 
         not_compiled = []
@@ -445,10 +458,10 @@ class TargetSelector:
                 if target.models.get(func.__name__, None) is None:
                     failed_models[func.__name__] = failed_models[func.__name__] + 1
             if len(models_built) > 0:
-                logger.info(f"{func.__name__}: {len(models_built)} models")
+                logger.info(f"{func.__name__}: built {len(models_built)} models")
         for func_name, N_failed in failed_models.items():
             if N_failed > 0:
-                logger.warning(f"{func_name} failed for {N_failed} targets")
+                logger.warning(f"{func_name}: {N_failed} failed models")
 
     def write_target_comments(
         self, target_list: List[Target] = None, outdir: Path = None, t_ref: Time = None
@@ -541,6 +554,8 @@ class TargetSelector:
         self, plots=True, write_list=True, t_ref: Time = None
     ):
         t_ref = t_ref or Time.now()
+
+        logger.info("build ranked target lists:")
         for obs_name, observatory in self.observatories.items():
             self.build_ranked_target_list(
                 observatory, plots=plots, write_list=write_list, t_ref=t_ref
@@ -718,6 +733,7 @@ class TargetSelector:
         modeling_function: Callable = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
+        skip_tasks=None,
         t_ref: Time = None,
     ):
         t_ref = t_ref or Time.now()
@@ -726,10 +742,15 @@ class TargetSelector:
         print_header(f"iteration at {t_str}")
 
         # self.clear_scratch_plots() # NO - lazy plotting re-uses existing plots.
+        if skip_tasks is None:
+            skip_tasks = []
 
         # Get new data
-        self.check_for_targets_of_opportunity()
-        self.perform_query_manager_tasks(t_ref=t_ref)
+        if not "qm_tasks" in skip_tasks:
+            self.check_for_targets_of_opportunity()
+            self.perform_query_manager_tasks(t_ref=t_ref)
+        else:
+            logger.info("skip query manager tasks")
 
         # Set some things before modelling and scoring.
         self.compute_observatory_info(t_ref=t_ref)
@@ -750,9 +771,11 @@ class TargetSelector:
         self.build_target_models(modeling_function, t_ref=t_ref, lazy=lazy_modeling)
 
         # Do the scoring, remove the bad targets
-        self.evaluate_all_targets(scoring_function)
+        self.evaluate_all_targets(scoring_function, t_ref=t_ref)
         logger.info(f"{len(self.target_lookup)} targets before rejecting")
-        removed_targets = self.remove_bad_targets(write_comments=write_comments)
+        removed_targets = self.remove_bad_targets(
+            write_comments=write_comments, t_ref=t_ref
+        )
         logger.info(
             f"removed {len(removed_targets)} targets, {len(self.target_lookup)} remain"
         )
@@ -760,15 +783,18 @@ class TargetSelector:
             self.write_target_comments()
 
         # Plotting
-        lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
-        plotting_interval = self.selector_parameters.get("plotting_interval", 0.25)
-        self.build_lightcurve_plots(
-            lc_plotting_function=lc_plotting_function,
-            lazy=lazy_plotting,
-            interval=plotting_interval,
-            t_ref=t_ref,
-        )
-        self.build_observing_charts(t_ref=t_ref)
+        if not "plotting" in skip_tasks:
+            lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
+            plotting_interval = self.selector_parameters.get("plotting_interval", 0.25)
+            self.build_lightcurve_plots(
+                lc_plotting_function=lc_plotting_function,
+                lazy=lazy_plotting,
+                interval=plotting_interval,
+                t_ref=t_ref,
+            )
+            self.build_observing_charts(t_ref=t_ref)
+        else:
+            logger.info("skip plotting")
 
         # Ranking
         self.clear_output_directories()  # In prep for the new outputs

@@ -6,6 +6,7 @@ import pickle
 import requests
 import time
 from logging import getLogger
+from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
 import numpy as np
@@ -265,6 +266,18 @@ class FinkQueryManager(BaseQueryManager):
                     new_alerts.append(alert_data)
                 logger.info(f"received {len(new_alerts)} {topic} alerts")
         return new_alerts
+
+    def read_simulated_alerts(self, alert_dir: Path):
+        alert_dir = Path(alert_dir)
+
+        alerts = []
+        for alert_path in alert_dir.glob("*.json"):
+            with open(alert_path, "r") as f:
+                alert = json.load(f)
+                alerts.append(alert)
+
+        logger.info(f"read {len(alerts)} simulated alerts")
+        return alerts
 
     def process_alerts(
         self,
@@ -549,16 +562,17 @@ class FinkQueryManager(BaseQueryManager):
                     if len(lightcurve) <= len(existing_lightcurve):
                         continue
             loaded.append(objectId)
+            lightcurve.query("jd<@t_ref.jd", inplace=True)
             target.fink_data.add_lightcurve(lightcurve)
             target.updated = True
         t_end = time.perf_counter()
 
         N_loaded = len(loaded)
         N_missing = len(missing)
-        if N_loaded > 0:
-            logger.info(
-                f"loaded {N_loaded}, missing {N_missing} lightcurves in {t_end-t_start:.1f}s"
-            )
+        # if N_loaded > 0:
+        logger.info(
+            f"loaded {N_loaded}, missing {N_missing} lightcurves in {t_end-t_start:.1f}s"
+        )
         return loaded, missing
 
     def load_missing_alerts(self, objectId: str):
@@ -641,29 +655,40 @@ class FinkQueryManager(BaseQueryManager):
             )
             target.update_messages.append(alert_text)
 
-    def perform_all_tasks(self, simulated_alerts=False, t_ref: Time = None):
+    def perform_all_tasks(
+        self, simulated_alerts=False, alert_dir=None, t_ref: Time = None
+    ):
         t_ref = t_ref or Time.now()
 
         # get alerts
         if simulated_alerts:
-            pass
+            if alert_dir is None:
+                raise ValueError(
+                    "must also provide alert_path, where to read simulated alerts"
+                )
+            alerts = self.read_simulated_alerts(alert_dir)
         else:
             alerts = self.listen_for_alerts()
-        processed_alerts = self.process_alerts(alerts, t_ref=t_ref)
+        processed_alerts = self.process_alerts(
+            alerts, simulated_alerts=simulated_alerts, t_ref=t_ref
+        )
         self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
 
-        new_alerts = set([alert["objectId"] for alert in processed_alerts])
-        success, failed = self.perform_lightcurve_queries(new_alerts)
+        if not simulated_alerts:
+            new_alerts = set([alert["objectId"] for alert in processed_alerts])
+            success, failed = self.perform_lightcurve_queries(new_alerts)
 
-        lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
-        success, failed = self.perform_lightcurve_queries(lcs_to_query)
+            lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
+            success, failed = self.perform_lightcurve_queries(lcs_to_query)
 
         loaded_lcs, missing_lcs = self.load_target_lightcurves(t_ref=t_ref)
-        self.integrate_alerts()
 
-        self.load_cutouts()
+        if not simulated_alerts:
+            self.integrate_alerts()
 
-        self.apply_messenger_updates(processed_alerts)
+            self.load_cutouts()
+
+            self.apply_messenger_updates(processed_alerts)
 
 
 class FinkQueryError(Exception):

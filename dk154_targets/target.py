@@ -23,14 +23,14 @@ from astropy.visualization import ZScaleInterval
 from astroplan import FixedTarget, Observer
 from astroplan.plots import plot_altitude
 
-#try:
+# try:
 #    import pygtc
-#except ModuleNotFoundError as e:
+# except ModuleNotFoundError as e:
 #    pygtc = None
 try:
     import corner
 except ModuleNotFoundError as e:
-    logger.warning("\033\[031;1mNo module corner\033[0m")
+    print("\033[31;1mNo module corner\033[0m")
     corner = None
 
 logger = getLogger(__name__.split(".")[-1])
@@ -436,7 +436,7 @@ class Target:
         lc_plotting_function: Callable = None,
         fig=None,
         figpath=None,
-    ):
+    ) -> plt.Figure:
         t_ref = t_ref or Time.now()
         if lc_plotting_function is None:
             lc_plotting_function = default_plot_lightcurve
@@ -447,16 +447,16 @@ class Target:
             self.latest_lc_fig_path = figpath
         return lc_fig
 
-    #def plot_models(
+    # def plot_models(
     #    self,
     #    model,
     #    t_ref: Time = None,
     #    model_plotting_function: Callable = None,
     #    fig=None,
     #    figpath=None,
-    #):
+    # ):
     #    t_ref = t_ref or Time.now()
-    #  
+    #
     #    if model_plotting_function is None:
     #        model_plotting_function = default_model_plotting_function
     #    model_fig = model_plotting_function(self, t_ref=t_ref, fig=fig)
@@ -480,7 +480,8 @@ class Target:
 
     def get_info_string(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
-        t_ref_str = t_ref.strftime("%y-%m-%d %H:%M")
+        t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
+
         lines = [f"Target {self.objectId} at {t_ref_str}, see:"]
         broker_lines = (
             f"    FINK: fink-portal.org/{self.objectId}\n"
@@ -536,7 +537,7 @@ class Target:
         missing_score_comments = ["no score_comments provided"]
         missing_reject_comments = ["no reject_comments provided"]
 
-        lines = self.get_info_string().split("\n")
+        lines = self.get_info_string(t_ref=t_ref).split("\n")
         last_score = self.get_last_score()
         lines.append(f"score = {last_score:.3f} for no_observatory")
 
@@ -565,7 +566,7 @@ class Target:
             for comm in reject_comments:
                 lines.append(f"    {comm}")
 
-        comments_file = outdir / f"{self.objectId}.txt"
+        comments_file = outdir / f"{self.objectId}_comments.txt"
         with open(comments_file, "w+") as f:
             f.writelines([l + "\n" for l in lines])
         return lines
@@ -619,9 +620,10 @@ def default_plot_lightcurve(
     atlas_colors = {"atlasc": "C2", "atlaso": "C3"}
     lightcurve_plot_colours = {**ztf_colors, **atlas_colors}
 
-    model = target.models.get("sncosmo_model_emcee", None)
-    if model is None:
-        model = target.models.get("sncosmo_model", None)
+    # model = target.models.get("sncosmo_model_emcee", None)
+    # if model is None:
+    #    model = target.models.get("sncosmo_model", None)
+    model = target.models.get("sncosmo_salt")
 
     for ii, (band, band_history) in enumerate(
         target.compiled_lightcurve.groupby("band")
@@ -736,7 +738,7 @@ def default_plot_lightcurve(
             else:
                 ax.plot(tgrid_shift, model_mag, color=band_color)
 
-            if ii == 0:
+            if ii == 0 and samples:
                 l0 = ax.plot(
                     [0, 0], [23, 23], ls="-", color="k", label="median parameters"
                 )
@@ -820,7 +822,6 @@ def default_plot_lightcurve(
     #     im_ax.text(1.02, 0.5, "SDSS color", **imtext_kwargs)
     #     im_ax.imshow(sdss_color)
 
-
     fig.tight_layout()
 
     comments = target.score_comments.get("no_observatory", [])
@@ -832,13 +833,12 @@ def default_plot_lightcurve(
                 0.01, 0.01, text, ha="left", va="bottom", transform=fig.transFigure
             )
 
-    #samples = getattr(model, "result", {}).get("samples", None)
-    #vparam_names = getattr(model, "result", {}).get("vparam_names", None)
-    #if corner is not None and samples is not None:
+    # samples = getattr(model, "result", {}).get("samples", None)
+    # vparam_names = getattr(model, "result", {}).get("vparam_names", None)
+    # if corner is not None and samples is not None:
     #    gs2 = fig.add_gridspec(5, 2)
     #    subfig = fig.add_subfigure(gs2[3:,1:])
     #    corner.corner(data=samples, fig=subfig, labels=vparam_names)
-    
 
     return fig
 
@@ -885,6 +885,7 @@ def get_sample_quartiles(
     lc_bounds = np.nanquantile(lc_evaluations, q=q, axis=0)
     return lc_bounds
 
+
 def spline_and_sample(x, y, xnew):
     ypos_mask = np.isfinite(y)
     xpos = x[ypos_mask]
@@ -906,6 +907,7 @@ def _warn_expensive_plotting(objectId=None, obs_name=None):
         f"You can then access the info as my_target.observatory_info['{obs_name}']`"
     )
     logger.warning(msg)
+
 
 def plot_observing_chart(
     observatory: Observer,

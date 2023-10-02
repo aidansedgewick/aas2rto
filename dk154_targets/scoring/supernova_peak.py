@@ -29,11 +29,12 @@ def calc_mag_factor(mag: float, zp=18.5):
     return 10 ** ((zp - mag) / 4)
 
 
-def calc_timespan_factor(timespan: float):
+def calc_timespan_factor(timespan: float, characteristic_timespan=20.0):
     factor = 1.0
-    if timespan > 20.0:
-        factor = logistic(timespan, 1.0, -1, 0.0)
-    return factor
+    if timespan > characteristic_timespan:
+        factor = logistic(timespan, 1.0, -1, characteristic_timespan + 5.0)
+        # +5 meanst that it starts to fall of ~ish
+    return max(factor, 1e-3)
 
 
 def calc_rising_fraction(band_det: pd.DataFrame, single_point_value=0.5):
@@ -71,24 +72,21 @@ def calc_observatory_factor(alt_grid, min_alt=30.0, norm_alt=45.0):
 
 
 class supernova_peak_score:
-    
-
     def __init__(self):
-
         self.__name__ = self.__class__.__name__
         self.source_priority = ("fink", "lasair", "alerce")
         self.mag_lim = 19.0
         self.min_timespan = 1.0
-        self.max_timespan = 15.0
+        self.max_timespan = 20.0
         self.min_rising_fraction = 0.4
-        self.min_altitude = 30.
+        self.min_altitude = 30.0
         self.default_color_factor = 0.1
         self.min_ztf_detections = 3
 
     def __call__(
         self, target: Target, observatory: Observer, t_ref: Time
     ) -> Tuple[float, List, List]:
-        t_ref = t_ref or Time.now()
+        # t_ref = t_ref or Time.now()
 
         # to keep track
         scoring_comments = []
@@ -121,12 +119,14 @@ class supernova_peak_score:
         if last_mag > self.mag_lim:
             exclude = True
             scoring_comments.append(
-                f"latest mag {last_mag:.1f} too faint ({self.mag_lim}): exclude from ranking"
+                f"latest mag {last_mag:.1f} too faint (>{self.mag_lim}): exclude from ranking"
             )
 
         ###===== Is the target very old? ======###
         timespan = t_ref.jd - ztf_detections["jd"].min()
-        factors["timespan"] = calc_timespan_factor(timespan)
+        factors["timespan"] = calc_timespan_factor(
+            timespan, characteristic_timespan=self.max_timespan
+        )
         timespan_comment = (
             f"timespan f={factors['timespan']:.2f} from timspan={timespan:.1f}d"
         )
@@ -135,12 +135,11 @@ class supernova_peak_score:
             reject = True
             reject_comments.append(f"target is {timespan:.2f} days old")
 
+        ##==== or much too young!? ====##
         if timespan < self.min_timespan:
-            ##==== or much too young!? ====##
             exclude = True
             exclude_comment = f"timespan less than min={self.min_timespan}"
             scoring_comments.append(exclude_comment)
-
 
         ###===== Is the target still rising ======###
         for fid, fid_history in ztf_detections.groupby("fid"):
@@ -161,13 +160,17 @@ class supernova_peak_score:
         for fid, fid_history in ztf_detections.groupby("fid"):
             N_detections[fid] = len(fid_history)
         if N_detections.get(1, 0) < 2 and N_detections.get(2, 0) < 2:
-            scoring_comments.append(f"exclude as detections {N_detections} insufficient")
+            scoring_comments.append(
+                f"exclude as detections {N_detections} insufficient"
+            )
             exclude = True
         if len(ztf_detections) < self.min_ztf_detections:
-            scoring_comments.append(f"exclude as detections {N_detections} insufficient")
+            scoring_comments.append(
+                f"exclude as detections {N_detections} insufficient"
+            )
             exclude = True
 
-        model = target.models.get("sncosmo_model_emcee", None)
+        model = target.models.get("sncosmo_salt", None)
         sncosmo_model = copy.deepcopy(model)
         if sncosmo_model is not None:
             samples = getattr(model, "result", {}).get("samples", None)
@@ -182,7 +185,9 @@ class supernova_peak_score:
             peak_dt = t_ref.jd - sncosmo_model["t0"]
             interest_factor = peak_only_interest_function(peak_dt)
             factors["interest_factor"] = interest_factor
-            interest_comment = f"interest {interest_factor:.2f} from peak_dt={peak_dt:.2f}d"
+            interest_comment = (
+                f"interest {interest_factor:.2f} from peak_dt={peak_dt:.2f}d"
+            )
             scoring_comments.append(interest_comment)
 
             if peak_dt > self.max_timespan:
@@ -192,10 +197,15 @@ class supernova_peak_score:
             ###===== Blue colour?
             ztfg_mag = sncosmo_model.bandmag("ztfg", "ab", t_ref.jd)
             ztfr_mag = sncosmo_model.bandmag("ztfr", "ab", t_ref.jd)
-            color_factor = calc_color_factor(ztfg_mag, ztfr_mag)
+
+            if N_detections.get(1, 0) == 0 or N_detections.get(2, 0) == 0:
+                color_factor = self.default_color_factor
+                scoring_comments.append(f"color set as {color_factor:.1} due to N_det")
+            else:
+                color_factor = calc_color_factor(ztfg_mag, ztfr_mag)
             if not np.isfinite(color_factor):
                 color_factor = self.default_color_factor
-                color_comment = f"infinite color factor set as {color_factor:1f} (g={ztfg_mag}, r={ztfr_mag}"
+                color_comment = f"infinite color factor set as {color_factor:1f} (g={ztfg_mag}, r={ztfr_mag})"
                 scoring_comments.append(color_comment)
             else:
                 scoring_comments.append(
@@ -239,7 +249,9 @@ class supernova_peak_score:
                         raise ValueError(e)
 
                     if all(night_alt < min_alt):
-                        exclude = True  # NOT reject - it might be interesting elsewhere.
+                        exclude = (
+                            True  # NOT reject - it might be interesting elsewhere.
+                        )
                     else:
                         if next_alt < min_alt:
                             exclude = True
@@ -250,13 +262,17 @@ class supernova_peak_score:
                                 night_alt, min_alt=min_alt, norm_alt=45.0
                             )
                             factors["observing_factor"] = observing_factor
-                            scoring_comments.append(f"obeserving factor {observing_factor}")
+                            scoring_comments.append(
+                                f"obeserving factor {observing_factor}"
+                            )
                 else:
                     logger.warning(f"target {target.objectId} has no target_altaz!")
 
         scoring_factors = np.array(list(factors.values()))
         if not all(scoring_factors > 0):
-            neg_factors = "\n".join(f"    {k}={v}" for k, v in factors.items() if not v > 0)
+            neg_factors = "\n".join(
+                f"    {k}={v}" for k, v in factors.items() if not v > 0
+            )
             reject_comments.append(neg_factors)
             logger.warning(f"{target.objectId} has negative factors:\n{neg_factors}")
             reject = True
