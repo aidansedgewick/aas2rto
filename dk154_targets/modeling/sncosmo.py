@@ -197,6 +197,7 @@ class sncosmo_salt:
     def __init__(self, use_emcee=True):
         self.__name__ = self.__class__.__name__
         self.use_emcee = use_emcee
+        logger.info(f"set use_emcee to {self.use_emcee}")
 
     def __call__(self, target: Target):
         if sncosmo is None:

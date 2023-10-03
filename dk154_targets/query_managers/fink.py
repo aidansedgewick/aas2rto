@@ -20,10 +20,12 @@ from astropy.time import Time
 
 try:
     import fink_client
-    from fink_client.avroUtils import write_alert, _get_alert_schema, AlertReader
-    from fink_client.consumer import AlertConsumer
 except ModuleNotFoundError as e:
     fink_client = None
+
+if fink_client is not None:
+    from fink_client.avroUtils import write_alert, _get_alert_schema, AlertReader
+    from fink_client.consumer import AlertConsumer
 
 from dk154_targets import Target, TargetData
 from dk154_targets.utils import calc_file_age
@@ -197,8 +199,9 @@ class FinkQueryManager(BaseQueryManager):
         self.target_lookup = target_lookup
         if fink_client is None:
             raise ValueError(
-                "fink_client module not imported correctly! "
-                "either install with `python3 -m pip install fink_client`, "
+                "fink_client module not imported correctly!\n"
+                "either install with `\033[32;1mpython3 -m pip install fink_client\033[0m` "
+                "(you may also need to install `\033[32;1mfastavro\033[0m`), " 
                 "or switch `use: False` in config."
             )
 
