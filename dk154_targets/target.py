@@ -738,7 +738,7 @@ def default_plot_lightcurve(
             else:
                 ax.plot(tgrid_shift, model_mag, color=band_color)
 
-            if ii == 0 and samples:
+            if ii == 0:
                 l0 = ax.plot(
                     [0, 0], [23, 23], ls="-", color="k", label="median parameters"
                 )

@@ -178,7 +178,7 @@ class TnsQueryManager(BaseQueryManager):
                 unmatched_rows.append(row)
 
         logger.info(f"matched {matched} TNS objects by name")
-        self.tns_results = pd.concat(unmatched_rows)
+        self.tns_results = pd.DataFrame(unmatched_rows)
 
     def match_tns_on_coordinates(self, seplimit=5 * u.arcsec, t_ref=None):
         t_ref = t_ref or Time.now()
@@ -241,7 +241,7 @@ class TnsQueryManager(BaseQueryManager):
         if results_age > self.query_parameters["query_interval"]:
             logger.info("re-query for TNS data")
             new_results = self.perform_query()
-            logger.info("{len(query_results)} TNS entries")
+            logger.info(f"{len(query_results)} TNS entries")
             results = self.concatenate_results(
                 new_results, existing_results_path, t_ref=t_ref
             )
@@ -358,7 +358,7 @@ class TnsQuery:
         if not df_list:
             return pd.DataFrame()  # empty dataframe.
 
-        results_df = pd.DataFrame(df_list, ignore_index=True)
+        results_df = pd.concat(df_list, ignore_index=True)
         return results_df
 
 

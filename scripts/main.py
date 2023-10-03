@@ -9,7 +9,7 @@ from dk154_targets.scoring import (
     example_functions,
     supernova_peak_score,
 )
-from dk154_targets.modeling import empty_modeling, sncosmo_model, sncosmo_model_emcee
+from dk154_targets.modeling import empty_modeling, sncosmo_salt
 
 from dk154_targets import paths
 
@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
     if "supernovae" in config_file.stem:
         scoring_function = supernova_peak_score()  # This is a class - initialise it!
-        modeling_function = sncosmo_model_emcee
+        modeling_function = sncosmo_salt()
     elif "atlas_test" in config_file.stem:
         scoring_function = example_functions.latest_flux_atlas_requirement
         modeling_function = empty_modeling
