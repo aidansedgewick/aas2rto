@@ -203,7 +203,7 @@ class TnsQueryManager(BaseQueryManager):
             return
 
         target_candidate_coords = SkyCoord(target_candidate_coords)
-            
+
         target_match_idx, tns_match_idx, skysep, _ = search_around_sky(
             target_candidate_coords, tns_candidate_coords, seplimit
         )
@@ -214,7 +214,9 @@ class TnsQueryManager(BaseQueryManager):
             logger.warning("TNS row matches multiple targets")
 
         logger.info(f"coordinate match for {len(target_match_idx)} TNS objects")
-        for ii, (idx1, idx2, skysep) in enumerate(zip(target_match_idx, tns_match_idx, skysep)):
+        for ii, (idx1, idx2, skysep) in enumerate(
+            zip(target_match_idx, tns_match_idx, skysep)
+        ):
             objectId = target_candidate_objectIds[idx1]
             target = self.target_lookup[objectId]
 
@@ -229,7 +231,6 @@ class TnsQueryManager(BaseQueryManager):
 
         self.recent_coordinate_searches.update(target_candidate_objectIds)
         # This set is emptied every time TNS-results is read in.
-        
 
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -364,7 +365,7 @@ class TnsQuery:
 if __name__ == "__main__":
     tns_config = {
         "user": "aidan",
-        "uid": 2955,
+        "uid": 1234,
         # password: dk154_targets  # not important?
         "tns_parameters": {
             "classified_sne": "1",
