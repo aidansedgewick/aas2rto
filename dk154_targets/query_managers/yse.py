@@ -67,6 +67,7 @@ def process_yse_lightcurve(input_lightcurve: pd.DataFrame, only_yse_data=True):
     lightcurve.insert(1, "jd", jd_dat)
     if only_yse_data:
         lightcurve.query("instrument=='GPC1'", inplace=True)
+        lightcurve = lightcurve[lightcurve["instrument"].str.startswith("GPC")]
     lightcurve.query("(0<magerr) & (magerr < 1)", inplace=True)
     lightcurve.reset_index(drop=True)
 
@@ -508,6 +509,8 @@ class YseQueryManager(BaseQueryManager):
 
 
 class YseQuery:
+    """See also https://github.com/berres2002/prep"""
+
     base_url = "https://ziggy.ucolick.org/yse/"
 
     required_credential_parameters = ("username", "password")

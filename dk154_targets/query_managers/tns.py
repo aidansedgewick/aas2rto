@@ -79,6 +79,18 @@ allowed_tns_parameters = [
 ]
 
 
+def build_tns_headers(tns_user: str, tns_uid: int):
+    """Returns a dict with the correctly formatted string."""
+
+    marker_dict = dict(tns_id=str(tns_uid), type="user", name=tns_user)
+    marker_str = json.dumps(marker_dict)
+    # marker_str is a literal string:
+    #       '{"tns_id": "1234", "type": "user", "name": "your_name"}'
+
+    tns_marker = f"tns_marker{marker_str}"
+    return {"User-Agent": tns_marker}
+
+
 class TnsQueryManager(BaseQueryManager):
     name = "tns"
 
@@ -108,13 +120,7 @@ class TnsQueryManager(BaseQueryManager):
         tns_user = self.tns_config.get("user")
         tns_uid = self.tns_config.get("uid")
 
-        marker_dict = dict(tns_id=str(tns_uid), type="user", name=tns_user)
-        marker_str = json.dumps(marker_dict)
-        # marker_str is a literal string:
-        #       '{"tns_id": "1234", "type": "user", "name": "your_name"}'
-
-        self.tns_marker = f"tns_marker{marker_str}"
-        self.tns_headers = {"User-Agent": self.tns_marker}
+        self.tns_headers = build_tns_headers(tns_user, tns_uid)
 
         self.query_parameters = self.default_query_parameters.copy()
         query_parameters = self.tns_config.get("query_parameters", {})
@@ -154,7 +160,7 @@ class TnsQueryManager(BaseQueryManager):
         results.drop_duplicates(subset="Name", keep="last", inplace=True)
         return results
 
-    def update_matched_tns_names(self, t_ref=None):
+    def update_matched_tns_names(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
         for objectId, target in self.target_lookup.items():
@@ -162,7 +168,7 @@ class TnsQueryManager(BaseQueryManager):
             if tns_name is not None:
                 self.matched_tns_names[tns_name] = objectId
 
-    def match_tns_on_names(self, t_ref=None):
+    def match_tns_on_names(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
         logger.info("match TNS data by objectId")
 
@@ -180,7 +186,7 @@ class TnsQueryManager(BaseQueryManager):
         logger.info(f"matched {matched} TNS objects by name")
         self.tns_results = pd.DataFrame(unmatched_rows)
 
-    def match_tns_on_coordinates(self, seplimit=5 * u.arcsec, t_ref=None):
+    def match_tns_on_coordinates(self, seplimit=5 * u.arcsec, t_ref: Time = None):
         t_ref = t_ref or Time.now()
         logger.info(f"match TNS data on coords <{seplimit:.1f}")
 
@@ -241,7 +247,7 @@ class TnsQueryManager(BaseQueryManager):
         if results_age > self.query_parameters["query_interval"]:
             logger.info("re-query for TNS data")
             new_results = self.perform_query()
-            logger.info(f"{len(query_results)} TNS entries")
+            logger.info(f"{len(new_results)} TNS entries")
             results = self.concatenate_results(
                 new_results, existing_results_path, t_ref=t_ref
             )
