@@ -120,9 +120,11 @@ def target_from_fink_lightcurve(
     ra = None
     dec = None
     if "ra" in lightcurve.columns:
-        ra = lightcurve["ra"].iloc[-1]
+        ra_vals = lightcurve["ra"].dropna()
+        ra = np.average(ra_vals)
     if "dec" in lightcurve.columns:
-        dec = lightcurve["dec"].iloc[-1]
+        dec_vals = lightcurve["dec"].dropna()
+        dec = np.average(dec_vals)
 
     if (ra is None) or (dec is None):
         raise MissingCoordinateColumnsError(f"missing ra/dec from {lightcurve.columns}")
@@ -201,7 +203,7 @@ class FinkQueryManager(BaseQueryManager):
             raise ValueError(
                 "fink_client module not imported correctly!\n"
                 "either install with `\033[32;1mpython3 -m pip install fink_client\033[0m` "
-                "(you may also need to install `\033[32;1mfastavro\033[0m`), " 
+                "(you may also need to install `\033[32;1mfastavro\033[0m`), "
                 "or switch `use: False` in config."
             )
 

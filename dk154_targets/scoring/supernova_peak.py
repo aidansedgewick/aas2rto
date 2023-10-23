@@ -12,6 +12,7 @@ from astropy.time import Time
 from astroplan import Observer
 
 from dk154_targets import Target
+from dk154_targets.target import DEFAULT_ZTF_BROKER_PRIORITY
 
 logger = getLogger("supernova_peak")
 
@@ -72,16 +73,28 @@ def calc_observatory_factor(alt_grid, min_alt=30.0, norm_alt=45.0):
 
 
 class supernova_peak_score:
-    def __init__(self):
+    def __init__(
+        self,
+        faint_limit: float = 19.0,
+        min_timespan: float = 1.0,
+        max_timespan: float = 20.0,
+        min_rising_fraction: float = 0.4,
+        min_altitude: float = 30.0,
+        min_ztf_detections: int = 3,
+        default_color_factor: float = 0.1,
+        broker_priority: tuple = None,
+        **kwargs,
+    ):
         self.__name__ = self.__class__.__name__
-        self.source_priority = ("fink", "lasair", "alerce")
-        self.mag_lim = 19.0
-        self.min_timespan = 1.0
-        self.max_timespan = 20.0
-        self.min_rising_fraction = 0.4
-        self.min_altitude = 30.0
-        self.default_color_factor = 0.1
-        self.min_ztf_detections = 3
+
+        self.faint_limit = faint_limit
+        self.min_timespan = min_timespan
+        self.max_timespan = max_timespan
+        self.min_rising_fraction = min_rising_fraction
+        self.min_altitude = min_altitude
+        self.default_color_factor = default_color_factor
+        self.min_ztf_detections = min_ztf_detections
+        self.broker_priority = broker_priority or DEFAULT_ZTF_BROKER_PRIORITY
 
     def __call__(
         self, target: Target, observatory: Observer, t_ref: Time
@@ -96,7 +109,7 @@ class supernova_peak_score:
         exclude = False  # If true, don't reject, but not interesting right now.
 
         ztf_source = None
-        for source in self.source_priority:
+        for source in self.broker_priority:
             potential_ztf_source = getattr(target, f"{source}_data", None)
             if potential_ztf_source is None:
                 continue
@@ -116,7 +129,7 @@ class supernova_peak_score:
         last_band = ztf_detections["fid"].values[-1]
         mag_factor = calc_mag_factor(last_mag)
         scoring_comments.append(f"mag_factor={mag_factor:.2f} from mag={last_mag:.1f}")
-        if last_mag > self.mag_lim:
+        if last_mag > self.faint_limit:
             exclude = True
             scoring_comments.append(
                 f"latest mag {last_mag:.1f} too faint (>{self.mag_lim}): exclude from ranking"

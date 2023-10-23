@@ -715,7 +715,7 @@ class TargetSelector:
             logger.info("file too small - don't attempt read...")
             return
         existing_targets_df = pd.read_csv(self.existing_targets_file)
-        recovered_targets = 0
+        recovered_targets = []
         for ii, row in existing_targets_df.iterrows():
             objectId = row.objectId
             if objectId in self.target_lookup:
@@ -723,9 +723,9 @@ class TargetSelector:
                 continue
             target = Target(objectId, ra=row.ra, dec=row.dec, base_score=row.base_score)
             self.add_target(target)
-            recovered_targets = recovered_targets + 1
+            recovered_targets.append(objectId)
         logger.info(f"recovered {recovered_targets} existing targets")
-        return
+        return recovered_targets
 
     def perform_iteration(
         self,
@@ -840,6 +840,7 @@ class TargetSelector:
 
         while True:
             t_ref = Time.now()
+
             try:
                 self.perform_iteration(
                     scoring_function=scoring_function,
@@ -854,8 +855,8 @@ class TargetSelector:
                 self.send_crash_reports(text=crash_text)
                 sys.exit()
 
-            # if iterations > 1:
-            self.perform_messaging_tasks()
+            if iterations > 1:
+                self.perform_messaging_tasks()
 
             # self.reset_target_figures() # NO - lazy plotting instead.
             self.reset_updated_targets()

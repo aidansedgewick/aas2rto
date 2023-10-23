@@ -70,6 +70,7 @@ def build_astropy_lightcurve(detections: pd.DataFrame) -> Table:
     lc = Table(data)
     lc["flux"] = 10 ** (0.4 * (8.9 - lc["mag"]))
     lc["fluxerr"] = lc["flux"] * lc["magerr"] * np.log(10.0) / 2.5
+    lc["snr"] = (np.log(10.0) / 2.5) / lc["magerr"]
     lc["zp"] = np.full(len(lc), 8.9)
     lc["zpsys"] = np.full(len(lc), "ab")
     return lc

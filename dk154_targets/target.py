@@ -374,7 +374,7 @@ class Target:
 
         if lightcurve_compiler is None:
             logger.warning("no light curve compiled.")
-            return
+            raise ValueError("lightcurve compiler cannot be None.")
 
         compiled_lightcurve = lightcurve_compiler(self)
         if compiled_lightcurve is not None:
@@ -408,9 +408,6 @@ class Target:
 
         """
         t_ref = t_ref or Time.now()
-
-        if lazy and not self.updated:
-            return
 
         models = {}
         models_tref = {}
