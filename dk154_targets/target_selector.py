@@ -855,7 +855,7 @@ class TargetSelector:
                 self.send_crash_reports(text=crash_text)
                 sys.exit()
 
-            if iterations > 1:
+            if N_iterations > 1:
                 self.perform_messaging_tasks()
 
             # self.reset_target_figures() # NO - lazy plotting instead.
