@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from astropy.time import Time
+
 try:
     import telegram
 except ModuleNotFoundError as e:
@@ -100,10 +101,10 @@ class TelegramMessenger:
             except Exception as e:
                 new_users = []
             users = list(set(self.users + new_users))
-        elif users in ["sudoers", "sudo"]:
+        if users in ["sudoers", "sudo"]:
             users = self.sudoers
         exceptions = []
-        for user in self.users:
+        for user in users:
             try:
                 self.send_to_user(
                     user, texts=texts, img_paths=img_paths, caption=caption
@@ -124,7 +125,6 @@ class TelegramMessenger:
                     )
         return None
 
-    def send_crash_report(self, texts: List[str] = None, t_ref: Time = None):
-        self.message_users(users="sudoers", texts=texts)
-
-
+    # def send_crash_report(self, info: str = None, t_ref: Time = None):
+    #    tr = traceback.format_exc()
+    #    self.message_users(users="sudoers", texts=[info, tr])

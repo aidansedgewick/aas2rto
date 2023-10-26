@@ -672,7 +672,7 @@ class TargetSelector:
         if len(sent) > 0:
             logger.info(f"sent messages for {len(sent)} targets")
 
-    def send_crash_reports(self, text=None):
+    def send_crash_reports(self, text: str = None):
         if text is None:
             text = []
         if isinstance(text, str):
@@ -680,7 +680,7 @@ class TargetSelector:
         tr = text + [traceback.format_exc()]
         logger.error("\n" + "\n".join(tr))
         if self.telegram_messenger is not None:
-            self.telegram_messenger.send_crash_report(tr)
+            self.telegram_messenger.message_users(users="sudoers", texts=tr)
 
     def reset_target_figures(self):
         for objectId, target in self.target_lookup.items():
@@ -836,7 +836,7 @@ class TargetSelector:
                 f"modeling_function: {modeling_function.__name__}\n"
                 f"scoring_function: {scoring_function.__name__}"
             )
-            self.telegram_messenger.message_users(users="sudoers", texts=msg)
+            self.telegram_messenger.message_users(texts=msg)
 
         while True:
             t_ref = Time.now()

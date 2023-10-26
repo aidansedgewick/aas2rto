@@ -132,7 +132,7 @@ class supernova_peak_score:
         if last_mag > self.faint_limit:
             exclude = True
             scoring_comments.append(
-                f"latest mag {last_mag:.1f} too faint (>{self.mag_lim}): exclude from ranking"
+                f"latest mag {last_mag:.1f} too faint (>{self.faint_limit}): exclude from ranking"
             )
 
         ###===== Is the target very old? ======###

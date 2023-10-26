@@ -59,5 +59,5 @@ if __name__ == "__main__":
     except Exception as e:
         if selector.telegram_messenger is not None:
             selector.telegram_messenger.send_crash_report(
-                texts="CRASH!\nexception caught in main try/except"
+                where="CRASH!\nexception caught in main try/except"
             )
