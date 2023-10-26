@@ -19,7 +19,7 @@ logger = getLogger(__name__.split(".")[-1])
 class TelegramMessenger:
     http_url = "https://api.telegram.org"
 
-    expected_kwargs = ("token", "users", "sudoers", "users_file")
+    expected_kwargs = ("use", "token", "users", "sudoers", "users_file")
 
     def __init__(self, telegram_config: dict):
         self.telegram_config = telegram_config
@@ -28,7 +28,7 @@ class TelegramMessenger:
         sudoers = self.telegram_config.get("sudoers", {})
         users_file = self.telegram_config.get("users_file", None)
 
-        for key, val in self.telegram_config.keys():
+        for key, val in self.telegram_config.items():
             if key not in self.expected_kwargs:
                 logger.warning(f"unexpeted telegram_config kwarg: {key}")
 
@@ -36,7 +36,7 @@ class TelegramMessenger:
             logger.warning("in telegram config 'users', use a dict to give names!")
             users = {u: "unknown_user" for u in users}
         self.users = users
-        if isinstance(users, list):
+        if isinstance(sudoers, list):
             logger.warning("in telegram config 'sudoers', use a dict to give names!")
             sudoers = {u: self.users.get(u, "unknown_sudoer") for u in sudoers}
         self.sudoers = sudoers
@@ -68,7 +68,7 @@ class TelegramMessenger:
                 with open(self.users_file, "r") as f:
                     new_users = yaml.load(f, loader=yaml.FullLoader)
                 if isinstance(new_users, list):
-                    new_users = {u: "unknown_user" for u in self.users}
+                    new_users = {u: "unknown_user" for u in new_users}
                 return new_users
         return {}
 
@@ -123,24 +123,25 @@ class TelegramMessenger:
         if users in ["sudoers", "sudo"]:
             users = self.sudoers
         exceptions = []
-        for user, user_name in users:
+        for user, user_label in users.items():
             try:
                 self.send_to_user(
                     user, texts=texts, img_paths=img_paths, caption=caption
                 )
             except Exception as e:
                 tr = traceback.format_exc()
-                exceptions.append(f"for user {user} ({user_name}):\n{e}\n\n")
+                exceptions.append(f"for user {user} ({user_label}):\n{e}\n\n")
         if len(exceptions) > 0:
             execption_str = "\n\nand\n\n".join(e for e in exceptions)
             msg = "During message_users:\n\n" + execption_str
-            for sudoer in self.sudoers:
+            for sudoer, user_label in self.sudoers.items():
                 try:
                     self.send_to_user(sudoer, texts=msg)
                 except Exception as e:
                     tr = traceback.format_exc()
                     logger.warn(
-                        f"Exception while sending error report to telegram sudoers! {e}\n{tr}"
+                        f"Exception while sending error report to telegram sudoer"
+                        f"{sudoer} ({user_label})! {e}\n{tr}"
                     )
         return None
 
