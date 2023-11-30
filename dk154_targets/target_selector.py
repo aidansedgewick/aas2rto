@@ -641,13 +641,20 @@ class TargetSelector:
         t_ref = t_ref or Time.now()
 
         skipped = []
+        no_updates = []
         sent = []
+
+        logger.info("perform messaging tasks")
         for objectId, target in self.target_lookup.items():
+            logger.info(f"send messages for {objectId}")
             if len(target.update_messages) == 0:
+                logger.info(f"no messages")
+                no_updates.append(objectId)
                 continue
             last_score = target.get_last_score()
             if last_score < self.minimum_score:
                 skipped.append(objectId)
+                logger.info(f"last score: {last_score}")
                 continue
 
             intro = f"Updates for {objectId}"
@@ -667,6 +674,8 @@ class TargetSelector:
             sent.append(objectId)
             time.sleep(5.0)
 
+        if len(no_updates) > 0:
+            logger.info(f"no updates to send for {len(no_updates)} targets")
         if len(skipped) > 0:
             logger.info(f"skipped messages for {len(skipped)} targets")
         if len(sent) > 0:
@@ -855,7 +864,7 @@ class TargetSelector:
                 self.send_crash_reports(text=crash_text)
                 sys.exit()
 
-            if N_iterations > 1:
+            if N_iterations > 0:
                 self.perform_messaging_tasks()
 
             # self.reset_target_figures() # NO - lazy plotting instead.

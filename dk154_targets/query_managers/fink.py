@@ -167,12 +167,12 @@ def target_from_fink_query_row(objectId: str, data: pd.Series):
 class FinkQueryManager(BaseQueryManager):
     name = "fink"
     default_query_parameters = {
-        "update": 1.0,
-        "interval": 2.0,
-        "query_timespan": 0.1,
-        "lookback_time": 20.0,
+        "update": 1.0, # How often to query for new data [day]
+        "interval": 2.0, # How often to update existing LCs.
+        "query_timespan": 0.1, # Time between query startdate and query stopdate [day]
+        "lookback_time": 20.0, # How far back in time to check for alerts [day]
         "max_failed_queries": 10,
-        "max_total_query_time": 300,  # total time to spend in each stage seconds
+        "max_total_query_time": 300,  # total time to spend in each query stage [sec]
     }
     default_kafka_parameters = {"n_alerts": 10, "timeout": 10.0}
     required_kafka_parameters = ("username", "group_id", "bootstrap.servers", "topics")
@@ -204,7 +204,7 @@ class FinkQueryManager(BaseQueryManager):
                 "fink_client module not imported correctly!\n"
                 "either install with `\033[32;1mpython3 -m pip install fink_client\033[0m` "
                 "(you may also need to install `\033[32;1mfastavro\033[0m`), "
-                "or switch `use: False` in config."
+                "or switch `use: False` in config file."
             )
 
         self.kafka_config = self.get_kafka_parameters()

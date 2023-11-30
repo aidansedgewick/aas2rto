@@ -227,6 +227,14 @@ class supernova_peak_score:
 
             factors["color_factor"] = color_factor
 
+            ###===== chisq
+
+            model_result = getattr(model, "result", {})
+            chisq = model_result.get("chisq", np.nan)
+            ndof = model_result.get("ndof", np.nan)
+            chisq_nu = chisq / ndof
+            scoring_comments.append(f"model chisq={chisq:.3f} with ndof={ndof}")
+
         if observatory is not None:
             min_alt = self.min_altitude
 

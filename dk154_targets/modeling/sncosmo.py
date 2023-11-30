@@ -170,7 +170,7 @@ class sncosmo_salt:
             fitted_model.result = result
 
         except Exception as e:
-            logger.warning(f"{target.objectId} sncosmo fitting failed")
+            logger.warning(f"{target.objectId} sncosmo fit failed")
             tr = traceback.format_exc()
             print(tr)
             fitted_model = None
