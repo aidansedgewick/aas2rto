@@ -649,6 +649,9 @@ class TargetSelector:
             if last_score < self.minimum_score:
                 skipped.append(objectId)
                 continue
+            if not target.updated:
+                skipped.append(objectId)
+                continue
 
             intro = f"Updates for {objectId}"
             messages = [target.get_info_string()] + target.update_messages
@@ -806,7 +809,7 @@ class TargetSelector:
         modeling_function: List[Callable] = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
-        existing_targets=True,
+        recover_targets=True,
         iterations=None,
     ):
         t_ref = Time.now()
@@ -814,12 +817,10 @@ class TargetSelector:
         N_iterations = 0
         sleep_time = self.selector_parameters.get("sleep_time", self.default_sleep_time)
 
-        if existing_targets is True or existing_targets == "read":
-            self.recover_existing_targets()
-        if existing_targets == "clear":
-            logger.warning("clear existing targets...")
-            if self.existing_targets_file.exists():
-                os.remove(self.existing_targets_file)
+        if recover_targets:
+            recovered_targets = self.recover_existing_targets()
+        else:
+            recovered_targets = []
 
         if lightcurve_compiler is None:
             lightcurve_compiler = DefaultLightcurveCompiler(**self.compiler_config)
@@ -855,14 +856,18 @@ class TargetSelector:
                 self.send_crash_reports(text=crash_text)
                 sys.exit()
 
-            if N_iterations > 1:
-                self.perform_messaging_tasks()
+            if N_iterations == 0 and recover_targets:
+                for objectId in recovered_targets:
+                    # Need to do this after iteration, otherwise models set to updated.
+                    target = self.target_lookup[objectId]
+                    target.updated = False
+
+            self.perform_messaging_tasks()
 
             # self.reset_target_figures() # NO - lazy plotting instead.
             self.reset_updated_targets()
 
-            if existing_targets:
-                self.write_existing_target_list()
+            self.write_existing_target_list()
 
             N_iterations = N_iterations + 1
             if iterations is not None:

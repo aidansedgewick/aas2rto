@@ -132,7 +132,7 @@ class TelegramMessenger:
                 tr = traceback.format_exc()
                 exceptions.append(f"for user {user} ({user_label}):\n{e}\n\n")
         if len(exceptions) > 0:
-            execption_str = "\n\nand\n\n".join(e for e in exceptions)
+            execption_str = "\nand\n".join(e for e in exceptions)
             msg = "During message_users:\n\n" + execption_str
             for sudoer, user_label in self.sudoers.items():
                 try:
