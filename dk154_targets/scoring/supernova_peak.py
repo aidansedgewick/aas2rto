@@ -72,7 +72,7 @@ def calc_observatory_factor(alt_grid, min_alt=30.0, norm_alt=45.0):
     return 1.0 / (integral / norm)
 
 
-class supernova_peak_score:
+class SupernovaPeakScore:
     def __init__(
         self,
         faint_limit: float = 19.0,
@@ -85,7 +85,7 @@ class supernova_peak_score:
         broker_priority: tuple = None,
         **kwargs,
     ):
-        self.__name__ = self.__class__.__name__
+        self.__name__ = "supernova_peak_score" #self.__class__.__name__
 
         self.faint_limit = faint_limit
         self.min_timespan = min_timespan
@@ -119,7 +119,7 @@ class supernova_peak_score:
             break
 
         if ztf_source is None:
-            scoring_comments.append(f"no ztf_source data in any of {source_priority}")
+            scoring_comments.append(f"no ztf_source data in any of {self.broker_priority}")
             return -1.0, scoring_comments, reject_comments
 
         ztf_detections = ztf_source.detections
@@ -128,12 +128,13 @@ class supernova_peak_score:
         last_mag = ztf_detections["magpsf"].values[-1]
         last_band = ztf_detections["fid"].values[-1]
         mag_factor = calc_mag_factor(last_mag)
-        scoring_comments.append(f"mag_factor={mag_factor:.2f} from mag={last_mag:.1f}")
+        scoring_comments.append(f"mag_factor={mag_factor:.2f} from mag={last_mag:.2f}")
         if last_mag > self.faint_limit:
             exclude = True
             scoring_comments.append(
                 f"latest mag {last_mag:.1f} too faint (>{self.faint_limit}): exclude from ranking"
             )
+        factors["mag"] = mag_factor
 
         ###===== Is the target very old? ======###
         timespan = t_ref.jd - ztf_detections["jd"].min()
@@ -186,6 +187,7 @@ class supernova_peak_score:
         model = target.models.get("sncosmo_salt", None)
         sncosmo_model = copy.deepcopy(model)
         if sncosmo_model is not None:
+            # Get "result" if it exists, else empty dict. Then ask for "samples", else get None.
             samples = getattr(model, "result", {}).get("samples", None)
             if samples is not None:
                 vparam_names = model.result.get("vparam_names")
@@ -197,6 +199,8 @@ class supernova_peak_score:
             ###===== Time from peak?
             peak_dt = t_ref.jd - sncosmo_model["t0"]
             interest_factor = peak_only_interest_function(peak_dt)
+            if not np.isfinite(interest_factor):
+                print(target.objectId, peak_dt, t_ref.jd, sncosmo_model["t0"])
             factors["interest_factor"] = interest_factor
             interest_comment = (
                 f"interest {interest_factor:.2f} from peak_dt={peak_dt:.2f}d"
@@ -224,16 +228,18 @@ class supernova_peak_score:
                 scoring_comments.append(
                     f"color factor={color_factor:.2f} from model g-r={ztfg_mag-ztfr_mag:.2f}"
                 )
-
             factors["color_factor"] = color_factor
 
             ###===== chisq
-
             model_result = getattr(model, "result", {})
             chisq = model_result.get("chisq", np.nan)
             ndof = model_result.get("ndof", np.nan)
-            chisq_nu = chisq / ndof
-            scoring_comments.append(f"model chisq={chisq:.3f} with ndof={ndof}")
+            if (not np.isfinite(chisq)) or (not np.isfinite(ndof)):
+                scoring_comments.append(f"chisq={chisq:.2f} and ndof={ndof}")                
+            else:
+                chisq_nu = chisq / ndof                
+                scoring_comments.append(f"model chisq={chisq:.3f} with ndof={ndof}")
+                # TODO how to use chisq_nu properly?
 
         if observatory is not None:
             min_alt = self.min_altitude
@@ -312,3 +318,4 @@ class supernova_peak_score:
             logger.debug(f"{target.objectId}")
             final_score = -np.inf
         return final_score, scoring_comments, reject_comments
+

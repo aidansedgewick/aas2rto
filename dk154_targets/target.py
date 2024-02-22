@@ -23,6 +23,8 @@ from astropy.visualization import ZScaleInterval
 from astroplan import FixedTarget, Observer
 from astroplan.plots import plot_altitude
 
+from dk154_targets.utils import get_observatory_name
+
 # try:
 #    import pygtc
 # except ModuleNotFoundError as e:
@@ -30,7 +32,7 @@ from astroplan.plots import plot_altitude
 try:
     import corner
 except ModuleNotFoundError as e:
-    print("\033[31;1mNo module corner\033[0m")
+    #print("\033[31;1mNo module corner\033[0m")
     corner = None
 
 logger = getLogger(__name__.split(".")[-1])
@@ -75,6 +77,7 @@ class TargetData:
         self, lightcurve: pd.DataFrame, tag_col="tag", include_badqual=True
     ):
         lightcurve = lightcurve.copy()
+        t1 = time.perf_counter()
         if ("jd" not in lightcurve.columns) and ("mjd" not in lightcurve.columns):
             raise ValueError("lightcurve should have at least 'jd' or 'mjd'")
         if ("jd" in lightcurve.columns) and ("mjd" not in lightcurve.columns):
@@ -86,22 +89,28 @@ class TargetData:
             mjd_loc = lightcurve.columns.get_loc("mjd")
             lightcurve.insert(mjd_loc, "jd", jd_dat)
 
+        #print(f"time to mess with columns", time.perf_counter()-t1)
+
+        t1 = time.perf_counter()
         lightcurve.sort_values("jd", inplace=True)
         self.lightcurve = lightcurve
+        #print(f"time to sort", time.perf_counter()-t1)
 
+        t1 = time.perf_counter()
         if include_badqual:
-            det_query = " or ".join(
-                f"tag=='{x}'" for x in self.valid_tags + self.badqual_tags
-            )
+            detection_tags = self.valid_tags + self.badqual_tags
         else:
-            det_query = " or ".join(f"tag=='{x}'" for x in self.valid_tags)
-        nondet_query = " or ".join(f"tag=='{x}'" for x in self.nondet_tags)
+            detection_tags = self.valid_tags
+        nondet_tags = self.nondet_tags
         if tag_col in self.lightcurve.columns:
-            self.detections = self.lightcurve.query(det_query)
-            self.non_detections = self.lightcurve.query(nondet_query)
+            self.detections = self.lightcurve[ lightcurve[tag_col].isin(detection_tags) ]
+            self.non_detections = self.lightcurve[ lightcurve[tag_col].isin(nondet_tags) ]        
+            assert len(self.detections) + len(self.non_detections) == len(self.lightcurve)
         else:
-            self.detections = self.lightcurve
+            self.detections = self.lightcurve.copy()
             self.non_detections = None
+                   
+        #print(f"do querying", time.perf_counter()-t1)
         return
 
     def empty_cutouts(self) -> Dict[str, np.ndarray]:
@@ -156,7 +165,7 @@ class TargetData:
     def integrate_equality(
         self, updates: pd.DataFrame, column, verify_integrity=True, nan_values=(0,)
     ):
-        if self.lightcurve is None:
+        if self.lightcurve is None or self.lightcurve.empty:
             return updates
         updated_lightcurve = pd.concat([self.lightcurve, updates])
 
@@ -186,6 +195,7 @@ class Target:
         objectId: str,
         ra: float,
         dec: float,
+        data: Dict[str, TargetData] = None,
         alerce_data: TargetData = None,
         antares_data: TargetData = None,
         atlas_data: TargetData = None,
@@ -207,6 +217,7 @@ class Target:
         self.compiled_lightcurve = None
 
         # Target data
+        self.data = data or {}
         self.alerce_data = alerce_data or TargetData()
         self.antares_data = antares_data or TargetData()
         self.atlas_data = atlas_data or TargetData()
@@ -279,6 +290,7 @@ class Target:
         """
 
         t_ref = t_ref or Time.now()
+        
         obs_name = getattr(observatory, "name", "no_observatory")
         if obs_name == "no_observatory":
             assert observatory is None
@@ -307,26 +319,36 @@ class Target:
 
         self.score_comments[obs_name] = score_comments
         self.reject_comments[obs_name] = reject_comments
-
+        self.update_score_history(score_value, observatory, t_ref=t_ref)
+        
+        return score_value
+        
+    def update_score_history(self, score_value: float, observatory: Observer, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+        
+        obs_name = get_observatory_name(observatory)
+        
         if obs_name not in self.score_history:
+            # Make sure we can append the score
             self.score_history[obs_name] = []
-
+            
         score_tuple = (score_value, t_ref)
         self.score_history[obs_name].append(score_tuple)
-        return score_value
+        return       
+            
 
     def check_night_relevance(self, t_ref: Time):
         pass
         # TODO: implement! check that the self.observatory_tonight() are relevant...
 
-    def get_last_score(self, obs_name: str = None, return_time=False):
+    def get_last_score(self, observatory: str = None, return_time=False):
         """
         Provide a string (observatory name) and return.
 
         Parameters
         ----------
-        obs_name: str [optional]
-            the name of an observatory that the system knows about
+        observatory: Observer | None | str [optional]
+            an observatory that the system knows about.
             if not provided defaults to `no_observatory`.
         return_time: bool
             optional, defaults to `False`. If `False` return only the score
@@ -335,15 +357,7 @@ class Target:
             the t_ref when the score was computed.
         """
 
-        if obs_name is None:
-            obs_name = "no_observatory"
-        if isinstance(obs_name, Observer):
-            obs_name = obs_name.name
-            msg = (
-                f"you should provide a string observatory name (eg. {obs_name}), "
-                "not the `astroplan.Observer`"
-            )
-            warnings.warn(msg, Warning)
+        obs_name = get_observatory_name(observatory) # Returns "no_observatory" if None
 
         # obs_score_history = self.score_history.get(obs_name, [])
         # if len(obs_score_history) == 0:
@@ -351,8 +365,8 @@ class Target:
         # else:
         #    result = obs_score_history[-1]
 
-        obs_history = self.score_history.get(obs_name, [None])
-        obs_history = obs_history or [None]
+        obs_history = self.score_history.get(obs_name, [None]) 
+        obs_history = obs_history or [None] # In case obs_name is `None` not in a list.
         result = obs_history[-1] or (None, None)
 
         if return_time:
@@ -368,6 +382,7 @@ class Target:
         broker_priority: list = None,
     ):
         t_ref = t_ref or Time.now()
+        
         if lazy and not self.updated and self.compiled_lightcurve is not None:
             logger.debug(f"{self.objectId}: skip compile, not updated and lazy=True")
             return
@@ -378,8 +393,12 @@ class Target:
 
         compiled_lightcurve = lightcurve_compiler(self)
         if compiled_lightcurve is not None:
+            t1 = time.perf_counter()
             compiled_lightcurve.sort_values("jd", inplace=True)
+            #print(f"sort compiled lc", time.perf_counter() - t1)
+            t1 = time.perf_counter()
             compiled_lightcurve.query(f"jd < @t_ref.jd", inplace=True)
+            #print(f"query compiled lc", time.perf_counter() - t1)
         self.compiled_lightcurve = compiled_lightcurve
 
     def build_model(self, modeling_function: Callable, t_ref: Time = None, lazy=True):
@@ -544,7 +563,7 @@ class Target:
             lines.append(f"    {comm}")
 
         for obs_name, comments in self.score_comments.items():
-            if obs_name == "no_observatory":
+            if obs_name == "no_observatory": # We've just done this.
                 continue
             if comments is None:
                 continue
@@ -832,10 +851,13 @@ def default_plot_lightcurve(
 
     # samples = getattr(model, "result", {}).get("samples", None)
     # vparam_names = getattr(model, "result", {}).get("vparam_names", None)
-    # if corner is not None and samples is not None:
-    #    gs2 = fig.add_gridspec(5, 2)
-    #    subfig = fig.add_subfigure(gs2[3:,1:])
-    #    corner.corner(data=samples, fig=subfig, labels=vparam_names)
+    # if samples is not None:
+    #     if corner is not None:
+    #         gs2 = fig.add_gridspec(5, 2)
+    #         subfig = fig.add_subfigure(gs2[3:,1:])
+    #         corner.corner(data=samples, fig=subfig, labels=vparam_names)
+    #     else:
+    #         logger.warning("module 'corner' was not impoerted correctly...")
 
     return fig
 

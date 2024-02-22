@@ -72,7 +72,7 @@ notes about score:
     if `score` is -np.inf: the target will be rejected, and removed from the program.
 
 
-it should look something like:
+An example is given here:
 
 ```
 def my_scoring_function(target, observatory, t_ref):
@@ -157,7 +157,8 @@ class MyScoringFunction:
     def __init__(self, mag_lim=18.5):
         self.__name__ = "my_scoring_function"  # Definitely remember to do this!!
         self.mag_lim = mag_lim
-        
+        __name__ = "my_scoring_function"        
+
     def __call__(self, target: Target, observatory: Observer, t_ref: Time):
         exclude = False
         last_mag = target.fink_data.detections["magpsf"].values[-1]

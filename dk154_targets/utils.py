@@ -1,11 +1,14 @@
 import shutil
 from logging import getLogger
+from typing import Union
 
 from pathlib import Path
 
 import numpy as np
 
 from astropy.time import Time
+
+from astroplan import Observer
 
 logger = getLogger("utils")
 
@@ -35,6 +38,15 @@ def print_header(s):
     fmt_s = "\n###" + "=" * pad + f" {s} " + "=" * pad + "###"
     print(fmt_s)
 
+
+def get_observatory_name(observatory: Union[Observer, None, str]):
+    
+    if isinstance(observatory, str):
+        return observatory
+    if observatory is None:
+        return "no_observatory"
+    return observatory.name
+    
 
 def init_sfd_dustmaps():
     try:

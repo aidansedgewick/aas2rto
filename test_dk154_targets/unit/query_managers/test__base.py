@@ -1,123 +1,143 @@
-import os
+from dk154_targets.query_managers.base import BaseQueryManager
+
 import pytest
 
-from dk154_targets.query_managers import BaseQueryManager
-
-from dk154_targets import paths
-
-
-class ExampleQueryManager(BaseQueryManager):
-    name = "example_qm"
-
+class NewQueryManager(BaseQueryManager):    
+    name = "new_qm"
+    
+    def __init__(
+        self, config, target_lookup, data_path=None, parent_path=None, create_paths=True
+    ):
+        self.config = config
+        self.target_lookup = target_lookup
+        
+        self.process_paths(
+            data_path=data_path, parent_path=parent_path, create_paths=create_paths
+        )
+    
     def perform_all_tasks(self):
-        pass
+        test_file = self.data_path / "test_file.csv"
+        with open(test_file, "w+") as f:
+            f.write("some_data")
+            
+class MissingNameQueryManager(BaseQueryManager):
+    
+    def __init__(
+        self, config, target_lookup, data_path=None, parent_path=None, create_paths=True       
+    ):
+        self.config = config
+        self.target_lookup=target_lookup
+        
+        self.process_paths(data_path=data_path, parent_path=parent_path, create_paths=True)
+        
+    def perform_all_tasks(self):
+        return
+        
+class MissingTasksQueryManager(BaseQueryManager):
+
+    name = "missing_tasks"
+    
+    def __init__(
+        self, config, target_lookup, data_path=None, parent_path=None, create_paths=True       
+    ):
+        self.config = config
+        self.target_lookup=target_lookup
+        
+        self.process_paths(data_path=data_path, parent_path=parent_path, create_paths=True)
 
 
-class Test__BaseQueryManager:
-    @classmethod
-    def _clear_test_directories(cls, name):
-        exp_data_path = paths.test_data_path / name
-        exp_lightcurves_path = paths.test_data_path / f"{name}/lightcurves"
-        exp_alerts_path = paths.test_data_path / f"{name}/alerts"
-        exp_query_results_path = paths.test_data_path / f"{name}/query_results"
-        exp_probabilities_path = paths.test_data_path / f"{name}/probabilities"
-        exp_parameters_path = paths.test_data_path / f"{name}/parameters"
-        exp_magstats_path = paths.test_data_path / f"{name}/magstats"
-        exp_cutouts_path = paths.test_data_path / f"{name}/cutouts"
+@pytest.fixture
+def config():
+    return {}
 
-        for path in [
-            exp_lightcurves_path,
-            exp_alerts_path,
-            exp_query_results_path,
-            exp_probabilities_path,
-            exp_parameters_path,
-            exp_magstats_path,
-            exp_cutouts_path,
-        ]:
-            if path.exists():
-                for filepath in path.glob("*.csv"):
-                    os.remove(filepath)
-                for filepath in path.glob("*.json"):
-                    os.remove(filepath)
-                path.rmdir()
-        if exp_data_path.exists():
-            exp_data_path.rmdir()
+@pytest.fixture
+def target_lookup():
+    return {}
 
-    def test__inherit(self):
-        qm = ExampleQueryManager()
+class Test__ValidSubclassQueryManager:
 
-        class FailingTestQueryManager(BaseQueryManager):
-            pass  # no name attribute.
-
-        with pytest.raises(TypeError):
-            qm = FailingTestQueryManager()
-
-    def test__process_paths(self):
-        self._clear_test_directories("example_qm")
-
-        parent_data_path = paths.test_data_path / "example_qm"
-        assert not parent_data_path.exists()
-
-        qm = ExampleQueryManager()
-        qm.process_paths(data_path=paths.test_data_path, create_paths=True)
-
-        exp_data_path = paths.test_data_path / "example_qm"
-        exp_lightcurves_path = paths.test_data_path / "example_qm/lightcurves"
-        exp_alerts_path = paths.test_data_path / "example_qm/alerts"
-        exp_query_results_path = paths.test_data_path / "example_qm/query_results"
-        exp_probabilities_path = paths.test_data_path / "example_qm/probabilities"
-        exp_magstats_path = paths.test_data_path / "example_qm/magstats"
-        exp_cutouts_path = paths.test_data_path / "example_qm/cutouts"
-        assert exp_data_path.exists()
-        assert exp_lightcurves_path.exists()
-        assert exp_alerts_path.exists()
-        assert exp_query_results_path.exists()
-        assert exp_probabilities_path.exists()
-        assert exp_magstats_path.exists()
-        assert exp_cutouts_path.exists()
-
-        self._clear_test_directories("example_qm")
-        assert not exp_data_path.exists()
-        assert not exp_lightcurves_path.exists()
-        assert not exp_alerts_path.exists()
-        assert not exp_query_results_path.exists()
-        assert not exp_probabilities_path.exists()
-        assert not exp_magstats_path.exists()
-        assert not exp_cutouts_path.exists()
-
-    def test__get_files(self):
-        qm = ExampleQueryManager()
-        qm.process_paths(data_path=paths.test_data_path, create_paths=False)
-
-        exp_query_results_file = (
-            paths.test_data_path / "example_qm/query_results/test_query.csv"
-        )
+    def test__parent_path(self, config, target_lookup, tmp_path):
+                
+        qm = NewQueryManager(config, target_lookup, parent_path=tmp_path)
+        qm.perform_all_tasks()
+        
+        assert qm.parent_path == tmp_path
+        assert qm.data_path == tmp_path / "new_qm"
+                
+        assert qm.data_path.stem == "new_qm"
+        assert qm.data_path.exists()
+        
+        assert qm.lightcurves_path == tmp_path / "new_qm/lightcurves"
+        assert qm.lightcurves_path.exists()
+                
+        expected_test_file = tmp_path / "new_qm/test_file.csv"
+        assert expected_test_file.exists()
+        with open(expected_test_file) as f:
+            data = f.readline()
+        assert data == "some_data"
+        
+    def test__data_path(self, config, target_lookup, tmp_path):
+        data_path = tmp_path / "data_goes_here"
+        qm = NewQueryManager(config, target_lookup, data_path=data_path)
+        assert qm.data_path == tmp_path / "data_goes_here"
+        assert qm.parent_path == tmp_path       
+        
+        
+    def test__create_paths_false(self, config, target_lookup, tmp_path):
+        qm = NewQueryManager(config, target_lookup, parent_path=tmp_path, create_paths=False)
+        assert qm.data_path.stem == "new_qm"
+        assert qm.lightcurves_path == tmp_path / "new_qm/lightcurves"
+        assert not qm.lightcurves_path.exists()
+        
+        
+    def test__file_convenience_functions(self, config, target_lookup, tmp_path):
+        qm = NewQueryManager(config, target_lookup, parent_path=tmp_path)
+        
+        exp_query_results_file = tmp_path / "new_qm/query_results/test_query.csv"
         assert qm.get_query_results_file("test_query") == exp_query_results_file
-
-        objectId = "ZTF23testobj"
-        candid = 23000_10000_20000_1234
-
-        exp_lc_file = paths.test_data_path / "example_qm/lightcurves/ZTF23testobj.csv"
-        assert qm.get_lightcurve_file(objectId) == exp_lc_file
-
-        exp_cutouts_dir = paths.test_data_path / "example_qm/cutouts/ZTF23testobj"
-        if exp_cutouts_dir.exists():
-            exp_cutouts_dir.rmdir()
-        assert qm.get_cutouts_dir(objectId) == exp_cutouts_dir
-        exp_cutout_file = (
-            paths.test_data_path
-            / "example_qm/cutouts/ZTF23testobj/2300010000200001234.pkl"
-        )
-        assert qm.get_cutouts_file(objectId, candid, mkdir=False) == exp_cutout_file
-        assert not exp_cutouts_dir.exists()
-
-        exp_alerts_dir = paths.test_data_path / "example_qm/alerts/ZTF23testobj"
-        if exp_alerts_dir.exists():
-            exp_alerts_dir.rmdir()
-        assert qm.get_alert_dir(objectId) == exp_alerts_dir
-        exp_alert_file = (
-            paths.test_data_path
-            / "example_qm/alerts/ZTF23testobj/2300010000200001234.json"
-        )
-        assert qm.get_alert_file(objectId, candid, mkdir=False) == exp_alert_file
-        assert not exp_alerts_dir.exists()
+        
+        exp_alert_dir = tmp_path / "new_qm/alerts/ZTF00abc"
+        assert qm.get_alert_dir("ZTF00abc") == exp_alert_dir
+        
+        exp_alert_file = tmp_path / "new_qm/alerts/ZTF00abc/2400010000200001001.json"
+        assert qm.get_alert_file("ZTF00abc", 24000_10000_20000_1001) == exp_alert_file
+        assert exp_alert_file.parent.exists()
+        
+        exp_magstats_file = tmp_path / "new_qm/magstats/ZTF00abc.csv"
+        assert qm.get_magstats_file("ZTF00abc") == exp_magstats_file
+        
+        exp_lightcurve_file = tmp_path / "new_qm/lightcurves/ZTF00abc.csv"
+        assert qm.get_lightcurve_file("ZTF00abc") == exp_lightcurve_file
+        
+        exp_cutouts_dir = tmp_path / "new_qm/cutouts/ZTF00abc"
+        assert qm.get_cutouts_dir("ZTF00abc") == exp_cutouts_dir
+        
+        exp_cutouts_file = tmp_path / "new_qm/cutouts/ZTF00abc/1234510000200001001.pkl"
+        assert qm.get_cutouts_file("ZTF00abc", 12345_10000_20000_1001) == exp_cutouts_file
+        assert exp_cutouts_file.parent.exists()
+        
+        exp_parameters_file = tmp_path / "new_qm/parameters/ZTF00abc.pkl"
+        assert qm.get_parameters_file("ZTF00abc") == exp_parameters_file
+        
+class Test__InvalidSubclassQueryManager:
+        
+    def test__missing_name_raises_error(self, config, target_lookup):
+        
+        with pytest.raises(TypeError):
+            qm = MissingNameQueryManager(config, target_lookup)
+            
+    def test__missing_process_all_tasks_raises_error(self, config, target_lookup):
+        with pytest.raises(TypeError):
+            qm = MissingTasksQueryManager(self, config, target_lookup)
+    
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        

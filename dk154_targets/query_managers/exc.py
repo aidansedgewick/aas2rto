@@ -6,5 +6,5 @@ class MissingObjectIdError(Exception):
     pass
 
 
-class MissingCoordinateColumnsError(Exception):
+class MissingCoordinatesError(Exception):
     pass

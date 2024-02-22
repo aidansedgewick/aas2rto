@@ -55,20 +55,28 @@ class AtlasQueryManager(BaseQueryManager):
     comment_delim = ":"
 
     default_query_parameters = {
-        "lookback_time": 30.0,
-        "interval": 2.0,
+        "lightcurve_query_lookback": 30.0,
+        "lightcurve_update_interval": 2.0,
         "max_submitted": 25,
         "requests_timeout": 20.0,
     }
+    expected_config_params = ("query_parameters", "token", "project_identifier")
+    
 
     def __init__(
         self,
         atlas_config,
         target_lookup: Dict[str, Target],
-        data_path=None,
+        parent_path=None,
         create_paths=True,
     ):
         self.atlas_config = atlas_config
+        unknown_keywords = [
+            kw for kw in self.atlas_config.keys() if kw not in self.expected_config_params
+        ]
+        if len(unknown_keywords) > 0:
+            raise ValueError(f"config has unknown params {unknown_keywords}")
+
         self.target_lookup = target_lookup
 
         self.project_identifier = self.atlas_config.get("project_identifier", None)
@@ -91,17 +99,24 @@ class AtlasQueryManager(BaseQueryManager):
 
         self.query_parameters = self.default_query_parameters.copy()
         query_params = self.atlas_config.get("query_parameters", {})
+        unknown_query_params = [
+            kw for kw in query_params.keys() if kw not in self.default_query_parameters.keys()
+        ]
+        if len(unknown_query_params) > 0:
+            raise ValueError(f"query_parameters unknown: {unknown_query_params}")
         self.query_parameters.update(query_params)
 
         self.submitted_queries = {}
         self.throttled_queries = []
+        
+        # Keep track of who stopped new queries...
+        self.local_throttled = False # ...us? 
+        self.server_throttled = False # ...or the server?
 
-        self.process_paths(data_path=data_path, create_paths=create_paths)
+        self.process_paths(parent_path=parent_path, create_paths=create_paths)
 
-    def get_atlas_query_comment(self, objectId):
-        return f"{objectId}{self.comment_delim}{self.project_identifier}"
 
-    def recover_finished_queries(self, t_ref: Time = None):
+    def recover_finished_queries(self, t_ref: Time = None, delete_finished_queries=True):
         t_ref = t_ref or Time.now()
 
         finished_queries = []
@@ -112,6 +127,7 @@ class AtlasQueryManager(BaseQueryManager):
         next_url = AtlasQuery.atlas_default_queue_url
 
         while next_url is not None:
+            ## Loop through "pages" of results, with N results per page.
             try:
                 task_response = AtlasQuery.get_existing_queries(
                     headers=self.atlas_headers, url=next_url
@@ -132,6 +148,8 @@ class AtlasQueryManager(BaseQueryManager):
                     continue
                 objectId, project_str = kv_split
                 if project_str != self.project_identifier:
+                    # In this case, the identifier means the query is for another project.
+                    # Don't retrieve it! When the other project looks for them, it'll crash!
                     continue
 
                 task_url = task_result.get("url", None)
@@ -147,9 +165,10 @@ class AtlasQueryManager(BaseQueryManager):
                     finished_queries.append(objectId)
             next_url = task_response["next"]
 
-        for objectId, finished_task_url in finished_task_results.items():
-            with requests.Session() as s:
-                s.delete(finished_task_url, headers=self.atlas_headers)
+        if delete_finished_queries:
+            for objectId, finished_task_url in finished_task_results.items():
+                with requests.Session() as s:
+                    s.delete(finished_task_url, headers=self.atlas_headers)
 
         logger.info(f"{len(finished_queries)} finished, {len(ongoing_queries)} ongoing")
         return finished_queries, ongoing_queries
@@ -175,6 +194,7 @@ class AtlasQueryManager(BaseQueryManager):
                         lightcurve = get_empty_atlas_lightcurve()
                     else:
                         logger.warning(f"{objectId} unexpected error {error_msg}")
+                        return self.QUERY_BAD_REQUEST
             else:
                 lightcurve_data = s.get(result_url, headers=self.atlas_headers)
                 raw_lightcurve = AtlasQuery.process_response(lightcurve_data)
@@ -184,7 +204,7 @@ class AtlasQueryManager(BaseQueryManager):
             if len(lightcurve) == 0:
                 if lightcurve_file.exists():
                     # If there is existing data, might as well keep it, and update
-                    # the file timestamp, so we don't just try again needlessly.
+                    # the file timestamp, so we don't submit again needlessly next loop.
                     lightcurve = pd.read_csv(lightcurve_file)
                     if len(lightcurve) > 0:
                         logger.warning(
@@ -192,8 +212,6 @@ class AtlasQueryManager(BaseQueryManager):
                             f"existing {objectId} lightcurve has"
                             f"len {len(lightcurve)}, but new query returned zero!"
                         )
-            # else:
-            #    if lightcurve_file.exists():
             lightcurve.to_csv(lightcurve_file, index=False)
 
             return self.QUERY_EXISTS
@@ -203,10 +221,10 @@ class AtlasQueryManager(BaseQueryManager):
 
         logger.info(f"retry {len(self.throttled_queries)} throttled queries")
 
-        old_throttled_list = self.throttled_queries
+        old_throttled_queries = self.throttled_queries
         self.throttled_queries = []
         submitted_queries, throttled_queries = self.submit_new_queries(
-            self.throttled_queries, t_ref=t_ref
+            old_throttled_queries, t_ref=t_ref
         )
         if len(self.throttled_queries) != len(throttled_queries):
             raise ValueError("throttled queries not correctly set")
@@ -216,8 +234,8 @@ class AtlasQueryManager(BaseQueryManager):
 
         submitted = []
         throttled = []
-        self_throttled = False
-        atlas_throttled = False
+        self.local_throttled = False
+        self.server_throttled = False
 
         for objectId in objectId_list:
             if objectId in self.submitted_queries:
@@ -225,7 +243,7 @@ class AtlasQueryManager(BaseQueryManager):
             if objectId in self.throttled_queries:
                 continue  # Already waiting
 
-            if atlas_throttled:
+            if self.server_throttled:
                 throttled.append(objectId)
                 continue
 
@@ -235,7 +253,7 @@ class AtlasQueryManager(BaseQueryManager):
                 continue
 
             if len(self.submitted_queries) >= self.query_parameters["max_submitted"]:
-                self_throttled = True
+                self.local_throttled = True
                 throttled.append(objectId)
                 continue
 
@@ -244,7 +262,7 @@ class AtlasQueryManager(BaseQueryManager):
                 submitted.append(objectId)
             elif query_status == self.QUERY_THROTTLED:
                 throttled.append(objectId)
-                atlas_throttled = True
+                self.server_throttled = True
                 msg = "\033[33;1mATLAS THROTTLED\033[0m: no more queries for now..."
                 logger.warning(msg)
 
@@ -274,12 +292,15 @@ class AtlasQueryManager(BaseQueryManager):
             msg = f"{target.objectId} query status \033[33;1m{res.status_code}\033[0m: {res.reason}"
             logger.error(msg)
             return res.status_code
+    
+    def get_atlas_query_comment(self, objectId):
+        return f"{objectId}{self.comment_delim}{self.project_identifier}"
 
     def prepare_query_data(self, target: Target, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
         if target.atlas_data.lightcurve is None:
-            mjd_min = t_ref.mjd - self.query_parameters["lookback_time"]
+            mjd_min = t_ref.mjd - self.query_parameters["lightcurve_query_lookback"]
         else:
             mjd_min = target.atlas_data.lightcurve["mjd"].min() - 1e-3
 
@@ -299,12 +320,12 @@ class AtlasQueryManager(BaseQueryManager):
 
         score_lookup = {}
         for objectId, target in self.target_lookup.items():
-            last_score = target.get_last_score(obs_name="no_observatory")
+            last_score = target.get_last_score() # no observatory means None -> "no_observatory"
             if last_score is None:
                 continue
             lightcurve_file = self.get_lightcurve_file(objectId)
             lightcurve_file_age = calc_file_age(lightcurve_file, t_ref)
-            if lightcurve_file_age < self.query_parameters["interval"]:
+            if lightcurve_file_age < self.query_parameters["lightcurve_update_interval"]:
                 continue
             score_lookup[objectId] = last_score
         object_series = pd.Series(score_lookup)
@@ -315,10 +336,12 @@ class AtlasQueryManager(BaseQueryManager):
         t_ref = t_ref or Time.now()
 
         loaded = []
+        missing = []
         t_start = time.perf_counter()
         for objectId, target in self.target_lookup.items():
             lightcurve_file = self.get_lightcurve_file(objectId)
             if not lightcurve_file.exists():
+                missing.append(objectId)
                 continue
             lightcurve = pd.read_csv(lightcurve_file)
             if lightcurve.empty:
@@ -338,6 +361,7 @@ class AtlasQueryManager(BaseQueryManager):
         t_end = time.perf_counter()
         if len(loaded) > 0:
             logger.info(f"{len(loaded)} lightcurves loaded in {(t_end-t_start):.1f}s")
+        return loaded, missing
 
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
