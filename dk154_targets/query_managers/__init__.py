@@ -35,9 +35,7 @@ from dk154_targets.query_managers.fink import (
 # )
 
 
-from dk154_targets.query_managers.tns import (
-    TnsQueryManager
-)
+from dk154_targets.query_managers.tns import TnsQueryManager
 
 from dk154_targets.query_managers.yse import (
     YseQueryManager,

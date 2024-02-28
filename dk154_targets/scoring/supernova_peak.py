@@ -85,7 +85,7 @@ class SupernovaPeakScore:
         broker_priority: tuple = None,
         **kwargs,
     ):
-        self.__name__ = "supernova_peak_score" #self.__class__.__name__
+        self.__name__ = "supernova_peak_score"  # self.__class__.__name__
 
         self.faint_limit = faint_limit
         self.min_timespan = min_timespan
@@ -119,7 +119,9 @@ class SupernovaPeakScore:
             break
 
         if ztf_source is None:
-            scoring_comments.append(f"no ztf_source data in any of {self.broker_priority}")
+            scoring_comments.append(
+                f"no ztf_source data in any of {self.broker_priority}"
+            )
             return -1.0, scoring_comments, reject_comments
 
         ztf_detections = ztf_source.detections
@@ -235,9 +237,9 @@ class SupernovaPeakScore:
             chisq = model_result.get("chisq", np.nan)
             ndof = model_result.get("ndof", np.nan)
             if (not np.isfinite(chisq)) or (not np.isfinite(ndof)):
-                scoring_comments.append(f"chisq={chisq:.2f} and ndof={ndof}")                
+                scoring_comments.append(f"chisq={chisq:.2f} and ndof={ndof}")
             else:
-                chisq_nu = chisq / ndof                
+                chisq_nu = chisq / ndof
                 scoring_comments.append(f"model chisq={chisq:.3f} with ndof={ndof}")
                 # TODO how to use chisq_nu properly?
 
@@ -318,4 +320,3 @@ class SupernovaPeakScore:
             logger.debug(f"{target.objectId}")
             final_score = -np.inf
         return final_score, scoring_comments, reject_comments
-

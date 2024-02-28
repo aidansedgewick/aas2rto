@@ -2,6 +2,7 @@ import abc
 
 from pathlib import Path
 
+from dk154_targets import TargetData
 from dk154_targets import paths
 
 
@@ -23,20 +24,23 @@ class BaseQueryManager(abc.ABC):
         self.target_lookup[target.objectId] = target
 
     def process_paths(
-        self, data_path: Path = None, parent_path: Path = None, create_paths: bool = True
+        self,
+        data_path: Path = None,
+        parent_path: Path = None,
+        create_paths: bool = True,
     ):
         """
         If data path is None
-        """        
-        if data_path is None:        
-            if parent_path is None:            
+        """
+        if data_path is None:
+            if parent_path is None:
                 parent_path = paths.base_path / paths.default_data_dir
             parent_path = Path(parent_path)
             data_path = parent_path / self.name
         else:
             data_path = Path(data_path)
             parent_path = data_path.parent
-        
+
         self.parent_path = parent_path
         self.data_path = data_path
         self.lightcurves_path = self.data_path / "lightcurves"
@@ -48,7 +52,7 @@ class BaseQueryManager(abc.ABC):
         self.cutouts_path = self.data_path / "cutouts"
         if create_paths:
             self.create_paths()
-        
+
     def create_paths(self):
         self.data_path.mkdir(exist_ok=True, parents=True)
         self.lightcurves_path.mkdir(exist_ok=True, parents=True)
@@ -58,6 +62,13 @@ class BaseQueryManager(abc.ABC):
         self.magstats_path.mkdir(exist_ok=True, parents=True)
         self.query_results_path.mkdir(exist_ok=True, parents=True)
         self.cutouts_path.mkdir(exist_ok=True, parents=True)
+
+    def init_missing_target_data(self):
+        for objectId, target in self.target_lookup.items():
+            qm_data = target.target_data.get(self.name, None)
+            if qm_data is None:
+                assert self.name not in target.target_data
+                target.target_data[self.name] = TargetData()
 
     def get_query_results_file(self, query_name, fmt="csv") -> Path:
         return self.query_results_path / f"{query_name}.{fmt}"

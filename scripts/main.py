@@ -9,7 +9,7 @@ from dk154_targets import TargetSelector
 from dk154_targets.scoring import (
     example_functions,
     SupernovaPeakScore,
-    KilonovaDiscReject
+    KilonovaDiscReject,
 )
 from dk154_targets.modeling import empty_modeling, sncosmo_salt
 
@@ -53,7 +53,7 @@ if __name__ == "__main__":
 
     logger.info(f"use \033[36;1m {scoring_function.__name__}\033[0m scoring")
     logger.info(f"use \033[36;1m {modeling_function.__name__}\033[0m model")
-    
+
     if not args.existing_targets_file:
         logger.info(f"NOT attempting to recover existing targets")
 
@@ -68,7 +68,6 @@ if __name__ == "__main__":
     except Exception as e:
         t_crash = Time.now()
         timestamp = t_crash.strftime("%y-%m-%d %H:%M:%S")
-        selector.send_crash_reports(text=f"CRASH at {timestamp}!\nexception caught in main try/except")
-        
-        
-        
+        selector.send_crash_reports(
+            text=f"CRASH at {timestamp}!\nexception caught in main try/except"
+        )

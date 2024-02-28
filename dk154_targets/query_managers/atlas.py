@@ -15,10 +15,9 @@ import pandas as pd
 
 from astropy.time import Time
 
-from dk154_targets import Target
-
+from dk154_targets import Target, TargetData
+from dk154_targets.exc import BadKafkaConfigError, MissingObjectIdError
 from dk154_targets.query_managers.base import BaseQueryManager
-from dk154_targets.query_managers.exc import BadKafkaConfigError, MissingObjectIdError
 from dk154_targets.utils import calc_file_age
 
 logger = getLogger(__name__.split(".")[-1])
@@ -61,7 +60,6 @@ class AtlasQueryManager(BaseQueryManager):
         "requests_timeout": 20.0,
     }
     expected_config_params = ("query_parameters", "token", "project_identifier")
-    
 
     def __init__(
         self,
@@ -72,7 +70,9 @@ class AtlasQueryManager(BaseQueryManager):
     ):
         self.atlas_config = atlas_config
         unknown_keywords = [
-            kw for kw in self.atlas_config.keys() if kw not in self.expected_config_params
+            kw
+            for kw in self.atlas_config.keys()
+            if kw not in self.expected_config_params
         ]
         if len(unknown_keywords) > 0:
             raise ValueError(f"config has unknown params {unknown_keywords}")
@@ -100,7 +100,9 @@ class AtlasQueryManager(BaseQueryManager):
         self.query_parameters = self.default_query_parameters.copy()
         query_params = self.atlas_config.get("query_parameters", {})
         unknown_query_params = [
-            kw for kw in query_params.keys() if kw not in self.default_query_parameters.keys()
+            kw
+            for kw in query_params.keys()
+            if kw not in self.default_query_parameters.keys()
         ]
         if len(unknown_query_params) > 0:
             raise ValueError(f"query_parameters unknown: {unknown_query_params}")
@@ -108,15 +110,16 @@ class AtlasQueryManager(BaseQueryManager):
 
         self.submitted_queries = {}
         self.throttled_queries = []
-        
+
         # Keep track of who stopped new queries...
-        self.local_throttled = False # ...us? 
-        self.server_throttled = False # ...or the server?
+        self.local_throttled = False  # ...us?
+        self.server_throttled = False  # ...or the server?
 
         self.process_paths(parent_path=parent_path, create_paths=create_paths)
 
-
-    def recover_finished_queries(self, t_ref: Time = None, delete_finished_queries=True):
+    def recover_finished_queries(
+        self, t_ref: Time = None, delete_finished_queries=True
+    ):
         t_ref = t_ref or Time.now()
 
         finished_queries = []
@@ -292,17 +295,18 @@ class AtlasQueryManager(BaseQueryManager):
             msg = f"{target.objectId} query status \033[33;1m{res.status_code}\033[0m: {res.reason}"
             logger.error(msg)
             return res.status_code
-    
+
     def get_atlas_query_comment(self, objectId):
         return f"{objectId}{self.comment_delim}{self.project_identifier}"
 
     def prepare_query_data(self, target: Target, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        if target.atlas_data.lightcurve is None:
-            mjd_min = t_ref.mjd - self.query_parameters["lightcurve_query_lookback"]
+        atlas_data = target.get_target_data("atlas")
+        if atlas_data.lightcurve is not None:
+            mjd_min = atlas_data.lightcurve["mjd"].min() - 1e-3
         else:
-            mjd_min = target.atlas_data.lightcurve["mjd"].min() - 1e-3
+            mjd_min = t_ref.mjd - self.query_parameters["lightcurve_query_lookback"]
 
         comment = self.get_atlas_query_comment(target.objectId)
 
@@ -320,12 +324,17 @@ class AtlasQueryManager(BaseQueryManager):
 
         score_lookup = {}
         for objectId, target in self.target_lookup.items():
-            last_score = target.get_last_score() # no observatory means None -> "no_observatory"
+            last_score = (
+                target.get_last_score()
+            )  # no observatory means None -> "no_observatory"
             if last_score is None:
                 continue
             lightcurve_file = self.get_lightcurve_file(objectId)
             lightcurve_file_age = calc_file_age(lightcurve_file, t_ref)
-            if lightcurve_file_age < self.query_parameters["lightcurve_update_interval"]:
+            if (
+                lightcurve_file_age
+                < self.query_parameters["lightcurve_update_interval"]
+            ):
                 continue
             score_lookup[objectId] = last_score
         object_series = pd.Series(score_lookup)
@@ -346,16 +355,18 @@ class AtlasQueryManager(BaseQueryManager):
             lightcurve = pd.read_csv(lightcurve_file)
             if lightcurve.empty:
                 continue
-            existing_lightcurve = target.atlas_data.lightcurve
+
+            atlas_data = target.get_target_data("atlas")
+            existing_lightcurve = atlas_data.lightcurve
             if existing_lightcurve is None:
-                target.atlas_data.add_lightcurve(lightcurve)
+                atlas_data.add_lightcurve(lightcurve)
             else:
                 if len(lightcurve) > len(existing_lightcurve):
-                    target.atlas_data.add_lightcurve(lightcurve)
+                    atlas_data.add_lightcurve(lightcurve)
                 else:
                     continue
             loaded.append(objectId)
-            if len(target.atlas_data.detections) > 0:
+            if len(atlas_data.detections) > 0:
                 target.updated = True
                 target.update_messages.append("Atlas data updated")
         t_end = time.perf_counter()

@@ -5,7 +5,7 @@ from logging import getLogger
 import numpy as np
 
 from astropy import units as u
-from astropy.coordinates import AltAz
+from astropy.coordinates import AltAz, SkyCoord
 from astropy.time import Time
 from astropy.utils.exceptions import AstropyDeprecationWarning
 
@@ -37,23 +37,30 @@ class ObservatoryInfo:
         self.sunset = sunset
         self.t_ref = t_ref
 
-    @classmethod
+    @staticmethod
     def observatory_tonight(
-        cls, observatory: Observer, horizon=-18.0 * u.deg, t_ref = Time
+        observatory: Observer, horizon=-18.0 * u.deg, t_ref: Time = None
     ):
         try:
             sunset, sunrise = observatory.tonight(t_ref, horizon=horizon)
         except TypeError as e:
             sunset, sunrise = None, None
         if sunrise is not None and not isinstance(sunrise.jd, float):
-            sunrise = None  # During permanent night.        
+            sunrise = None  # During permanent night.
         return sunset, sunrise
 
     @classmethod
-    def from_observatory(
-        cls, observatory: Observer, horizon=-18.0 * u.deg, t_ref: Time = None
+    def for_observatory(
+        cls,
+        observatory: Observer,
+        horizon=-18.0 * u.deg,
+        t_ref: Time = None,
+        t_grid: Time = None,
     ):
-        t_grid = t_ref + np.linspace(0, 24.0, 24 * 4) * u.hour
+        t_ref = t_ref or Time.now()
+
+        if t_grid is None:
+            t_grid = t_ref + np.linspace(0, 24.0, 24 * 4) * u.hour
         delta_t = t_grid[1] - t_grid[0]
 
         with warnings.catch_warnings():
@@ -66,7 +73,7 @@ class ObservatoryInfo:
         )
         if sunset is not None and sunrise is not None:
             time_to_sunrise = sunrise - sunset
-            if time_to_sunrise < 2. * delta_t:
+            if time_to_sunrise < 2.0 * delta_t:
                 old_sunset = sunset
                 old_sunrise = sunrise
                 t_ref_shift = sunrise + delta_t
@@ -92,6 +99,11 @@ class ObservatoryInfo:
             sunrise=sunrise,
             t_ref=t_ref,
         )
+
+    def set_target_altaz(self, coord: SkyCoord, observatory: Observer):
+        if t_grid is None:
+            raise ValueError("Can't compute altaz, t_grid is None")
+        self.target_altaz = observatory.altaz(self.t_grid, coord)
 
     def __copy__(self):
         return ObservatoryInfo(

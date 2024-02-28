@@ -28,7 +28,7 @@ from dk154_targets import query_managers
 from dk154_targets import messengers
 from dk154_targets.lightcurve_compilers import DefaultLightcurveCompiler
 from dk154_targets.obs_info import ObservatoryInfo
-from dk154_targets.utils import print_header, calc_file_age
+from dk154_targets.utils import print_header, calc_file_age, check_config_keys
 
 from dk154_targets import paths
 
@@ -38,8 +38,12 @@ matplotlib.use("Agg")
 
 
 VALID_SKIP_TASKS = (
-    "qm_tasks", "pre_check", "modelling", "plotting", 
+    "qm_tasks",
+    "pre_check",
+    "modeling",
+    "plotting",
 )
+
 
 class TargetSelector:
     """
@@ -53,34 +57,43 @@ class TargetSelector:
     """
 
     expected_config_keys = (
+        "selector_parameters",
         "query_managers",
         "observatories",
-        "modelling",
         "messengers",
+        "paths",
     )
-
     default_selector_parameters = {
         "sleep_time": 600.0,
         "unranked_value": 9999,
         "minimum_score": 0.0,
         "retained_existing_targets_files": 5,
+        "skip_tasks": [],
+        "lazy_modeling": True,
+        "lazy_plotting": True,
+        "plotting_interval": 0.25,
+        "write_comments": False,
     }
+    expected_messenger_keys = ("telegram", "slack")
 
     def __init__(self, selector_config: dict, create_paths=True):
         # Unpack configs.
         self.selector_config = selector_config
-        
+        check_config_keys(
+            selector_config.keys(), self.expected_config_keys, name="selector_config"
+        )
+
         self.selector_parameters = self.default_selector_parameters.copy()
         selector_parameters = self.selector_config.get("selector_parameters", {})
         self.selector_parameters.update(selector_parameters)
+        check_config_keys(
+            selector_parameters.keys(), self.default_selector_parameters.keys(), name="selector_parameters"
+        )
         
         self.query_manager_config = self.selector_config.get("query_managers", {})
         self.observatory_config = self.selector_config.get("observatories", {})
         self.messenger_config = self.selector_config.get("messengers", {})
-        self.modelling_config = self.selector_config.get("modelling", {})
-        self.compiler_config = self.selector_config.get("lightcurve_compiler", {})
         self.paths_config = self.selector_config.get("paths", {})
-
         # to keep the targets. Do this here as initQM needs to know about it.
         self.target_lookup = self._create_empty_target_lookup()
 
@@ -93,6 +106,10 @@ class TargetSelector:
         self.initialize_messengers()
 
     def __setitem__(self, objectId, target):
+        if not isinstance(target, Target):
+            class_name = target.__class__.__name__
+            msg = f"Cannot add {objectId} (type={class_name}) to target list."
+            raise ValueError(msg)
         self.target_lookup[objectId] = target
 
     def __getitem__(self, objectId):
@@ -124,7 +141,10 @@ class TargetSelector:
         if project_path == "default":
             project_path = self.base_path / "projects/default"
         self.project_path = Path(project_path)
-        logger.info(f"set project path at:\n    {self.project_path.absolute()}")
+        msg = (
+            f"set project path at:\n    \033[36;1m{self.project_path.absolute()}\033[0m"
+        )
+        logger.info(msg)
         self.paths = {"base_path": self.base_path, "project_path": self.project_path}
         for location, raw_path in self.paths_config.items():
             if Path(raw_path).is_absolute():
@@ -171,11 +191,9 @@ class TargetSelector:
         self.rejected_targets_path = self.paths["rejected_targets_path"]
 
         if "existing_targets_path" not in self.paths:
-            self.paths["existing_targets_path"] = (
-                self.data_path / "existing_targets"
-            )
+            self.paths["existing_targets_path"] = self.data_path / "existing_targets"
         self.existing_targets_path = self.paths["existing_targets_path"]
-        
+
         if create_paths:
             self.project_path.mkdir(exist_ok=True, parents=True)
             self.data_path.mkdir(exist_ok=True, parents=True)
@@ -189,7 +207,7 @@ class TargetSelector:
 
     def _initialise_query_manager_lookup(
         self,
-    ) -> (str, query_managers.BaseQueryManager):
+    ) -> Dict[str, query_managers.BaseQueryManager]:
         """Only for type hinting..."""
         return {}
 
@@ -203,7 +221,7 @@ class TargetSelector:
             self.qm_order.append(qm_name)  # In case the config order is very important.
 
             qm_args = (qm_config, self.target_lookup)
-            qm_kwargs = dict(data_path=self.data_path, create_paths=create_paths)
+            qm_kwargs = dict(parent_path=self.data_path, create_paths=create_paths)
             if qm_name == "alerce":
                 qm = query_managers.AlerceQueryManager(*qm_args, **qm_kwargs)
                 self.alerce_query_manager = qm
@@ -228,9 +246,7 @@ class TargetSelector:
                 self.yse_query_manager = qm
             else:
                 msg = f"init query manager for {qm_name}"
-                # Mainly for testing.
                 logger.warning(f"no known query manager for {qm_name}")
-                # query_managers.UsingGenericWarning,
                 qm = query_managers.GenericQueryManager(*qm_args, **qm_kwargs)
             self.query_managers[qm_name] = qm
 
@@ -250,7 +266,6 @@ class TargetSelector:
         logger.info(f"init {len(self.observatories)} including `no_observatory`")
 
     def initialize_messengers(self):
-        # TODO: add telegram, slack, etc.
         self.messengers = {}
         self.telegram_messenger = None
         self.slack_messenger = None
@@ -267,7 +282,6 @@ class TargetSelector:
             else:
                 raise NotImplementedError(f"No messenger {m_name}")
             self.messengers[m_name] = msgr
-        telegram_config = self.messenger_config.get("telegram", None)
 
     def add_target(self, target: Target):
         if target.objectId in self.target_lookup:
@@ -278,9 +292,9 @@ class TargetSelector:
         self, t_ref: Time = None, horizon: u.Quantity = -18 * u.deg
     ):
         """
-        save the result of astrolan.Observer() functions.
+        Precompute some expensive information about the altitude for each observatory.
 
-        access in a target with eg. `my_target.observatory_nights["lasilla"]`
+        access in a target with eg. `my_target.observatory_info["lasilla"]`
         """
         t_ref = t_ref or Time.now()
 
@@ -288,7 +302,7 @@ class TargetSelector:
             if observatory is None:
                 continue
 
-            obs_info = ObservatoryInfo.from_observatory(
+            obs_info = ObservatoryInfo.for_observatory(
                 observatory, t_ref=t_ref, horizon=horizon
             )
 
@@ -296,8 +310,7 @@ class TargetSelector:
                 target_obs_info = obs_info.copy()
                 assert target_obs_info.target_altaz is None
                 if target.coord is not None:
-                    target_altaz = observatory.altaz(obs_info.t_grid, target.coord)
-                    target_obs_info.target_altaz = target_altaz
+                    target_obs_info.set_target_altaz(target.coord, observatory)
                 target.observatory_info[obs_name] = target_obs_info
                 if target.observatory_info[obs_name].target_altaz is None:
                     msg = f"\033[33m{objectId} {obs_name} altaz missing\033[0m"
@@ -357,6 +370,12 @@ class TargetSelector:
             lightcurve_compiler = DefaultLightcurveCompiler()
         logger.info("compile photometric data")
 
+        try:
+            lc_compiler_name = lightcurve_compiler.__name__
+        except AttributeError as e:
+            lc_compiler_name = lightcurve_compiler.__class__.__name__
+        logger.info(f"use {lc_compiler_name}")
+
         not_compiled = []
         for objectId, target in self.target_lookup.items():
             target.build_compiled_lightcurve(lightcurve_compiler, t_ref=t_ref)
@@ -407,7 +426,7 @@ class TargetSelector:
         """
         Evaluate all targets at a particular observatory (this could be `None`).
         This function is used mainly by `evaluate_all_targets`.
-        
+
         Parameters
         ----------
         scoring_function
@@ -438,21 +457,21 @@ class TargetSelector:
         """
         Evaluate the score for targets which have not been scored before (ie, new targets)
         with fixed observatory = None.
-        
-        This is useful for removing targets which are obviously rubbish 
-        before any expensive modelling.        
-        
+
+        This is useful for removing targets which are obviously rubbish
+        before any expensive modellng.
+
         It is unlikely that a user will need to call this function directly.
-        
+
         Parameters
         ----------
-        scoring_function                
+        scoring_function
             `Callable`, your scoring function, with signature:
             (target: `Target`, observatory: `astroplan.Observer`, t_ref: `Time`)
         t_ref
             astropy.time.Time, optional - if not provided, defaults to Time.now()
         """
-    
+
         t_ref = t_ref or Time.now()
         new_targets = []
         new_scores = []
@@ -496,17 +515,27 @@ class TargetSelector:
 
         if not isinstance(modeling_functions, list):
             modeling_functions = [modeling_functions]
-        failed_models = {func.__name__: 0 for func in modeling_functions}
         for func in modeling_functions:
+            model_key = func.__name__
             models_built = []
+            models_failed = []
+            models_skipped = []
             for objectId, target in self.target_lookup.items():
+                latest_model = target.models.get(model_key, None)
+                if (not target.updated) and lazy and (latest_model is not None):
+                    models_skipped.append(objectId)
+                    continue
                 model = target.build_model(func, t_ref=t_ref, lazy=lazy)
                 if model is not None:
                     models_built.append(objectId)
-                if target.models.get(func.__name__, None) is None:
-                    failed_models[func.__name__] = failed_models[func.__name__] + 1
+                else:
+                    failed_models.append(objectId)
             if len(models_built) > 0:
-                logger.info(f"{func.__name__}: built {len(models_built)} models")
+                logger.info(f"{model_key}: {len(models_built)} models built")
+            if len(models_failed) > 0:
+                logger.info(f"{model_key}: {len(models_failed)} models failed")
+            if len(models_skipped) > 0:
+                logger.info(f"{model_key}: {len(models_skipped)} models skipped (lazy)")
         for func_name, N_failed in failed_models.items():
             if N_failed > 0:
                 logger.warning(f"{func_name}: {N_failed} failed models")
@@ -614,7 +643,7 @@ class TargetSelector:
     ):
         """
         Rank all of the targets in TargetLookup for a particular observatory.
-        
+
         Parameters
         ----------
         observatory: `astroplan.Observer` or `None`
@@ -626,8 +655,8 @@ class TargetSelector:
         write_list: default=True
             Whether or not to write the ranked list to paths
         t_ref: default = Time.now()
-            the score history will be saved for each target, along with t_ref          
-            
+            the score history will be saved for each target, along with t_ref
+
         Returns ranked_df
         """
         t_ref = t_ref or Time.now()
@@ -643,21 +672,21 @@ class TargetSelector:
             data_list.append(
                 dict(objectId=objectId, score=last_score, ra=target.ra, dec=target.dec)
             )
-            
+
         if len(data_list) == 0:
             logger.warning("no targets in target lookup!")
             return
-            
+
         score_df = pd.DataFrame(data_list)
         score_df.sort_values("score", inplace=True, ascending=False)
         score_df.set_index("objectId", inplace=True)
         score_df["ranking"] = np.arange(1, len(score_df) + 1)
-        
+
         minimum_score = self.selector_parameters.get("minimum_score")
         unranked_value = self.selector_parameters.get("unranked_value")
         negative_score = score_df["score"] < minimum_score
         score_df.loc[negative_score, "ranking"] = unranked_value
-        
+
         for objectId, row in score_df.iterrows():
             target = self.target_lookup[objectId]
             if obs_name not in target.rank_history:
@@ -690,8 +719,8 @@ class TargetSelector:
                 except FileNotFoundError as e:
                     msg = (
                         f"\033[33mlc_fig {lcfig_file} missing!\033[0m"
-                        + f"\n    the likely cause is you have two projects with the"
-                        + f"same project_path, and one has cleared plots"
+                        + "\n    the cause is likely that you have two projects "
+                        + "with the same project_path, and one has cleared plots"
                     )
                     logger.error(msg)
         ocfig_file = target.latest_oc_fig_paths.get(obs_name, None)
@@ -714,12 +743,12 @@ class TargetSelector:
         Loop through each target in TargetLookup.
         If there are any messages attached to a target, send them via the available messengers.
         Messages are (mostly) attached to targets in the TargetLookup.
-        
+
         Parameters
         ----------
         t_ref
         """
-    
+
         t_ref = t_ref or Time.now()
 
         skipped = []
@@ -735,7 +764,7 @@ class TargetSelector:
                 no_updates.append(objectId)
                 continue
             last_score = target.get_last_score()
-            
+
             if last_score < minimum_score:
                 skipped.append(objectId)
                 logger.debug(f"last score: {last_score}")
@@ -758,17 +787,17 @@ class TargetSelector:
             sent.append(objectId)
             time.sleep(2.0)
 
-        #if len(no_updates) > 0:
+        # if len(no_updates) > 0:
         logger.info(f"no updates to send for {len(no_updates)} targets")
-        #if len(skipped) > 0:
+        # if len(skipped) > 0:
         logger.info(f"skipped messages for {len(skipped)} targets")
-        #if len(sent) > 0:
+        # if len(sent) > 0:
         logger.info(f"sent messages for {len(sent)} targets")
 
     def send_crash_reports(self, text: str = None):
         """
         Convenience method for sending most recent traceback via telegram to sudoers.
-        
+
         Parameters
         ----------
         text
@@ -793,9 +822,9 @@ class TargetSelector:
             target.send_updates = False
             target.update_messages = []
 
-    def write_existing_target_list(self, t_ref: Time=None):
+    def write_existing_target_list(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
-    
+
         rows = []
         if len(self.target_lookup) == 0:
             logger.info("no existing targets to write...")
@@ -808,7 +837,7 @@ class TargetSelector:
             )
             rows.append(data)
         existing_targets_df = pd.DataFrame(rows)
-        
+
         timestamp = t_ref.strftime("%y%m%d_%H%M%S")
         filename = f"recover_{timestamp}"
         existing_targets_file = self.existing_targets_path / f"{filename}.csv"
@@ -817,11 +846,9 @@ class TargetSelector:
             print_path = existing_targets_file.relative_to(self.project_path.parent)
         except Exception as e:
             print_path = existing_targets_file
-        logger.info(f"write existing targets to:\n    {print_path}") 
-        
-        targets_files = sorted(
-            self.existing_targets_path.glob("*.csv")
-        )
+        logger.info(f"write existing targets to:\n    {print_path}")
+
+        targets_files = sorted(self.existing_targets_path.glob("*.csv"))
         N = self.selector_parameters.get("retained_existing_targets_files", 5)
         targets_files_to_remove = targets_files[:-N]
         for filepath in targets_files_to_remove:
@@ -831,19 +858,17 @@ class TargetSelector:
         """
         During each iteration of the selector, the names of all of the existing targets
         are dumped into a file.
-        
+
         These can be reloaded in the event of the program stopping.
         """
-           
+
         if existing_targets_file == "last":
-            targets_files = sorted(
-                self.existing_targets_path.glob("*.csv")
-            )
+            targets_files = sorted(self.existing_targets_path.glob("*.csv"))
             if len(targets_files) == 0:
                 logger.info(f"No existing targets file to recover")
                 return
             existing_targets_file = targets_files[-1]
-            
+
         if not existing_targets_file.exists():
             logger.info(f"{existing_target_file.file} missing")
             return
@@ -869,82 +894,90 @@ class TargetSelector:
         modeling_function: Callable = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
-        skip_tasks=None,
+        skip_tasks: list = None,
         t_ref: Time = None,
     ):
         """
         The actual loop.
         """
-        
+
         t_ref = t_ref or Time.now()
 
         t_str = t_ref.strftime("%Y-%m-%d %H:%M:%S")
         print_header(f"iteration at {t_str}")
-        
-        ### =============== Get some parameters from config =============== ###
+
+        # ================= Get some parameters from config ================= #
         write_comments = self.selector_parameters.get("write_comments", True)
         # self.clear_scratch_plots() # NO - lazy plotting re-uses existing plots.
-        
-        ### ============= are there any tasks we should skip? ============= ###
+
+        # =============== are there any tasks we should skip? =============== #
+        config_skip_tasks = self.selector_parameters.get("skip_tasks", [])
         if skip_tasks is None:
             skip_tasks = []
-        invalid_skip_tasks = [task for task in skip_tasks if task not in VALID_SKIP_TASKS ]
+        skip_tasks = skip_tasks + config_skip_tasks
+        invalid_skip_tasks = [
+            task for task in skip_tasks if task not in VALID_SKIP_TASKS
+        ]
         if len(invalid_skip_tasks) > 0:
             errmsg = (
                 f"invalid tasks in 'skip_tasks': {invalid_skip_tasks}\n"
                 f"    choose from {VALID_SKIP_TASKS}"
             )
-            raise ValueError(errmsg)        
+            raise ValueError(errmsg)
 
-        ### ========================= Get new data ========================= ###
+        # =========================== Get new data =========================== #
         if not "qm_tasks" in skip_tasks:
             self.check_for_targets_of_opportunity()
             self.perform_query_manager_tasks(t_ref=t_ref)
         else:
             logger.info("skip query manager tasks")
 
-        ### ============== Prep before modelling and scoring ============== ###
+        # ================ Prep before modeling and scoring ================ #
         self.compute_observatory_info(t_ref=t_ref)
         self.compile_target_lightcurves(
-            t_ref=t_ref, lightcurve_compiler=lightcurve_compiler
+            lightcurve_compiler=lightcurve_compiler, t_ref=t_ref
         )
-                
-        ### ========= Remove any targets that aren't interesting. ========== ###
+
+        # =========== Remove any targets that aren't interesting. ============ #
         t1 = time.perf_counter()
         if not "pre_check" in skip_tasks:
             logger.info(f"{len(self.target_lookup)} targets before check")
             self.new_target_initial_check(scoring_function, t_ref=t_ref)
-            removed_before_modeling = self.remove_bad_targets(write_comments=write_comments)
-            logger.info(f"removed {len(removed_before_modeling)} before modelling")
-        print("pre_check:", time.perf_counter()-t1)
+            removed_before_modeling = self.remove_bad_targets(
+                write_comments=write_comments
+            )
+            logger.info(f"removed {len(removed_before_modeling)} before modeling")
+        print("pre_check:", time.perf_counter() - t1)
 
-        ### ========================= Build models ========================= ###
+        # =========================== Build models =========================== #
         t1 = time.perf_counter()
-        if not "modelling" in skip_tasks:
+        if not "modeling" in skip_tasks:
             lazy_modeling = self.selector_parameters.get("lazy_modeling", True)
             self.build_target_models(modeling_function, t_ref=t_ref, lazy=lazy_modeling)
-        print("build models:", time.perf_counter()-t1)
+        print("build models:", time.perf_counter() - t1)
 
-        ### =========== Do the scoring, remove the bad targets ============ ###
+        # ============= Do the scoring, remove the bad targets ============== #
         t1 = time.perf_counter()
         self.evaluate_all_targets(scoring_function, t_ref=t_ref)
         logger.info(f"{len(self.target_lookup)} targets before rejecting")
         removed_targets = self.remove_bad_targets(
             write_comments=write_comments, t_ref=t_ref
         )
-        print("do score:", time.perf_counter()-t1)
-        
-        ### ======================= Reject targets ======================== ###
-        reject_msg = f"removed {len(removed_targets)} targets, {len(self.target_lookup)} remain"
+        print("do score:", time.perf_counter() - t1)
+
+        # ========================= Reject targets ========================== #
+        reject_msg = (
+            f"removed {len(removed_targets)} targets, {len(self.target_lookup)} remain"
+        )
         logger.info(reject_msg)
-        
-        ### ======================= Write comments ======================== ###
+
+        # ========================= Write comments ========================== #
         if write_comments:
             self.write_target_comments(t_ref=t_ref)
         else:
             logger.info("skip writing comments for targets")
 
-        ### ========================== Plotting ========================== ###
+        # ============================ Plotting ============================ #
         if not "plotting" in skip_tasks:
             lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
             plotting_interval = self.selector_parameters.get("plotting_interval", 0.25)
@@ -958,7 +991,7 @@ class TargetSelector:
         else:
             logger.info("skip plotting")
 
-        ### =========================== Ranking =========================== ###
+        # ============================= Ranking ============================= #
         self.clear_output_directories()  # In prep for the new outputs
         self.build_all_ranked_target_lists(t_ref=t_ref, plots=True, write_list=True)
         return
@@ -974,7 +1007,7 @@ class TargetSelector:
     ):
         """
         A convenience function to perform iterations
-        
+
         Parameters
         ----------
         scoring_function: Callable
@@ -982,17 +1015,16 @@ class TargetSelector:
         modeling_function: Callable or List[Callable]
             function(s) to build models for targets
         lightcurve_compiler: Callable [optional]
-            
+
         lc_plotting_function: Callable
-        
+
         existing_targets_file: optional, default=False
-            
-            
-        
+            path to an existing_targets_file, or "last"
+
         """
         t_ref = Time.now()
 
-        ### =================== Get and set some parameters ================ ###
+        # ===================== Get and set some parameters ================== #
         N_iterations = 0
         sleep_time = self.selector_parameters.get("sleep_time")
         if lightcurve_compiler is None:
@@ -1015,7 +1047,7 @@ class TargetSelector:
             )
             self.telegram_messenger.message_users(texts=msg, users="sudoers")
 
-        ### ========================= Start the loop ======================= ###
+        # =========================== Start the loop ========================= #
         while True:
             t_ref = Time.now()
 
@@ -1036,7 +1068,7 @@ class TargetSelector:
             # Some post-loop tasks
             if N_iterations > 0:
                 self.perform_messaging_tasks()
-            self.reset_updated_targets()            
+            self.reset_updated_targets()
             self.write_existing_target_list()
 
             N_iterations = N_iterations + 1

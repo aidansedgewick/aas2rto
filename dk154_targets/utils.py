@@ -1,4 +1,5 @@
 import shutil
+import warnings
 from logging import getLogger
 from typing import Union
 
@@ -9,6 +10,8 @@ import numpy as np
 from astropy.time import Time
 
 from astroplan import Observer
+
+from dk154_targets.exc import UnexpectedKeysWarning
 
 logger = getLogger("utils")
 
@@ -30,7 +33,7 @@ def print_header(s):
     try:
         tsize = shutil.get_terminal_size()
         cols = tsize.columns
-    except Exception as e:
+    except Exception:
         cols = 60
     pad = (cols - (len(s) + 2) - 6) // 2
 
@@ -38,15 +41,25 @@ def print_header(s):
     fmt_s = "\n###" + "=" * pad + f" {s} " + "=" * pad + "###"
     print(fmt_s)
 
+def check_config_keys(provided, expected, name: str=None):
+    unknown_keys = [
+        key for key in provided if key not in expected
+    ]
+    if unknown_keys:
+        msg = "\033[33;1munexpected keys\033[0m"
+        if name is not None:
+            msg = msg + f" in {name}"
+        msg = msg + ":\n    " + " ".join(unknown_keys)
+        warnings.warn(UnexpectedKeysWarning(msg))
+        
 
 def get_observatory_name(observatory: Union[Observer, None, str]):
-    
     if isinstance(observatory, str):
         return observatory
     if observatory is None:
         return "no_observatory"
     return observatory.name
-    
+
 
 def init_sfd_dustmaps():
     try:

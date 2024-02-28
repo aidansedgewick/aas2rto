@@ -19,12 +19,10 @@ try:
 except:
     alerce = None
 
-from dk154_targets.utils import calc_file_age
-from dk154_targets.target import Target, TargetData
-
-
+from dk154_targets import Target, TargetData
+from dk154_targets.exc import BadKafkaConfigError, MissingObjectIdError
 from dk154_targets.query_managers.base import BaseQueryManager
-from dk154_targets.query_managers.exc import BadKafkaConfigError, MissingObjectIdError
+from dk154_targets.utils import calc_file_age
 
 from dk154_targets import paths
 

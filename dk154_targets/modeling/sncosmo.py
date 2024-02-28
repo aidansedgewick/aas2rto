@@ -84,12 +84,35 @@ def initialise_model() -> sncosmo.Model:
     return model
 
 
+def write_emcee_salt_model():
+    pass
+
+
+def read_emcee_salt_model():
+    pass
+
+
 class sncosmo_salt:
-    def __init__(self, use_emcee=True, faint_limit=99.0, use_badquality=True):
+    def __init__(
+        self,
+        use_emcee=True,
+        faint_limit=99.0,
+        use_badquality=True,
+        existing_models_path=None,
+        **kwargs,
+    ):
         self.__name__ = self.__class__.__name__
         self.use_emcee = use_emcee
         self.faint_limit = faint_limit
         self.use_badquality = use_badquality
+
+        if existing_models_path is not None:
+            existing_models_path = Path(existing_models_path)
+            existing_models_path.mkdir(exist_ok=True, parent=True)
+        self.existing_models_path = existing_models_path
+
+        for key in kwargs.keys():
+            logger.warning("unknown parameter {key}")
 
         logger.info(f"set use_emcee: {self.use_emcee}")
         logger.info(f"set faint_limit={self.faint_limit} (no models for fainter)")
