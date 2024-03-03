@@ -100,7 +100,7 @@ class TnsQueryManager(BaseQueryManager):
     }
 
     default_query_parameters = {
-        "query_interval": 1.0,
+        "query_interval": 0.25,
         "lookback_time": 60.0,
     }
 

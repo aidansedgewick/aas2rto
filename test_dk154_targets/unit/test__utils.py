@@ -1,43 +1,101 @@
-import os
+import shutil
+
 import pytest
 
 import numpy as np
 
-import pandas as pd
-
-from astropy import units as u
 from astropy.time import Time
 
-from dk154_targets import utils
-from dk154_targets import paths
+from dk154_targets.exc import UnexpectedKeysWarning, MissingKeysWarning
+from dk154_targets.utils import calc_file_age, check_config_keys, print_header
 
 
-def test__calc_file_age():
-    df = pd.DataFrame([("a", 1, 10), ("b", 2, 20)], columns="name x y".split())
-    df_file = paths.test_data_path / "test_file.csv"
+class Test__CalcFileAge:
+    def test__existing_file(self, tmp_path):
+        test_file = tmp_path / "test_file.txt"
+        assert not test_file.exists()
 
-    t_ref = Time.now() + 6 * u.hour
-    df.to_csv(df_file, index=False)
-    file_age = utils.calc_file_age(df_file, t_ref)
-    atol = 1e-4
-    assert np.isclose(file_age, 0.25, atol=atol)
-    os.remove(df_file)
+        t_write = Time.now()
+        with open(test_file, "w+") as f:
+            f.write("some_data")
+        assert test_file.exists()
 
-    non_existant_file = paths.test_data_path / "another_test.csv"
-    assert not non_existant_file.exists()
+        t_future = Time(t_write.jd + 10.0, format="jd")
+        file_age = calc_file_age(test_file, t_future)
 
-    # Default behaviour
-    non_existant_file_age = utils.calc_file_age(non_existant_file, t_ref)
-    assert not np.isfinite(non_existant_file_age)
+        assert np.isclose(file_age, 10.0, atol=3e-5)  # tolerance of 2.5 seconds...
 
-    # Raises error
-    with pytest.raises(IOError):
-        fail_age = utils.calc_file_age(non_existant_file, t_ref, allow_missing=False)
+    def test__missing_file(self, tmp_path):
+        t_now = Time.now()
+
+        file_path = tmp_path / "missing_file.csv"
+        assert not file_path.exists()
+
+        file_age = calc_file_age(file_path, t_now)  # Should return positive infinity.
+
+        assert np.isposinf(file_age)
+
+    def test__fails_missing_file_disallow_missing(self, tmp_path):
+        t_now = Time.now()
+
+        file_path = tmp_path / "missing_file.csv"
+        assert not file_path.exists()
+
+        with pytest.raises(IOError):
+            file_age = calc_file_age(file_path, t_now, allow_missing=False)
 
 
-def test__print_header():
-    test_string = "blah"
-    utils.print_header(test_string)
+class Test__CheckConfigKeys:
 
-    test_string2 = "a" * 100
-    utils.print_header(test_string2)
+    def test__no_warning(self):
+        prov = dict(a=1, b=2, c=3)
+        expt = dict(a=10, b=20, c=30)
+
+        unexpected, missing = check_config_keys(prov.keys(), expt.keys(), name="test")
+        assert set(unexpected) == set()
+        assert set(missing) == set()
+
+    def test__unexpected_keys(self):
+        prov = dict(a=1, b=2, c=3, d=4)
+        expt = dict(a=10, b=20, c=30)
+        with pytest.warns(UnexpectedKeysWarning):
+            unexpected, missing = check_config_keys(
+                prov.keys(), expt.keys(), name="test"
+            )
+
+        assert set(unexpected) == set(["d"])
+        assert set(missing) == set()
+
+    def test__missing_keys(self):
+        prov = dict(a=1, b=2, c=3)
+        expt = dict(a=10, b=20, c=30, d=40)
+
+        with pytest.warns(MissingKeysWarning):
+            unexpected, missing = check_config_keys(
+                prov.keys(), expt.keys(), name="test"
+            )
+        assert set(unexpected) == set()
+        assert set(missing) == set(["d"])
+
+    def test__works_with_dict(self):
+        prov = dict(a=1, b=2, c=3)
+        expt = dict(a=10, b=20, c=30)
+
+        unexpected, missing = check_config_keys(prov, expt, name="test")
+        assert set(unexpected) == set()
+        assert set(missing) == set()
+
+
+class Test__PrintHeader:
+    def test__normal_behaviour(self):
+        txt = "some header here"
+
+        print_header(txt)  # Should not crash...
+
+    def test__no_shutil(self, monkeypatch):
+        assert callable(shutil.get_terminal_size)
+        with monkeypatch.context() as m:
+            m.setattr("shutil.get_terminal_size", None)
+            assert not callable(shutil.get_terminal_size)
+
+        assert callable(shutil.get_terminal_size)

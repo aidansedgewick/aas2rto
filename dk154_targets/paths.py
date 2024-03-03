@@ -12,8 +12,3 @@ default_scratch_dir = "scratch"
 wkdir = Path.cwd()
 
 test_path = base_path / "test_dk154_targets"
-test_data_path = wkdir / "test_data"
-
-
-def make_test_dir():
-    test_data_path.mkdir(exist_ok=True, parents=True)

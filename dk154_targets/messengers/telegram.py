@@ -8,6 +8,8 @@ from typing import Dict, List
 
 from astropy.time import Time
 
+from dk154_targets import utils
+
 try:
     import telegram
 except ModuleNotFoundError as e:
@@ -19,25 +21,32 @@ logger = getLogger(__name__.split(".")[-1])
 class TelegramMessenger:
     http_url = "https://api.telegram.org"
 
-    expected_kwargs = ("use", "token", "users", "sudoers", "users_file")
+    expected_kwargs = ("token", "users", "sudoers", "users_file")
 
     def __init__(self, telegram_config: dict):
         self.telegram_config = telegram_config
+        utils.check_unexpected_config_keys(
+            self.telegram_config, self.expected_kwargs, name="telegram_config"
+        )
+
         self.token = self.telegram_config.get("token", None)
+        if self.token is None:
+            logger.warning("\033[33;1mno token provided in telegram_config\033[0m.")
+            return
+
         users = self.telegram_config.get("users", {})
         sudoers = self.telegram_config.get("sudoers", {})
         users_file = self.telegram_config.get("users_file", None)
 
-        for key, val in self.telegram_config.items():
-            if key not in self.expected_kwargs:
-                logger.warning(f"unexpeted telegram_config kwarg: {key}")
-
         if isinstance(users, list):
-            logger.warning("in telegram config 'users', use a dict to give names!")
+            msg = "in telegram config 'users', use a dict to give names!\n    eg. 01234567: 'user_name'"
+            logger.warning(msg)
             users = {u: "unknown_user" for u in users}
         self.users = users
+
         if isinstance(sudoers, list):
-            logger.warning("in telegram config 'sudoers', use a dict to give names!")
+            msg = "in telegram config 'sudoers', use a dict to give names!\n    eg. 01234567: 'sudoer_name'"
+            logger.warning()
             sudoers = {u: self.users.get(u, "unknown_sudoer") for u in sudoers}
         self.sudoers = sudoers
         self.users.update(self.sudoers)
@@ -52,14 +61,11 @@ class TelegramMessenger:
                 "try \033[36;1mpython3 -m pip install python-telegram-bot\033[0m"
             )
             return
-        if self.token is None:
-            logger.warning("no token provided in telegram config.")
-            return
 
         try:
             self.bot = telegram.Bot(token=self.token)
         except Exception as e:
-            logger.warning(f"during telegram bot init:\n{e}")
+            logger.error(f"\033[31;1mduring telegram bot init\033[0m]:\n{e}")
         return
 
     def read_new_users(self):

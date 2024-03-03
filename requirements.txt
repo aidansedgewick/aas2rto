@@ -17,6 +17,7 @@ slack_sdk
 
 # brokers
 fink-client
+fastavro
 lasair
 alerce
 

@@ -9,14 +9,20 @@ try:
 except Exception as e:
     slack_sdk = None
 
-from dk154_targets import paths
+from dk154_targets import utils
 
 logger = getLogger(__name__.split(".")[-1])
 
 
 class SlackMessenger:
-    def __init__(self, slack_config):
+    expected_kwargs = ("token", "channel_id")
+
+    def __init__(self, slack_config: dict):
         self.slack_config = slack_config
+        utils.check_unexpected_config_keys(
+            self.slack_config, self.expected_kwargs, name="slack_config"
+        )
+
         self.token = self.slack_config.get("token", None)
         self.channel_id = self.slack_config.get("channel_id", None)
 
@@ -24,6 +30,7 @@ class SlackMessenger:
         if slack_sdk is None:
             logger.warning(f"\n{e}")
             logger.warning("\033[31;1merror importing slack_sdk\033[0m")
+            return
 
         if self.token is None:
             logger.warning("no 'token' in config: can't init client.")

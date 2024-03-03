@@ -2,6 +2,7 @@ import abc
 
 from pathlib import Path
 
+from dk154_targets import TargetData
 from dk154_targets import paths
 
 
@@ -22,26 +23,52 @@ class BaseQueryManager(abc.ABC):
             )
         self.target_lookup[target.objectId] = target
 
-    def process_paths(self, data_path: Path = None, create_paths=True):
+    def process_paths(
+        self,
+        data_path: Path = None,
+        parent_path: Path = None,
+        create_paths: bool = True,
+    ):
+        """
+        If data path is None
+        """
         if data_path is None:
-            data_path = paths.base_path / paths.default_data_dir
-        self.parent_data_path = data_path / self.name
-        self.lightcurves_path = self.parent_data_path / "lightcurves"
-        self.alerts_path = self.parent_data_path / "alerts"
-        self.probabilities_path = self.parent_data_path / "probabilities"
-        self.parameters_path = self.parent_data_path / "parameters"
-        self.magstats_path = self.parent_data_path / "magstats"
-        self.query_results_path = self.parent_data_path / "query_results"
-        self.cutouts_path = self.parent_data_path / "cutouts"
+            if parent_path is None:
+                parent_path = paths.base_path / paths.default_data_dir
+            parent_path = Path(parent_path)
+            data_path = parent_path / self.name
+        else:
+            data_path = Path(data_path)
+            parent_path = data_path.parent
+
+        self.parent_path = parent_path
+        self.data_path = data_path
+        self.lightcurves_path = self.data_path / "lightcurves"
+        self.alerts_path = self.data_path / "alerts"
+        self.probabilities_path = self.data_path / "probabilities"
+        self.parameters_path = self.data_path / "parameters"
+        self.magstats_path = self.data_path / "magstats"
+        self.query_results_path = self.data_path / "query_results"
+        self.cutouts_path = self.data_path / "cutouts"
         if create_paths:
-            self.parent_data_path.mkdir(exist_ok=True, parents=True)
-            self.lightcurves_path.mkdir(exist_ok=True, parents=True)
-            self.alerts_path.mkdir(exist_ok=True, parents=True)
-            self.probabilities_path.mkdir(exist_ok=True, parents=True)
-            self.parameters_path.mkdir(exist_ok=True, parents=True)
-            self.magstats_path.mkdir(exist_ok=True, parents=True)
-            self.query_results_path.mkdir(exist_ok=True, parents=True)
-            self.cutouts_path.mkdir(exist_ok=True, parents=True)
+            self.create_paths()
+
+    def create_paths(self):
+        self.data_path.mkdir(exist_ok=True, parents=True)
+        self.lightcurves_path.mkdir(exist_ok=True, parents=True)
+        self.alerts_path.mkdir(exist_ok=True, parents=True)
+        self.probabilities_path.mkdir(exist_ok=True, parents=True)
+        self.parameters_path.mkdir(exist_ok=True, parents=True)
+        self.magstats_path.mkdir(exist_ok=True, parents=True)
+        self.query_results_path.mkdir(exist_ok=True, parents=True)
+        self.cutouts_path.mkdir(exist_ok=True, parents=True)
+
+    def init_missing_target_data(self):
+        for objectId, target in self.target_lookup.items():
+            qm_data = target.target_data.get(self.name, None)
+            if qm_data is None:
+                assert self.name not in target.target_data
+                target.target_data[self.name] = TargetData()
 
     def get_query_results_file(self, query_name, fmt="csv") -> Path:
         return self.query_results_path / f"{query_name}.{fmt}"
@@ -55,15 +82,14 @@ class BaseQueryManager(abc.ABC):
             alert_dir.mkdir(exist_ok=True, parents=True)
         return alert_dir / f"{candid}.{fmt}"
 
-    def get_magstats_dir(self, objectId) -> Path:
-        return self.magstats_path  # / f"{objectId}"
-
     def get_magstats_file(self, objectId) -> Path:
-        magstats_dir = self.get_magstats_dir(objectId)
-        return magstats_dir / f"{objectId}.csv"
+        return self.magstats_path / f"{objectId}.csv"
 
     def get_lightcurve_file(self, objectId, fmt="csv") -> Path:
         return self.lightcurves_path / f"{objectId}.{fmt}"
+
+    def get_probabilities_file(self, objectId, fmt="csv") -> Path:
+        return self.probabilities_path / f"{objectId}.{fmt}"
 
     def get_cutouts_dir(self, objectId) -> Path:
         return self.cutouts_path / f"{objectId}"

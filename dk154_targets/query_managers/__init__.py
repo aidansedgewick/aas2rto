@@ -1,10 +1,5 @@
 from dk154_targets.query_managers.base import BaseQueryManager
 
-from dk154_targets.query_managers.generic import (
-    GenericQueryManager,
-    UsingGenericWarning,
-)
-
 from dk154_targets.query_managers.alerce import (
     AlerceQueryManager,
     process_alerce_lightcurve,
@@ -30,14 +25,7 @@ from dk154_targets.query_managers.fink import (
 #     target_from_lasair_lightcurve,
 # )
 
-# from dk154_targets.query_managers.sdss import (
-#     SdssQueryManager,
-# )
-
-
-from dk154_targets.query_managers.tns import (
-    TnsQueryManager
-)
+from dk154_targets.query_managers.tns import TnsQueryManager
 
 from dk154_targets.query_managers.yse import (
     YseQueryManager,
