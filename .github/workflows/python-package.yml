@@ -43,8 +43,8 @@ jobs:
     - name: Test with pytest
       run: |
         pytest --cov=dk154_targets --cov-report=xml test_dk154_targets
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v2
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v4.0.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         directory: ./coverage/reports/
