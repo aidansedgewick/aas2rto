@@ -1,4 +1,7 @@
 # User added...
+archive/
+safe/
+*.csv
 *_aidan.yaml
 
 # Byte-compiled / optimized / DLL files

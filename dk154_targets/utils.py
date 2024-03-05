@@ -78,7 +78,7 @@ def check_unexpected_config_keys(
             msg = msg + f" in {name}"
         msg = msg + ":\n    " + " ".join(unexpected_keys)
         warnings.warn(UnexpectedKeysWarning(msg))
-    return unexpected_keys
+    return list(unexpected_keys)
 
 
 def check_missing_config_keys(provided, expected, name: str = None) -> list:

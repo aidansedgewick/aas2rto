@@ -16,6 +16,7 @@ from astropy.coordinates import SkyCoord, search_around_sky
 from astropy.time import Time, TimeDelta
 
 from dk154_targets import Target, TargetData
+from dk154_targets import utils
 from dk154_targets.query_managers.base import BaseQueryManager
 from dk154_targets.utils import calc_file_age
 
@@ -84,7 +85,7 @@ def build_tns_headers(tns_user: str, tns_uid: int):
 
     marker_dict = dict(tns_id=str(tns_uid), type="user", name=tns_user)
     marker_str = json.dumps(marker_dict)
-    # marker_str is a literal string:
+    # marker_str is a literal string of a dict:
     #       '{"tns_id": "1234", "type": "user", "name": "your_name"}'
 
     tns_marker = f"tns_marker{marker_str}"
@@ -94,14 +95,15 @@ def build_tns_headers(tns_user: str, tns_uid: int):
 class TnsQueryManager(BaseQueryManager):
     name = "tns"
 
+
+    expected_tns_keys = ("user", "uid", "query_parameters", "tns_parameters")
     default_tns_parameters = {
         "num_page": "50",  # 50 is max allowed?
         "format": "csv",  # probably don't change this one...
     }
-
     default_query_parameters = {
-        "query_interval": 0.25,
-        "lookback_time": 60.0,
+        "query_interval": 0.125, # days
+        "lookback_time": 60.0,  # days
     }
 
     def __init__(
@@ -112,6 +114,10 @@ class TnsQueryManager(BaseQueryManager):
         create_paths=True,
     ):
         self.tns_config = tns_config
+        utils.check_unexpected_config_keys(
+            self.tns_config, self.expected_tns_keys, name="tns_config"
+        )
+        
         self.target_lookup = target_lookup
 
         self.recent_coordinate_searches = set()
@@ -125,10 +131,12 @@ class TnsQueryManager(BaseQueryManager):
         self.query_parameters = self.default_query_parameters.copy()
         query_parameters = self.tns_config.get("query_parameters", {})
         self.query_parameters.update(query_parameters)
+        utils.check_unexpected_conig
 
         self.tns_parameters = self.default_tns_parameters.copy()
         tns_parameters = self.tns_config.get("tns_parameters", {})
         self.tns_parameters.update(tns_parameters)
+        utils.check_unexpected_config_keys(self.tns_parameters)
 
         self.process_paths(data_path=data_path, create_paths=create_paths)
 
@@ -138,7 +146,9 @@ class TnsQueryManager(BaseQueryManager):
         tns_parameters = tns_parameters or {}
 
         search_params = copy.deepcopy(self.tns_parameters)
-        search_params.update(tns_parameters)
+        search_params.update(
+            tns_parameters, allowed_tns_parameters, name="tns.tns_parameters"
+        )
 
         if search_params.get("date_start[date]", None) is None:
             date_start = t_ref - TimeDelta(60.0, format="jd")
@@ -178,7 +188,8 @@ class TnsQueryManager(BaseQueryManager):
             disc_name = row["Disc. Internal Name"]
             if disc_name in self.target_lookup:
                 target = self.target_lookup[disc_name]
-                target.tns_data.parameters = row.to_dict()
+                tns_data = target.get_target_data("tns")
+                tns_data.parameters = row.to_dict()
                 matched = matched + 1
             else:
                 unmatched_rows.append(row)
@@ -197,7 +208,8 @@ class TnsQueryManager(BaseQueryManager):
         target_candidate_coords = []
         target_candidate_objectIds = []
         for objectId, target in self.target_lookup.items():
-            if target.tns_data.parameters:
+            tns_data = target.get_target_data("tns")
+            if tns_data.parameters:
                 continue
             if objectId in self.recent_coordinate_searches:
                 continue
@@ -226,14 +238,14 @@ class TnsQueryManager(BaseQueryManager):
             objectId = target_candidate_objectIds[idx1]
             target = self.target_lookup[objectId]
 
-            tns_data = self.tns_results.iloc[idx2]
+            tns_row = self.tns_results.iloc[idx2]            
             try:
-                target.tns_data.parameters = tns_data.to_dict()
+                tns_parameters = tns_data.to_dict()            
             except Exception as e:
-                print(e)
-                print(objectId)
-                print(tns_data)
+                logger.warning("
                 raise ValueError(e)
+            tns_data = target.get_target_data("tns")
+            tns_data.parameters = tns_parameters
 
         self.recent_coordinate_searches.update(target_candidate_objectIds)
         # This set is emptied every time TNS-results is read in.
@@ -362,7 +374,7 @@ class TnsQuery:
                     time.sleep(cls.sleep_time - query_time)
 
         if not df_list:
-            return pd.DataFrame()  # empty dataframe.
+            return pd.DataFrame(columns="Name")  # empty dataframe.
 
         results_df = pd.concat(df_list, ignore_index=True)
         return results_df
