@@ -3,6 +3,7 @@ import json
 import re
 import requests
 import time
+import warnings
 from logging import getLogger
 from pathlib import Path
 from typing import Dict, List
@@ -83,6 +84,11 @@ allowed_tns_parameters = [
 def build_tns_headers(tns_user: str, tns_uid: int):
     """Returns a dict with the correctly formatted string."""
 
+    if tns_user is None or tns_uid is None:
+        wrn = utils.MissingKeysWarning(f"user={tns_user} or uid={tns_uid} is None!")
+        warnings.warn(wrn)
+        return None
+
     marker_dict = dict(tns_id=str(tns_uid), type="user", name=tns_user)
     marker_str = json.dumps(marker_dict)
     # marker_str is a literal string of a dict:
@@ -92,9 +98,18 @@ def build_tns_headers(tns_user: str, tns_uid: int):
     return {"User-Agent": tns_marker}
 
 
+def process_tns_query_results(raw_query_results: pd.DataFrame):
+    query_results = raw_query_results.copy()
+    query_results.drop_duplicates("Name", keep="last", inplace=True)
+    return query_results
+
+
+def empty_data_frame():
+    return pd.DataFrame(columns=["Name"])
+
+
 class TnsQueryManager(BaseQueryManager):
     name = "tns"
-
 
     expected_tns_keys = ("user", "uid", "query_parameters", "tns_parameters")
     default_tns_parameters = {
@@ -102,7 +117,7 @@ class TnsQueryManager(BaseQueryManager):
         "format": "csv",  # probably don't change this one...
     }
     default_query_parameters = {
-        "query_interval": 0.125, # days
+        "query_interval": 0.125,  # days
         "lookback_time": 60.0,  # days
     }
 
@@ -110,73 +125,89 @@ class TnsQueryManager(BaseQueryManager):
         self,
         tns_config: dict,
         target_lookup: Dict[str, Target],
-        data_path=None,
+        parent_path=None,
         create_paths=True,
     ):
         self.tns_config = tns_config
         utils.check_unexpected_config_keys(
             self.tns_config, self.expected_tns_keys, name="tns_config"
         )
-        
+
         self.target_lookup = target_lookup
 
         self.recent_coordinate_searches = set()
-        self.tns_results = None
+        self.query_results = None
 
         tns_user = self.tns_config.get("user")
         tns_uid = self.tns_config.get("uid")
+        if (tns_user is None) or (tns_uid is None):
+            msg = f"user ({tns_user}) or uid ({tns_uid}) is None"
+            raise ValueError(msg)
 
         self.tns_headers = build_tns_headers(tns_user, tns_uid)
 
         self.query_parameters = self.default_query_parameters.copy()
         query_parameters = self.tns_config.get("query_parameters", {})
         self.query_parameters.update(query_parameters)
-        utils.check_unexpected_conig
+        utils.check_unexpected_config_keys(
+            self.query_parameters, self.default_query_parameters
+        )
 
         self.tns_parameters = self.default_tns_parameters.copy()
         tns_parameters = self.tns_config.get("tns_parameters", {})
         self.tns_parameters.update(tns_parameters)
-        utils.check_unexpected_config_keys(self.tns_parameters)
-
-        self.process_paths(data_path=data_path, create_paths=create_paths)
-
-    def perform_query(self, tns_parameters: dict = None, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        tns_parameters = tns_parameters or {}
-
-        search_params = copy.deepcopy(self.tns_parameters)
-        search_params.update(
-            tns_parameters, allowed_tns_parameters, name="tns.tns_parameters"
+        utils.check_unexpected_config_keys(
+            self.tns_parameters, allowed_tns_parameters, name="tns.tns_parameters"
         )
 
-        if search_params.get("date_start[date]", None) is None:
-            date_start = t_ref - TimeDelta(60.0, format="jd")
-            search_params["date_start[date]"] = date_start.iso.split()[0]
+        self.process_paths(parent_path=parent_path, create_paths=create_paths)
 
-        return TnsQuery.query(search_params, self.tns_headers)
-
-    def concatenate_results(
-        self, new_results: pd.DataFrame, existing_results_path: Path, t_ref: Time = None
-    ):
+    def query_for_updates(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        if not existing_results_path.exists():
-            return new_results
-        existing_results = pd.read_csv(existing_results_path)
-        logger.info(f"merge with {len(existing_results)} existing results")
+        query_results_file = self.get_query_results_file("tns_results")
+        query_results_file_age = calc_file_age(query_results_file, t_ref)
 
-        results = pd.concat([existing_results, new_results])
-        results.drop_duplicates(subset="Name", keep="last", inplace=True)
-        return results
+        if self.query_results is None and query_results_file.exists():
+            query_results = pd.read_csv(query_results_file)
+            query_results = process_tns_query_results(query_results)
+            self.query_results = query_results
+        if query_results_file_age < self.query_parameters["query_interval"]:
+            return None
+
+        query_parameters = self.get_query_data()
+        query_updates = TnsQuery.query(query_parameters, self.tns_headers)
+
+        existing_results = self.query_results
+        if existing_results is None:
+            existing_results = empty_data_frame()
+        query_results = pd.concat([existing_results, query_updates], ignore_index=True)
+        query_results.to_csv(query_results_file, index=False)
+        self.query_results = query_results
+
+        # Make sure that we crossmatch everything again.
+        self.recent_coordinate_searches = set()
+
+    def get_query_data(self, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
+        query_parameters = {**self.tns_parameters}
+
+        lookback_time = self.query_parameters.get("lookback_time", 60.0)
+
+        t_start = t_ref - TimeDelta(lookback_time, format="jd")
+        query_parameters["date_start[date]"] = t_start.iso.split()[0]
+
+        return query_parameters
 
     def update_matched_tns_names(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
+        matched_tns_names = []
         for objectId, target in self.target_lookup.items():
             tns_name = target.tns_data.parameters.get("Name", None)
             if tns_name is not None:
-                self.matched_tns_names[tns_name] = objectId
+                matched_tns_names[tns_name] = objectId
 
     def match_tns_on_names(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -184,15 +215,15 @@ class TnsQueryManager(BaseQueryManager):
 
         unmatched_rows = []
         matched = 0
-        for idx, row in self.tns_results.iterrows():
-            disc_name = row["Disc. Internal Name"]
+        for idx, tns_row in self.query_results.iterrows():
+            disc_name = tns_row["Disc. Internal Name"]
             if disc_name in self.target_lookup:
                 target = self.target_lookup[disc_name]
                 tns_data = target.get_target_data("tns")
-                tns_data.parameters = row.to_dict()
+                tns_data.parameters = tns_row.to_dict()
                 matched = matched + 1
             else:
-                unmatched_rows.append(row)
+                unmatched_rows.append(tns_row)
 
         logger.info(f"matched {matched} TNS objects by name")
         self.tns_results = pd.DataFrame(unmatched_rows)
@@ -208,11 +239,12 @@ class TnsQueryManager(BaseQueryManager):
         target_candidate_coords = []
         target_candidate_objectIds = []
         for objectId, target in self.target_lookup.items():
-            tns_data = target.get_target_data("tns")
-            if tns_data.parameters:
-                continue
             if objectId in self.recent_coordinate_searches:
                 continue
+            tns_data = target.target_data.get("tns", None)
+            if tns_data:
+                if tns_data.parameters:
+                    continue
             target_candidate_coords.append(target.coord)
             target_candidate_objectIds.append(objectId)
 
@@ -238,11 +270,12 @@ class TnsQueryManager(BaseQueryManager):
             objectId = target_candidate_objectIds[idx1]
             target = self.target_lookup[objectId]
 
-            tns_row = self.tns_results.iloc[idx2]            
+            tns_row = self.tns_results.iloc[idx2]
             try:
-                tns_parameters = tns_data.to_dict()            
+                tns_parameters = tns_row.to_dict()
             except Exception as e:
-                logger.warning("
+                logger.warning(f"tns_row.to_dict() failed for {objectId}")
+                print(e)
                 raise ValueError(e)
             tns_data = target.get_target_data("tns")
             tns_data.parameters = tns_parameters
@@ -253,24 +286,7 @@ class TnsQueryManager(BaseQueryManager):
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        existing_results_path = self.query_results_path / "tns_results.csv"
-
-        results_age = calc_file_age(existing_results_path, t_ref=t_ref)
-        if results_age > self.query_parameters["query_interval"]:
-            logger.info("re-query for TNS data")
-            new_results = self.perform_query()
-            logger.info(f"{len(new_results)} TNS entries")
-            results = self.concatenate_results(
-                new_results, existing_results_path, t_ref=t_ref
-            )
-            results.to_csv(existing_results_path, index=False)
-            self.tns_results = None  # guarantee re-read in the next step.
-
-        if self.tns_results is None:
-            logger.info("read TNS results from file")
-            results = pd.read_csv(existing_results_path)
-            self.tns_results = results
-            self.recent_coordinate_searches = set()
+        self.query_for_updates(t_ref=t_ref)
 
         self.match_tns_on_names(t_ref=t_ref)  # If the "Disc. Name" directly matches...
         self.match_tns_on_coordinates(t_ref=t_ref)
@@ -322,7 +338,9 @@ class TnsQuery:
 
     @classmethod
     def query(cls, search_params: dict, tns_headers: dict):
-        cls.check_parameters(search_params)
+        utils.check_unexpected_config_keys(
+            search_params, cls.allowed_parameters, name="tns_query.search_params"
+        )
 
         num_page = int(search_params.get("num_page", 50))
         if num_page > 50:
@@ -339,63 +357,41 @@ class TnsQuery:
             N_results = len(df)
 
             status = response.status_code
-            requests_limit = response.headers.get("x-rate-limit-limit")
-            requests_remaining = response.headers.get("x-rate-limit-remaining")
-            requests_reset = response.headers.get("x-rate-limit-reset")
+            req_limit = response.headers.get("x-rate-limit-limit")
+            req_remaining = response.headers.get("x-rate-limit-remaining")
+            req_reset = response.headers.get("x-rate-limit-reset")
 
             logger.info(
-                f"{requests_remaining}/{requests_limit} requests left (reset {requests_reset}s)"
+                f"{req_remaining}/{req_limit} requests left (reset {req_reset}s)"
             )
             if (response.status_code != 200) or N_results == 0:
                 logger.info(f"break: page {page} status={status}, len={N_results}")
                 logger.info(
-                    f"{requests_remaining}/{requests_limit} requests left (reset {requests_reset}s)"
+                    f"{req_remaining}/{req_limit} requests left (reset {req_reset}s)"
                 )
                 break
 
             df_list.append(df)
 
-            t2 = time.perf_counter()
-
             if N_results < int(num_page):
                 logger.info(f"break after {N_results} results < {num_page}")
                 break
 
-            logger.info(f"{N_results} results from page {page}")
-            if int(requests_remaining) < 2:
-                logger.info(f"waiting {requests_reset}s for reset...")
-                time.sleep(int(requests_reset) + 1.0)
-
-            page = page + 1
+            t2 = time.perf_counter()
+            query_time = t2 - t1
 
             if cls.sleep_time is not None:
-                query_time = t2 - t1
                 if cls.sleep_time - query_time > 0:
                     time.sleep(cls.sleep_time - query_time)
+
+            logger.info(f"{N_results} results from page {page} in {query_time:.2f}")
+            if int(req_remaining) < 2:
+                logger.info(f"waiting {req_reset}s for reset...")
+                time.sleep(int(req_reset) + 1.0)
+            page = page + 1
 
         if not df_list:
             return pd.DataFrame(columns="Name")  # empty dataframe.
 
         results_df = pd.concat(df_list, ignore_index=True)
         return results_df
-
-
-if __name__ == "__main__":
-    tns_config = {
-        "user": "aidan",
-        "uid": 1234,
-        # password: dk154_targets  # not important?
-        "tns_parameters": {
-            "classified_sne": "1",
-            "date_start[date]": "2023-07-22",
-            "num_page": "50",  # 50 is max allowed?
-            "format": "csv",  # probably don't change this one...
-        },
-        "query_parameters": {"query_interval": 1.0},
-    }
-
-    qm = TnsQueryManager(tns_config, {})
-
-    print(qm.tns_marker)
-
-    qm.perform_all_tasks()

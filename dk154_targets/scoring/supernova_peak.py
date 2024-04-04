@@ -27,7 +27,7 @@ def gauss(x, A, mu, sig):
 
 def calc_mag_factor(mag: float, zp=18.5):
     """f=1 if mag=18.5, f~3 if mag=16.5, f=10 if mag=14.5,"""
-    return 10 ** ((zp - mag) / 4)
+    return 10 ** ((zp - mag) / 2)
 
 
 def calc_timespan_factor(timespan: float, characteristic_timespan=20.0):
@@ -110,24 +110,24 @@ class SupernovaPeakScore:
 
         ztf_source = None
         for source in self.broker_priority:
-            potential_ztf_source = getattr(target, f"{source}_data", None)
-            if potential_ztf_source is None:
+            ztf_source = target.target_data.get(source, None)
+            if ztf_source is None:
                 continue
-            if potential_ztf_source.lightcurve is None:
+            if ztf_source.lightcurve is None:
+                ztf_source = None
                 continue
-            ztf_source = potential_ztf_source
             break
 
         if ztf_source is None:
-            scoring_comments.append(
-                f"no ztf_source data in any of {self.broker_priority}"
-            )
+            scoring_comments.append(f"none of {self.broker_priority} available")
             return -1.0, scoring_comments, reject_comments
-
         ztf_detections = ztf_source.detections
 
         ###===== Is it bright enough =======###
+
+        ztf_detections = ztf_detections[ztf_detections["jd"] < t_ref.jd]
         last_mag = ztf_detections["magpsf"].values[-1]
+
         last_band = ztf_detections["fid"].values[-1]
         mag_factor = calc_mag_factor(last_mag)
         scoring_comments.append(f"mag_factor={mag_factor:.2f} from mag={last_mag:.2f}")
@@ -202,6 +202,8 @@ class SupernovaPeakScore:
             peak_dt = t_ref.jd - sncosmo_model["t0"]
             interest_factor = peak_only_interest_function(peak_dt)
             if not np.isfinite(interest_factor):
+                interest_factor = 1.0
+                scoring_comments.append("interest_factor not finite. set 1.0")
                 print(target.objectId, peak_dt, t_ref.jd, sncosmo_model["t0"])
             factors["interest_factor"] = interest_factor
             interest_comment = (

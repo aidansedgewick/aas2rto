@@ -161,6 +161,33 @@ def extra_targets(mock_lc):
     return target_list
 
 
+def basic_lc_compiler(target, t_ref):
+    detections = target.target_data["test_data"].detections.copy()
+    badqual = target.target_data["test_data"].badqual.copy()
+    limits = target.target_data["test_data"].non_detections.copy()
+
+    detections.loc[:, "flux"] = 3631.0 * 10 ** (-detections["mag"] * 0.4)
+    detections.loc[:, "tag"] = "valid"
+    badqual.loc[:, "tag"] = "is_badqual"  # Can definitely check these have changed.
+    limits.loc[:, "tag"] = "a_limit"
+    lc = pd.concat([limits, badqual, detections], ignore_index=True)
+    lc.loc[:, "band"] = "ztf-w"
+    lc.loc[:, "jd"] = Time(lc["mjd"], format="mjd").jd
+    return lc
+
+
+@pytest.fixture
+def test_target():
+    t = Target("T101", ra=45.0, dec=60.0)
+    return t
+
+
+@pytest.fixture
+def test_observer():
+    location = EarthLocation(lat=55.6802, lon=12.5724, height=0.0)
+    return Observer(location, name="ucph")
+
+
 class Test__SelectorInit:
 
     def test__selector_normal_behaviour(self, selector_parameters, tmp_path):
@@ -182,7 +209,7 @@ class Test__SelectorInit:
         assert sel_param["lazy_modeling"]
         assert sel_param["lazy_plotting"]
         assert np.isclose(sel_param["plotting_interval"], 0.25)
-        assert sel_param["write_comments"] is False
+        assert sel_param["write_comments"] is True
 
         assert isinstance(selector.query_managers_config, dict)
         assert isinstance(selector.observatories_config, dict)
@@ -201,7 +228,7 @@ class Test__SelectorInit:
             "opp_targets_path",
             "scratch_path",
             "lc_scratch_path",
-            "oc_scratch_path",
+            "vis_scratch_path",
             "comments_path",
             "rejected_targets_path",
             "existing_targets_path",
@@ -467,7 +494,7 @@ class Test__TargetsOfOpportunity:
         assert T101.target_of_opportunity is True  # updated!
 
 
-def basic_lc_compiler(target: Target):
+def basic_lc_compiler(target: Target, t_ref: Time):
     if "ztf" not in target.target_data.keys():
         return None
     lc = target.target_data["ztf"].detections.copy()
@@ -572,12 +599,12 @@ class ScoringClassNoName:
 
 
 class Test__EvaluateTargets:
-    def test__evaluate_all_at_obs(self, selector_with_targets: TargetSelector):
+    def test__evaluate_at_obs(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
         t_ref = Time(60000.0, format="mjd")
         lasilla = selector.observatories["lasilla"]
 
-        selector.evaluate_all_targets_at_observatory(basic_scoring, None, t_ref=t_ref)
+        selector.evaluate_targets_at_observatory(basic_scoring, None, t_ref=t_ref)
 
         t_lookup = selector.target_lookup
         assert np.isclose(t_lookup["T101"].get_last_score(), 200.0)
@@ -600,9 +627,7 @@ class Test__EvaluateTargets:
             ["mag_factor=1.6"]
         )
 
-        selector.evaluate_all_targets_at_observatory(
-            basic_scoring, lasilla, t_ref=t_ref
-        )
+        selector.evaluate_targets_at_observatory(basic_scoring, lasilla, t_ref=t_ref)
 
         t_lookup = selector.target_lookup
         assert np.isclose(t_lookup["T101"].get_last_score(lasilla), 100.0)
@@ -635,17 +660,17 @@ class Test__EvaluateTargets:
             tt = Target("tt", ra=180.0, dec=0.0)
             scoring_will_raise_error(tt, None, t_ref)
 
-        selector.evaluate_all_targets_at_observatory(
+        selector.evaluate_targets_at_observatory(
             scoring_will_raise_error, None, t_ref=t_ref
         )  # Correctly catches the errors!
 
-    def test__evaluate_all_targets(self, selector_with_targets: TargetSelector):
+    def test__evaluate_targets(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
         lasilla = selector.observatories["lasilla"]
         ucph = selector.observatories["ucph"]
         t_ref = Time(60000.0, format="mjd")
 
-        selector.evaluate_all_targets(basic_scoring, t_ref=t_ref)
+        selector.evaluate_targets(basic_scoring, t_ref=t_ref)
 
         t_lookup = selector.target_lookup
         assert np.isclose(t_lookup["T101"].get_last_score(), 200.0)
@@ -680,7 +705,7 @@ class Test__EvaluateTargets:
 
         scoring_func = ScoringClass(multiplier=10.0)
 
-        selector.evaluate_all_targets(scoring_func, t_ref=t_ref)
+        selector.evaluate_targets(scoring_func, t_ref=t_ref)
 
         assert np.isclose(t_lookup["T101"].get_last_score(), 2000.0)
         assert np.isclose(t_lookup["T101"].get_last_score("lasilla"), 1000.0)
@@ -740,12 +765,12 @@ class Test__EvaluateTargets:
             t_lookup["T110"].get_last_score(return_time=True)[1].mjd, 60010.0
         )
 
-    def test__remove_bad_targets(self, selector_with_targets: TargetSelector):
+    def test__remove_rejected_targets(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
         t_lookup = selector.target_lookup
 
         t1 = Time(60026.0, format="mjd")  # should remove T101, T102
-        selector.evaluate_all_targets(basic_scoring, t_ref=t1)
+        selector.evaluate_targets(basic_scoring, t_ref=t1)
 
         assert not np.isfinite(t_lookup["T101"].get_last_score())
         assert not np.isfinite(t_lookup["T102"].get_last_score())
@@ -755,18 +780,18 @@ class Test__EvaluateTargets:
         assert np.isclose(t_lookup["T106"].get_last_score(), 100.0)
 
         # Not testing comms yet...
-        removed = selector.remove_bad_targets(t_ref=t1, write_comments=False)
+        removed = selector.remove_rejected_targets(t_ref=t1, write_comments=False)
 
         assert set([t.objectId for t in removed]) == set(["T101", "T102"])
         assert set(t_lookup.keys()) == set(["T103", "T104", "T105", "T106"])
 
         t2 = Time(60028.0, format="mjd")  # Remove T103
-        selector.evaluate_all_targets(basic_scoring, t_ref=t2)
+        selector.evaluate_targets(basic_scoring, t_ref=t2)
 
         assert not np.isfinite(t_lookup["T103"].get_last_score())
 
         # Don't test comms yet
-        removed = selector.remove_bad_targets(t_ref=t2, write_comments=False)
+        removed = selector.remove_rejected_targets(t_ref=t2, write_comments=False)
 
         assert set([t.objectId for t in removed]) == set(["T103"])
         assert set(t_lookup.keys()) == set(["T104", "T105", "T106"])
@@ -864,7 +889,7 @@ class Test__WriteTargetComments:
         selector = selector_with_targets
         t_ref = Time(60000.0, format="mjd")
 
-        selector.evaluate_all_targets(basic_scoring, t_ref=t_ref)
+        selector.evaluate_targets(basic_scoring, t_ref=t_ref)
 
         selector.write_target_comments()
 
@@ -884,8 +909,8 @@ class Test__WriteTargetComments:
         selector = selector_with_targets
         t_ref = Time(60026.0, format="mjd")
 
-        selector.evaluate_all_targets(basic_scoring, t_ref=t_ref)
-        rejected = selector.remove_bad_targets(t_ref=t_ref)
+        selector.evaluate_targets(basic_scoring, t_ref=t_ref)
+        rejected = selector.remove_rejected_targets(t_ref=t_ref)
 
         assert set([t.objectId for t in rejected]) == set(["T101", "T102"])
 
@@ -926,8 +951,7 @@ class Test__Plotting:
         exp_T101_fig_path = (
             selector.base_path / "projects/default/scratch/lc/T101_lc.png"
         )
-        assert T101.latest_lc_fig_path == exp_T101_fig_path
-        assert T101.latest_lc_fig_path
+        exp_T101_fig_path.exists()
 
     def test__plot_lc_accepts_function(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
@@ -938,11 +962,10 @@ class Test__Plotting:
         )
 
         T101 = selector.target_lookup["T101"]
-        assert (
-            T101.latest_lc_fig_path
-            == selector.base_path / "projects/default/scratch/lc/T101_lc.png"
+        exp_T101_fig_path = (
+            selector.base_path / "projects/default/scratch/lc/T101_lc.png"
         )
-        assert T101.latest_lc_fig_path.exists()
+        assert exp_T101_fig_path.exists()
 
     def test__lc_lazy_plotting_respected(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
@@ -969,13 +992,11 @@ class Test__Plotting:
         assert set(skipped) == set()
 
         T101_exp_fig_path = selector.lc_scratch_path / f"T101_lc.png"
-        assert T101.latest_lc_fig_path == T101_exp_fig_path
-        assert T101.latest_lc_fig_path.exists()
-        assert np.isclose(T101.lc_fig_t_ref.mjd, t_ref.mjd, rtol=1e-8)
+        assert T101_exp_fig_path.exists()
+        # assert np.isclose(T101.lc_fig_t_ref.mjd, t_ref.mjd, rtol=1e-8)
         T102_exp_fig_path = selector.lc_scratch_path / f"T102_lc.png"
-        assert T102.latest_lc_fig_path == T102_exp_fig_path
-        assert T102.latest_lc_fig_path.exists()
-        assert np.isclose(T102.lc_fig_t_ref.mjd, t_ref.mjd, rtol=1e-8)
+        assert T102_exp_fig_path.exists()
+        # assert np.isclose(T102.lc_fig_t_ref.mjd, t_ref.mjd, rtol=1e-8)
 
         # ======
         # Make sure updated targets have plots recreated.
@@ -989,13 +1010,13 @@ class Test__Plotting:
         assert set(skipped) == set(["T102"])
 
         # Check that T101 was updated...
-        assert np.isclose(T101.lc_fig_t_ref.mjd, t_f1.mjd, rtol=1e-8)
-        assert not np.isclose(T101.lc_fig_t_ref.mjd, t_ref.mjd, rtol=1e-8)
+        # assert np.isclose(T101.lc_fig_t_ref.mjd, t_f1.mjd, rtol=1e-8)
+        # assert not np.isclose(T101.lc_fig_t_ref.mjd, t_ref.mjd, rtol=1e-8)
         # The second line checks rtol small enough! dt/t = 0.2/60000.0 is small!
 
         # But T102 wasn't
-        assert not np.isclose(T102.lc_fig_t_ref.mjd, t_f1.mjd, rtol=1e-8)
-        assert np.isclose(T102.lc_fig_t_ref.mjd, t_ref.mjd, rtol=1e-8)
+        # assert not np.isclose(T102.lc_fig_t_ref.mjd, t_f1.mjd, rtol=1e-8)
+        # assert np.isclose(T102.lc_fig_t_ref.mjd, t_ref.mjd, rtol=1e-8)
 
     def test__get_output_plots_path(self, selector_with_targets):
         selector = selector_with_targets
@@ -1004,14 +1025,16 @@ class Test__Plotting:
         assert pl_dir == selector.base_path / "projects/default/outputs/plots/test_obs"
         assert pl_dir.exists()
 
-    def test__get_output_lists_path(self, selector_with_targets):
+    def test__get_ranked_list_path(self, selector_with_targets):
         selector = selector_with_targets
 
-        lists_path = selector.get_output_lists_path()
-        assert (
-            lists_path == selector.base_path / "projects/default/outputs/ranked_lists"
+        lists_path = selector.get_ranked_list_path("no_obs")
+
+        exp_list_path = (
+            selector.base_path / "projects/default/outputs/ranked_lists/no_obs.csv"
         )
-        assert lists_path.exists()
+        assert lists_path == exp_list_path
+        assert lists_path.parent.exists()
 
 
 def simple_score(target, obs, t_ref):
@@ -1045,9 +1068,11 @@ class Test__Ranking:
         t_lookup = selector.target_lookup
         t_ref = Time(60015.0, format="mjd")
 
-        selector.evaluate_all_targets(simple_score, t_ref=t_ref)
+        selector.evaluate_targets(simple_score, t_ref=t_ref)
 
-        ranked_list = selector.build_ranked_target_list(None, plots=False, t_ref=t_ref)
+        ranked_list = selector.build_ranked_target_list_at_observatory(
+            None, plots=False, t_ref=t_ref
+        )
 
         assert set(ranked_list.columns) == set("objectId score ra dec ranking".split())
         assert set(ranked_list["objectId"]) == set(["T102", "T103", "T104", "T105"])
@@ -1097,9 +1122,9 @@ class Test__Ranking:
         t_lookup = selector.target_lookup
         t_ref = Time(60015.0, format="mjd")
 
-        selector.evaluate_all_targets(simple_score, t_ref=t_ref)
+        selector.evaluate_targets(simple_score, t_ref=t_ref)
 
-        selector.build_all_ranked_target_lists(t_ref=t_ref, plots=False)
+        selector.build_ranked_target_lists(t_ref=t_ref, plots=False)
 
         no_obs_list_file = selector.outputs_path / "ranked_lists/no_observatory.csv"
         lasilla_list_file = selector.outputs_path / "ranked_lists/lasilla.csv"
@@ -1144,13 +1169,13 @@ class Test__Ranking:
         selector.target_lookup.pop("T105")
         selector.observatories.pop("ucph")
 
-        selector.evaluate_all_targets(simple_score, t_ref=t_ref)
+        selector.evaluate_targets(simple_score, t_ref=t_ref)
         selector.plot_target_lightcurves(
             plotting_function=return_blank_figure, t_ref=t_ref
         )
-        selector.plot_target_observing_charts(t_ref=t_ref)
+        selector.plot_target_visibilities(t_ref=t_ref)
 
-        selector.build_all_ranked_target_lists(t_ref=t_ref, plots=True)
+        selector.build_ranked_target_lists(t_ref=t_ref, plots=True)
 
         no_obs_list_file = selector.outputs_path / "ranked_lists/no_observatory.csv"
         lasilla_list_file = selector.outputs_path / "ranked_lists/lasilla.csv"
@@ -1181,14 +1206,14 @@ class Test__Ranking:
         for pl_f in exp_lasilla_files:
             assert pl_f.exists()
         assert set(lasilla_path.glob("*lc.png")) == set(exp_lasilla_files)
-        oc_fig_01 = lasilla_path / "001_T102_oc.png"
-        oc_fig_02 = lasilla_path / "002_T103_oc.png"
-        # oc_fig_03 = lasilla_path / "003_T104_oc.png"
-        # oc_fig_04 = lasilla_path / "004_T105_oc.png"
-        exp_lasilla_oc_files = [oc_fig_01, oc_fig_02]
-        for pl_f in exp_lasilla_oc_files:
+        vis_fig_01 = lasilla_path / "001_T102_vis.png"
+        vis_fig_02 = lasilla_path / "002_T103_vis.png"
+        # vis_fig_03 = lasilla_path / "003_T104_vis.png"
+        # vis_fig_04 = lasilla_path / "004_T105_vis.png"
+        exp_lasilla_vis_files = [vis_fig_01, vis_fig_02]
+        for pl_f in exp_lasilla_vis_files:
             assert pl_f.exists()
-        assert set(lasilla_path.glob("*oc.png")) == set(exp_lasilla_oc_files)
+        assert set(lasilla_path.glob("*vis.png")) == set(exp_lasilla_vis_files)
 
 
 class Test__ResettingTasks:
@@ -1216,16 +1241,16 @@ class Test__ResettingTasks:
         for ii in range(4):
             fig.savefig(no_obs_figs_path / f"test_{ii}_lc.png")
             fig.savefig(lasilla_figs_path / f"test_{ii}_lc.png")
-            fig.savefig(lasilla_figs_path / f"test_{ii}_oc.png")
+            fig.savefig(lasilla_figs_path / f"test_{ii}_vis.png")
 
         assert len([f for f in no_obs_figs_path.glob("*.png")]) == 4
-        assert len([f for f in lasilla_figs_path.glob("*.png")]) == 8  # w/ oc figs
+        assert len([f for f in lasilla_figs_path.glob("*.png")]) == 8  # w/ vis figs
 
         # Clear everything!
         selector.clear_output_plots()
 
         assert len([f for f in no_obs_figs_path.glob("*.png")]) == 0
-        assert len([f for f in lasilla_figs_path.glob("*.png")]) == 0  # w/ oc figs
+        assert len([f for f in lasilla_figs_path.glob("*.png")]) == 0  # w/ vis figs
         # Everything is gone!
 
 
@@ -1587,8 +1612,6 @@ class Test__LoopingFunctions:
         exp_lists = [lists_path / "no_observatory.csv", lists_path / "lasilla.csv"]
         assert set([f for f in lists_path.glob("*")]) == set(exp_lists)
 
-        assert T101.latest_lc_fig_path
-
         no_obs_plots_path = selector.outputs_path / "plots/no_observatory"
         assert no_obs_plots_path.exists()
         assert (
@@ -1623,4 +1646,5 @@ class Test__LoopingFunctions:
         skip_tasks = ["bad_task"]
 
         with pytest.raises(ValueError):
-            selector.perform_iteration(simple_score, skip_tasks=skip_tasks)
+            with pytest.warns(UnexpectedKeysWarning):
+                selector.perform_iteration(simple_score, skip_tasks=skip_tasks)

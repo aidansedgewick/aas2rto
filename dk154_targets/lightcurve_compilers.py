@@ -1,4 +1,5 @@
 import copy
+import time
 from logging import getLogger
 
 import numpy as np
@@ -14,36 +15,51 @@ from dk154_targets import Target, TargetData
 
 logger = getLogger(__name__.split(".")[-1])
 
+DEFAULT_VALID_TAG = "valid"
+DEFAULT_BADQUAL_TAG = "badqual"
+DEFAULT_ULIMIT_TAG = "upperlim"
+
 
 def prepare_ztf_data(
     ztf_data: TargetData,
-    valid_tag="valid",
-    badqual_tag="badqual",
-    ulimit_tag="upperlim",
+    valid_tag=DEFAULT_VALID_TAG,
+    badqual_tag=DEFAULT_BADQUAL_TAG,
+    ulimit_tag=DEFAULT_ULIMIT_TAG,
 ):
     ztf_band_lookup = {1: "ztfg", 2: "ztfr", 3: "ztfi"}
-    ztf_colmap = {"magpsf": "mag", "sigmapsf": "magerr", "fid": "band"}
-    use_cols = ["jd", "magpsf", "sigmapsf", "diffmaglim", "fid", "tag"]
+    ztf_colmap = {"magpsf": "mag", "sigmapsf": "magerr"}
+    use_cols = ["jd", "mjd", "magpsf", "sigmapsf", "diffmaglim", "fid", "tag", "candid"]
 
-    detections = ztf_data.detections.copy()
-    detections.loc[:, "tag"] = valid_tag
-    bad_qual = ztf_data.badqual.copy()
-    bad_qual.loc[:, "tag"] = badqual_tag
-    ulimits = ztf_data.non_detections.copy()
-    ulimits.loc[:, "tag"] = ulimit_tag
-    ztf_lc = pd.concat([detections, bad_qual, ulimits], ignore_index=True)
+    avail_cols = [col for col in use_cols if col in ztf_data.detections.columns]
+    # if len(missing_cols) > 0:
+    #    logger.warning(f"columns unavailable: {missing_cols}")
+
+    t1 = time.perf_counter()
+
+    if ztf_data.detections is not None:
+        detections = ztf_data.detections[avail_cols].copy()
+        detections.loc[:, "tag"] = valid_tag
+        data_list = [detections]
+    if ztf_data.badqual is not None:
+        badqual = ztf_data.badqual[avail_cols].copy()
+        badqual.loc[:, "tag"] = badqual_tag
+        data_list.append(badqual)
+    if ztf_data.non_detections is not None:
+        ulimits = ztf_data.non_detections[avail_cols].copy()
+        ulimits.loc[:, "tag"] = ulimit_tag
+        data_list.append(ulimits)
+    if len(data_list) > 0:
+        ztf_lc = pd.concat(data_list, ignore_index=True)
+    else:
+        ztf_lc = ztf_data.lightcurve
 
     ztf_lc.loc[:, "band"] = ztf_lc["fid"].map(ztf_band_lookup)
-    avail_cols = [col for col in use_cols if col in ztf_lc.columns]
-    missing_cols = [col for col in use_cols if col not in ztf_lc.columns]
-    if len(missing_cols) > 0:
-        logger.warning(f"columns unavailable: {missing_cols}")
 
-    ztf_lc = ztf_lc[avail_cols]
     ztf_lc.sort_values("jd", inplace=True)
     ztf_lc.rename(ztf_colmap, axis=1, inplace=True)
     if "mjd" not in ztf_lc.columns:
         ztf_lc.insert(1, "mjd", Time(ztf_lc["jd"], format="jd").mjd)
+
     return ztf_lc
 
 
@@ -54,20 +70,20 @@ def prepare_ztf_data(
 def prepare_atlas_data(
     atlas_data: TargetData,
     average_epochs=True,
-    valid_tag="valid",
-    badqual_tag="badqual",
-    ulimit_tag="upperlim",
+    valid_tag=DEFAULT_VALID_TAG,
+    badqual_tag=DEFAULT_BADQUAL_TAG,
+    ulimit_tag=DEFAULT_ULIMIT_TAG,
 ):
     atlas_band_lookup = {"o": "atlaso", "c": "atlasc"}
     # atlas_cols = ["m", "dm", "mag5sig"]
-    atlas_rename = {"m": "mag", "dm": "magerr", "mag5sig": "diffmaglim"}
+    atlas_colmap = {"m": "mag", "dm": "magerr", "mag5sig": "diffmaglim"}
 
     atlas_lc = atlas_data.lightcurve.copy()
 
     # atlas_df["snr"] = atlas_df["uJy"] / atlas_df["duJy"]
     atlas_lc["snr"] = 2.5 / (np.log(10.0) * atlas_lc["dm"])
 
-    flux_vals = 10 ** (-0.4 * (abs(atlas_df["m"]) - 23.9))
+    flux_vals = 10 ** (-0.4 * (abs(atlas_lc["m"]) - 23.9))
     flux_sign = flux_vals / abs(flux_vals)
     atlas_lc["flux"] = flux_vals * flux_sign
     atlas_lc["fluxerr"] = atlas_lc["flux"] / atlas_lc["snr"]
@@ -112,30 +128,32 @@ def prepare_atlas_data(
         atlas_lc.loc[:, "jd"] = Time(atlas_lc["mjd"].values, format="mjd").jd
         atlas_lc.loc[:, "tag"] = pd.Series(tag_data)
 
-    atlas_lc.rename(atlas_rename, axis=1, inplace=True)
+    atlas_lc.rename(atlas_colmap, axis=1, inplace=True)
     use_cols = ["mjd", "jd", "mag", "magerr", "diffmaglim", "tag", "band"]
     return atlas_lc[use_cols]
 
 
 def prepare_yse_data(
     yse_data: TargetData,
-    valid_tag="valid",
-    badqual_tag="badqual",
-    ulimit_tag="upperlim",
+    valid_tag=DEFAULT_VALID_TAG,
+    badqual_tag=DEFAULT_BADQUAL_TAG,
+    ulimit_tag=DEFAULT_ULIMIT_TAG,
 ):
     yse_band_lookup = {band: f"ps1::{band}" for band in "g r i z y".split()}
 
     yse_lc = yse_data.lightcurve.copy()
     yse_lc["band"] = yse_lc["flt"].map(yse_band_lookup)
-    yse_lc["tag"] = vaild_tag
+    yse_lc["tag"] = valid_tag
     # TODO: properly set tag for limits, etc.
     return yse_lc
 
 
 class DefaultLightcurveCompiler:
-    valid_tag = "valid"
-    ulimit_tag = "upperlim"
-    badqual_tag = "badquality"
+    __name__ = "default_lightcurve_compiler"
+
+    valid_tag = DEFAULT_VALID_TAG
+    badqual_tag = DEFAULT_BADQUAL_TAG
+    ulimit_tag = DEFAULT_ULIMIT_TAG
 
     def __init__(self, average_atlas_epochs=True, ztf_broker_priority=None, **config):
         self.average_atlas_epochs = average_atlas_epochs
@@ -144,9 +162,7 @@ class DefaultLightcurveCompiler:
         for key, val in config.items():
             logger.warning(f"unknown config option: {key} ({val})")
 
-    def __call__(self, target: Target):
-        print(f"compiling {target.objectId}")
-        print(f"target_data keys: {target.target_data.keys()}")
+    def __call__(self, target: Target, t_ref):
         lightcurve_dfs = []
 
         tags = {
@@ -154,6 +170,8 @@ class DefaultLightcurveCompiler:
             "ulimit_tag": self.ulimit_tag,
             "badqual_tag": self.badqual_tag,
         }
+
+        objectId = target.objectId
 
         # Select the best data from the ZTF brokers.
         broker_data = None
@@ -179,7 +197,8 @@ class DefaultLightcurveCompiler:
         # Get ATLAS data
         atlas_data = target.target_data.get("atlas", None)
         if atlas_data is not None:
-            if (atlas_data.lightcurve) and (not atlas_data.lightcurve.empty):
+            atlas_lc = atlas_data.lightcurve
+            if (atlas_lc is not None) and (not atlas_lc.empty):
                 atlas_lc = prepare_atlas_data(
                     atlas_data, average_epochs=self.average_atlas_epochs, **tags
                 )

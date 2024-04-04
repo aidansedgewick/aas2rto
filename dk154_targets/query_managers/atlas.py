@@ -77,11 +77,11 @@ class AtlasQueryManager(BaseQueryManager):
 
         self.project_identifier = self.atlas_config.get("project_identifier", None)
         if self.project_identifier is None:
-            self.project_identifier = Path(data_path).parent.stem
+            self.project_identifier = Path(parent_path).parent.stem
             msg = (
-                f"\033[33mmissing project_identifier set to {self.project_identifier}\033[0m"
+                f"\n    \033[33mATLAS config missing project_identifier set to {self.project_identifier}\033[0m"
                 f"\n    atlas_config should contain a unique project_identifier"
-                f"\n    so that atlas queries aren't deleted by another project on the server."
+                f"\n    so that atlas queries aren't deleted on the server by another project."
             )
             logger.warning(msg)
 
@@ -370,8 +370,13 @@ class AtlasQueryManager(BaseQueryManager):
 
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
+        try:
+            self.recover_finished_queries(
+                t_ref=t_ref
+            )  # also populates "submitted queries"
+        except requests.exceptions.JSONDecodeError as e:
+            return e
 
-        self.recover_finished_queries(t_ref=t_ref)  # also populates "submitted queries"
         self.retry_throttled_queries(t_ref=t_ref)
         query_candidates = self.select_query_candidates(t_ref=t_ref)
         self.submit_new_queries(query_candidates, t_ref=t_ref)

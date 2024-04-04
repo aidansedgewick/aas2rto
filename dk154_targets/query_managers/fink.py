@@ -95,7 +95,6 @@ def combine_fink_detections_non_detections(
         non_detections.query("tag!='valid'", inplace=True)
         if "candid" in non_detections.columns:
             if not all(pd.isnull(non_detections["candid"])):
-                print(non_detections["candid"])
                 raise ValueError(
                     f"{objectId}: not all non-detections have Null `candid`"
                 )
@@ -178,8 +177,6 @@ def get_updates_from_query_results(
 ):
     """
     Compare two dataframes of query_results. Get the rows which have been updated, or are new.
-
-    Index column should be objectId.
     """
 
     if updated_results is None or updated_results.empty:
@@ -400,7 +397,7 @@ class FinkQueryManager(BaseQueryManager):
         for alert in alerts:
             objectId = alert.get("objectId", None)
             if objectId is None:
-                raise MissingObjectIdError("objectId is None in fink_alert")
+                raise MissingObjectIdError("objectId is `None` in fink_alert")
             target = self.target_lookup.get(objectId, None)
             if target is not None:
                 # Don't need to make a target.
@@ -434,9 +431,8 @@ class FinkQueryManager(BaseQueryManager):
 
         for fink_class in self.object_queries:
             query_results_file = self.get_query_results_file(fink_class)
-            query_results_file_age = calc_file_age(
-                query_results_file, t_ref
-            )  # np.inf if missing...
+            query_results_file_age = calc_file_age(query_results_file, t_ref)
+            # Age is np.inf if missing!
 
             if self.query_results.get(fink_class) is None:
                 if query_results_file.exists():
@@ -584,6 +580,8 @@ class FinkQueryManager(BaseQueryManager):
         if objectId_list is None:
             objectId_list = list(self.target_lookup.keys())
             logger.info(f"try loading all {len(objectId_list)} lcs in target_lookup")
+        else:
+            logger.info(f"try loading {len(objectId_list)} lcs")
 
         for objectId in objectId_list:
             # TODO: not optimum to read every time... but not a bottleneck for now.
@@ -598,15 +596,14 @@ class FinkQueryManager(BaseQueryManager):
                 logger.warning(f"load_lightcurve: {objectId} not in target_lookup!")
                 missing.append(objectId)
                 continue
-            else:
-                fink_data = target.get_target_data("fink")
-                existing_lightcurve = fink_data.lightcurve
-                if existing_lightcurve is not None:
-                    if len(lightcurve) <= len(existing_lightcurve):
-                        skipped.append(objectId)
-                        continue
+            fink_data = target.get_target_data("fink")
+            existing_lightcurve = fink_data.lightcurve
+            if existing_lightcurve is not None:
+                if len(lightcurve) <= len(existing_lightcurve):
+                    skipped.append(objectId)
+                    continue
             loaded.append(objectId)
-            lightcurve = lightcurve[lightcurve["jd"] < t_ref.jd]
+            # lightcurve = lightcurve[lightcurve["jd"] < t_ref.jd]
             fink_data.add_lightcurve(lightcurve)
             target.updated = True
         t_end = time.perf_counter()
@@ -614,10 +611,9 @@ class FinkQueryManager(BaseQueryManager):
         N_loaded = len(loaded)
         N_missing = len(missing)
         N_skipped = len(skipped)
-        # if N_loaded > 0:
-        logger.info(
-            f"loaded {N_loaded}, missing {N_missing} lightcurves in {t_end-t_start:.1f}s"
-        )
+        t_load = t_end - t_start
+        msg = f"loaded {N_loaded}, missing {N_missing} lightcurves in {t_load:.1f}s"
+        logger.info(msg)
         return loaded, missing
 
     def load_single_lightcurve(self, objectId: str):
@@ -634,7 +630,7 @@ class FinkQueryManager(BaseQueryManager):
         except pd.errors.EmptyDataError as e:
             logger.warning(f"bad lightcurve file for {objectId}")
             return None
-        # print(f"{objectId} time to read", time.perf_counter()-t1)
+        # print(f"{objectId} {len(lightcurve)} rows", time.perf_counter() - t1)
         return lightcurve
 
     def load_missing_alerts(self, objectId: str):
@@ -678,6 +674,8 @@ class FinkQueryManager(BaseQueryManager):
                 lightcurve = fink_data.lightcurve
                 lightcurve.to_csv(lightcurve_file, index=False)
             integrated_alerts.append(objectId)
+
+            target.updated = True
         if len(integrated_alerts):
             logger.info(
                 f"integrate alerts into LC for {len(integrated_alerts)} targets"
@@ -687,10 +685,10 @@ class FinkQueryManager(BaseQueryManager):
     def load_cutouts(self):
         loaded_cutouts = []
         for objectId, target in self.target_lookup.items():
-            fink_data = self.get_target_data("fink")
+            fink_data = target.get_target_data("fink")
             cutouts_are_None = [im is None for k, im in fink_data.cutouts.items()]
             for candid in fink_data.detections["candid"][::-1]:
-                cutouts_file = target.get_cutouts_file(objectId, candid)
+                cutouts_file = self.get_cutouts_file(objectId, candid)
                 if cutouts_file.exists():
                     cutouts_candid = fink_data.meta.get("cutouts_candid", None)
                     if cutouts_candid == candid:
@@ -728,7 +726,7 @@ class FinkQueryManager(BaseQueryManager):
         alerts = self.listen_for_alerts()
         processed_alerts = self.process_alerts(alerts, t_ref=t_ref)
         self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
-        print("fink alerts:", time.perf_counter() - t1)
+        # print("fink alerts:", time.perf_counter() - t1)
 
         new_alerts = set([alert["objectId"] for alert in processed_alerts])
         success, failed = self.perform_lightcurve_queries(new_alerts)

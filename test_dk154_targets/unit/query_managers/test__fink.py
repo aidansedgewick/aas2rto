@@ -20,7 +20,6 @@ from dk154_targets.exc import (
     MissingKeysWarning,
     UnexpectedKeysWarning,
 )
-
 from dk154_targets.query_managers import fink
 from dk154_targets.query_managers.fink import (
     combine_fink_detections_non_detections,
@@ -177,7 +176,6 @@ def target_lookup():
 
 @pytest.fixture
 def fink_qm(fink_config, target_lookup, tmp_path):
-    print(tmp_path)
     return FinkQueryManager(
         fink_config, target_lookup, parent_path=tmp_path, create_paths=False
     )
@@ -534,7 +532,9 @@ class Test__FinkQueryManagerInit:
     def test__bad_fink_kafka_config(self, kafka_config, target_lookup, tmp_path):
         bad_kafka_config = copy.deepcopy(kafka_config)
         _ = bad_kafka_config.pop("username")
-        assert set(bad_kafka_config.keys()) == set(["group_id", "bootstrap.servers", "topics"])
+        assert set(bad_kafka_config.keys()) == set(
+            ["group_id", "bootstrap.servers", "topics"]
+        )
         config = {"kafka_config": bad_kafka_config}
         with pytest.warns(MissingKeysWarning):
             with pytest.raises(BadKafkaConfigError):
@@ -544,9 +544,11 @@ class Test__FinkQueryManagerInit:
 
         bad_kafka_config = copy.deepcopy(kafka_config)
         _ = bad_kafka_config.pop("group_id")
-        assert set(bad_kafka_config.keys()) == set(["username", "bootstrap.servers", "topics"])
+        assert set(bad_kafka_config.keys()) == set(
+            ["username", "bootstrap.servers", "topics"]
+        )
         config = {"kafka_config": bad_kafka_config}
-        with pytest.warns(MissingKeysWarning):            
+        with pytest.warns(MissingKeysWarning):
             with pytest.raises(BadKafkaConfigError):
                 qm = FinkQueryManager(
                     config, target_lookup, parent_path=tmp_path, create_paths=False
@@ -556,7 +558,7 @@ class Test__FinkQueryManagerInit:
         _ = bad_kafka_config.pop("bootstrap.servers")
         assert set(bad_kafka_config.keys()) == set(["username", "group_id", "topics"])
         config = {"kafka_config": bad_kafka_config}
-        with pytest.warns(MissingKeysWarning):                
+        with pytest.warns(MissingKeysWarning):
             with pytest.raises(BadKafkaConfigError):
                 qm = FinkQueryManager(
                     config, target_lookup, parent_path=tmp_path, create_paths=False
@@ -564,13 +566,33 @@ class Test__FinkQueryManagerInit:
 
         bad_kafka_config = copy.deepcopy(kafka_config)
         _ = bad_kafka_config.pop("topics")
-        assert set(bad_kafka_config.keys()) == set(["username", "group_id", "bootstrap.servers"])
+        assert set(bad_kafka_config.keys()) == set(
+            ["username", "group_id", "bootstrap.servers"]
+        )
         config = {"kafka_config": bad_kafka_config}
         with pytest.warns(MissingKeysWarning):
             with pytest.raises(BadKafkaConfigError):
                 qm = FinkQueryManager(
                     config, target_lookup, parent_path=tmp_path, create_paths=False
                 )
+
+    def test__warning_on_fink_config_keys(self, fink_config, target_lookup, tmp_path):
+        fink_config["blah"] = 0
+
+        with pytest.warns(UnexpectedKeysWarning):
+            fink_qm = FinkQueryManager(
+                fink_config, target_lookup, parent_path=tmp_path, create_paths=False
+            )
+
+    def test__warning_on_fink_query_parameters(
+        self, fink_config, target_lookup, tmp_path
+    ):
+        fink_config["query_parameters"]["blah"] = 0
+
+        with pytest.warns(UnexpectedKeysWarning):
+            qm = FinkQueryManager(
+                fink_config, target_lookup, parent_path=tmp_path, create_paths=False
+            )
 
 
 class Test__FinkAlertStreams:

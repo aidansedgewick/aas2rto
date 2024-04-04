@@ -53,7 +53,7 @@ def print_header(s) -> None:
     print(fmt_s)
 
 
-def check_config_keys(provided, expected, name: str = None) -> Tuple:
+def check_config_keys(provided, expected, name: str = None) -> Tuple[List, List]:
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):
@@ -63,9 +63,7 @@ def check_config_keys(provided, expected, name: str = None) -> Tuple:
     return unexpected_keys, missing_keys
 
 
-def check_unexpected_config_keys(
-    provided, expected, name: str = None
-) -> Tuple[List, List]:
+def check_unexpected_config_keys(provided, expected, name: str = None) -> list:
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):

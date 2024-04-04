@@ -6,13 +6,13 @@ from pathlib import Path
 from astropy.time import Time
 
 from dk154_targets import TargetSelector
+from dk154_targets.modeling import empty_modeling, SncosmoSaltModeler
+from dk154_targets.plotters import plot_default_lightcurve, plot_sncosmo_lightcurve
 from dk154_targets.scoring import (
     example_functions,
     SupernovaPeakScore,
     KilonovaDiscReject,
 )
-from dk154_targets.modeling import empty_modeling, sncosmo_salt
-
 from dk154_targets import paths
 
 logger = logging.getLogger("main")
@@ -38,9 +38,11 @@ if __name__ == "__main__":
     config_file = args.config or paths.config_path / "selector_config.yaml"
     config_file = Path(args.config)
 
+    lc_plotting_function = plot_default_lightcurve
     if "supernovae" in config_file.stem:
         scoring_function = SupernovaPeakScore()  # This is a class - initialise it!
-        modeling_function = sncosmo_salt()
+        modeling_function = SncosmoSaltModeler()
+        lc_plotting_function = plot_sncosmo_lightcurve
     elif "atlas_test" in config_file.stem:
         scoring_function = example_functions.latest_flux_atlas_requirement
         modeling_function = empty_modeling
@@ -62,6 +64,7 @@ if __name__ == "__main__":
         selector.start(
             scoring_function=scoring_function,
             modeling_function=modeling_function,
+            lc_plotting_function=lc_plotting_function,
             iterations=args.iterations,
             existing_targets_file=args.existing_targets_file,
         )

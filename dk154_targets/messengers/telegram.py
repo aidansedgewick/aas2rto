@@ -39,15 +39,26 @@ class TelegramMessenger:
         users_file = self.telegram_config.get("users_file", None)
 
         if isinstance(users, list):
-            msg = "in telegram config 'users', use a dict to give names!\n    eg. 01234567: 'user_name'"
+            msg = (
+                "in telegram config 'users', use a dict to give names!"
+                "\n    eg. 01234567: 'user_name'"
+            )
             logger.warning(msg)
             users = {u: "unknown_user" for u in users}
         self.users = users
 
         if isinstance(sudoers, list):
-            msg = "in telegram config 'sudoers', use a dict to give names!\n    eg. 01234567: 'sudoer_name'"
-            logger.warning()
             sudoers = {u: self.users.get(u, "unknown_sudoer") for u in sudoers}
+            unknown_sudoers = [
+                uid for uid, name in sudoers.items() if name == "unknown_sudoer"
+            ]
+            if len(unknown_sudoers) > 0:
+                msg = (
+                    f"unknown_sudoers: {unknown_sudoers}"
+                    "in telegram config 'sudoers', use a dict to give names!"
+                    f"\n    eg. 01234567: 'sudoer_name'"
+                )
+                logger.warning(msg)
         self.sudoers = sudoers
         self.users.update(self.sudoers)
 
@@ -81,14 +92,30 @@ class TelegramMessenger:
     def send_to_user(
         self, user, texts: List[str] = None, img_paths: List[str] = None, caption=None
     ):
-        if texts is not None:
-            if isinstance(texts, str):
-                texts = [texts]
-        if img_paths is not None:
-            if isinstance(img_paths, str) or isinstance(img_paths, Path):
-                img_paths = [img_paths]
 
-        if texts is not None:
+        img_paths = img_paths or []
+        if isinstance(img_paths, str) or isinstance(img_paths, Path):
+            img_paths = [img_paths]
+
+        texts = texts or []
+        if isinstance(texts, str):
+            texts = [texts]
+
+        formatted_texts = []
+        chunk = 4000
+        for text in texts:
+            if len(texts) > chunk:
+                # Telegram send fails if text has more than 4096 chars.
+                formatted_texts.append(f"MESSAGE SPLIT! longer than {chunk}")
+                text_split = [
+                    text[ii : ii + chunk] for ii in range(0, len(text), chunk)
+                ]
+                formatted_texts.extend(text_split)
+            else:
+                formatted_texts.append(text)
+        texts = formatted_texts
+
+        for text in texts:
             for text in texts:
                 # url = f"{self.http_url}/bot{self.token}/sendMessage?chat_id={user}&text={text}"
                 # requests.get(url)
@@ -107,7 +134,7 @@ class TelegramMessenger:
                         self.bot.send_photo(chat_id=user, photo=img, caption=caption)
             if len(img_list) > 2:
                 self.bot.send_media_group(chat_id=user, media=img_list)
-            return None
+        return None
 
     def message_users(
         self,
@@ -136,7 +163,7 @@ class TelegramMessenger:
                 )
             except Exception as e:
                 tr = traceback.format_exc()
-                exceptions.append(f"for user {user} ({user_label}):\n{e}\n\n")
+                exceptions.append(f"for user {user} ({user_label}):\n{tr}\n\n{e}\n\n")
         if len(exceptions) > 0:
             execption_str = "\nand\n".join(e for e in exceptions)
             msg = "During message_users:\n\n" + execption_str
