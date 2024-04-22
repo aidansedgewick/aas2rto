@@ -66,9 +66,9 @@ def mock_lc(true_model, fixed_t0, dt_vals):
     tagcol = np.concatenate([gmag_tag, rmag_tag])
 
     df = pd.DataFrame(
-        {"jd": t_grid, "mag": mag, "magerr": magerr, "band": band_col, "tag": tagcol}
+        {"mjd": t_grid, "mag": mag, "magerr": magerr, "band": band_col, "tag": tagcol}
     )
-    df.sort_values("jd", inplace=True, ignore_index=True)
+    df.sort_values("mjd", inplace=True, ignore_index=True)
     return df
 
 

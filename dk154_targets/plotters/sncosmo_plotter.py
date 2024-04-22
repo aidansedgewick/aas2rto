@@ -37,33 +37,44 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
         t_ref = t_ref or Time.now()
 
         plotter = cls(t_ref=t_ref, **kwargs)
-        plotter.plot_sncosmo_models(target)
-        plotter.plot_photometry(target)
-        plotter.add_cutouts(target)
-        plotter.format_axes(target)
-        plotter.add_comments(target)
+        plotter.plot_target(target)
         return plotter
 
     def __init__(
-        self, t_ref: Time = None, figsize=None, forecast_days=15.0, grid_dt=0.2
+        self,
+        t_ref: Time = None,
+        figsize=None,
+        forecast_days=15.0,
+        grid_dt=0.2,
+        model_name="sncosmo_salt",
     ):
         super().__init__(t_ref=t_ref, figsize=figsize)
         self.forecast_days = forecast_days
         self.grid_dt = grid_dt
 
+        self.target_has_models = False
         self.models_plotted = False
         self.samples_plotted = False
+        self.model_name = model_name
+
+    def plot_target(self, target: Target):
+        self.plot_sncosmo_models(target)
+        self.plot_photometry(target)
+        self.add_cutouts(target)
+        self.format_axes(target)
+        self.add_comments(target)
 
     def plot_sncosmo_models(self, target: Target):
 
-        model = target.models.get("sncosmo_salt", None)
+        model = target.models.get(self.model_name, None)
         if model is None:
             return
         if target.compiled_lightcurve is None:
             return
+        self.target_has_models = True
         lightcurve = target.compiled_lightcurve
-        t_start = target.compiled_lightcurve["jd"].min()
-        t_end = self.t_ref.jd + self.forecast_days
+        t_start = target.compiled_lightcurve["mjd"].min()
+        t_end = self.t_ref.mjd + self.forecast_days
         tgrid_main = np.arange(t_start, t_end + self.grid_dt, self.grid_dt)
 
         for ii, (band, band_history) in enumerate(lightcurve.groupby(self.band_col)):
@@ -88,7 +99,7 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
             model_flux = model_flux[pos_mask]
             tgrid = tgrid_main[pos_mask]
 
-            tgrid_shift = tgrid - self.t_ref.jd
+            tgrid_shift = tgrid - self.t_ref.mjd
 
             sample_tgrid_start = tgrid[0] - self.grid_dt
             sample_tgrid_end = (tgrid[-1] + 1.5 * self.grid_dt,)

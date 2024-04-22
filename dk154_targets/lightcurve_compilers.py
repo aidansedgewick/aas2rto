@@ -199,10 +199,11 @@ class DefaultLightcurveCompiler:
         if atlas_data is not None:
             atlas_lc = atlas_data.lightcurve
             if (atlas_lc is not None) and (not atlas_lc.empty):
-                atlas_lc = prepare_atlas_data(
+                atlas_df = prepare_atlas_data(
                     atlas_data, average_epochs=self.average_atlas_epochs, **tags
                 )
-                lightcurve_dfs.append(atlas_lc)
+                if not (len(atlas_df) == 0 or atlas_df.empty):
+                    lightcurve_dfs.append(atlas_df)
 
         # Get YSE data
         yse_data = target.target_data.get("yse", None)
@@ -211,7 +212,8 @@ class DefaultLightcurveCompiler:
                 yse_df = prepare_yse_data(
                     yse_data,
                 )
-                lightcurve_dfs.append(yse_df)
+                if not (len(yse_df) == 0 or yse_df.empty):
+                    lightcurve_dfs.append(yse_df)
 
         compiled_lightcurve = None
         if len(lightcurve_dfs) > 0:

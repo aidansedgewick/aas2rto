@@ -61,15 +61,24 @@ def calc_color_factor(gmag, rmag):
     return color_factor
 
 
-def calc_observatory_factor(alt_grid, min_alt=30.0, norm_alt=45.0):
+def calc_visibility_factor(alt_grid, min_alt=30.0, ref_alt=45.0):
     alt_above_minimum = np.maximum(alt_grid, min_alt) - min_alt
     integral = np.trapz(alt_above_minimum)
 
-    if min_alt > norm_alt:
-        raise ValueError(f"norm_alt > min_altitude ({norm_alt} > {min_alt})")
-    norm = len(alt_grid) * (norm_alt - min_alt)
+    if min_alt > ref_alt:
+        raise ValueError(f"norm_alt > min_altitude ({ref_alt} > {min_alt})")
+    norm = len(alt_grid) * (ref_alt - min_alt)
 
     return 1.0 / (integral / norm)
+
+
+def calc_altitude_factor(alt):
+    """
+    This is just sin(alt), with alt in deg.
+    motivated by X~sec(90-alt), where X is airmass.
+    promote high alt, so low airmass --> 1/X ~ sin(alt)
+    """
+    return np.sin(alt * np.pi / 180.0)
 
 
 class SupernovaPeakScore:
@@ -80,6 +89,9 @@ class SupernovaPeakScore:
         max_timespan: float = 20.0,
         min_rising_fraction: float = 0.4,
         min_altitude: float = 30.0,
+        ref_altitude: float = 90.0,
+        exclude_daytime: bool = False,
+        visibility_method: str = "visibility",
         min_ztf_detections: int = 3,
         default_color_factor: float = 0.1,
         broker_priority: tuple = None,
@@ -92,9 +104,20 @@ class SupernovaPeakScore:
         self.max_timespan = max_timespan
         self.min_rising_fraction = min_rising_fraction
         self.min_altitude = min_altitude
+        self.ref_altitude = ref_altitude
+        self.exclude_daytime = exclude_daytime
+        self.visibility_method = visibility_method
         self.default_color_factor = default_color_factor
         self.min_ztf_detections = min_ztf_detections
         self.broker_priority = broker_priority or DEFAULT_ZTF_BROKER_PRIORITY
+
+        expected_vis_methods = ["visibility", "altitude"]
+        if self.visibility_method not in expected_vis_methods:
+            msg = (
+                f"visibility_factor should be one of {expected_vis_methods},\n    "
+                f"not {visibility_method}"
+            )
+            raise ValueError(msg)
 
     def __call__(
         self, target: Target, observatory: Observer, t_ref: Time
@@ -107,6 +130,8 @@ class SupernovaPeakScore:
         factors = {}
         reject = False
         exclude = False  # If true, don't reject, but not interesting right now.
+
+        objectId = target.objectId
 
         ztf_source = None
         for source in self.broker_priority:
@@ -123,8 +148,13 @@ class SupernovaPeakScore:
             return -1.0, scoring_comments, reject_comments
         ztf_detections = ztf_source.detections
 
-        ###===== Is it bright enough =======###
+        if any(ztf_detections["mjd"] > t_ref.mjd):
+            mjd_max = ztf_detections["mjd"].max()
+            logger.warning(
+                f"{objectId}:\n    highest date ({mjd_max}) later than t_ref={t_ref.mjd} ?!"
+            )
 
+        ###===== Is it bright enough =======###
         ztf_detections = ztf_detections[ztf_detections["jd"] < t_ref.jd]
         last_mag = ztf_detections["magpsf"].values[-1]
 
@@ -139,7 +169,7 @@ class SupernovaPeakScore:
         factors["mag"] = mag_factor
 
         ###===== Is the target very old? ======###
-        timespan = t_ref.jd - ztf_detections["jd"].min()
+        timespan = t_ref.mjd - ztf_detections["mjd"].min()
         factors["timespan"] = calc_timespan_factor(
             timespan, characteristic_timespan=self.max_timespan
         )
@@ -159,7 +189,7 @@ class SupernovaPeakScore:
 
         ###===== Is the target still rising ======###
         for fid, fid_history in ztf_detections.groupby("fid"):
-            fid_history.sort_values("jd", inplace=True)
+            fid_history.sort_values("mjd", inplace=True)
             rising_fraction_fid = calc_rising_fraction(fid_history)
             scoring_comments.append(
                 f"f_rising={rising_fraction_fid:.2f} for {len(fid_history)} band {fid} obs"
@@ -199,12 +229,17 @@ class SupernovaPeakScore:
                 sncosmo_model.update(pdict)
 
             ###===== Time from peak?
-            peak_dt = t_ref.jd - sncosmo_model["t0"]
+            t0 = sncosmo_model["t0"]
+            peak_dt = t_ref.mjd - sncosmo_model["t0"]
             interest_factor = peak_only_interest_function(peak_dt)
             if not np.isfinite(interest_factor):
                 interest_factor = 1.0
-                scoring_comments.append("interest_factor not finite. set 1.0")
-                print(target.objectId, peak_dt, t_ref.jd, sncosmo_model["t0"])
+                msg = (
+                    f"{objectId} interest_factor not finite:\n    "
+                    f"dt={peak_dt:.2f}, mjd={t_ref.mjd:.2f}, t0={t0:.2f}"
+                )
+                logger.warning(msg)
+                scoring_comments.append(msg)
             factors["interest_factor"] = interest_factor
             interest_comment = (
                 f"interest {interest_factor:.2f} from peak_dt={peak_dt:.2f}d"
@@ -250,54 +285,69 @@ class SupernovaPeakScore:
 
             obs_name = getattr(observatory, "name", None)
             if obs_name is None:
-                raise ValueError("observatory has no name!!")
+                raise ValueError(f"observatory {observatory} has no name!!")
             obs_info = target.observatory_info.get(obs_name, None)
             if obs_info is None:
-                logger.warning(f"precomputed obs_info is None for {obs_name}")
+                logger.warning(f"obs_info=None for {obs_name} {objectId}")
+                target_altaz = None
+                logger.warning("calc curr_sun_alt. this is slow!")
+                curr_sun_alt = observatory.sun_altaz(t_ref).alt.deg
 
-            t_grid = obs_info.t_grid
-            sunset = obs_info.sunset
-            sunrise = obs_info.sunrise
-            target_altaz = obs_info.target_altaz
-
-            if sunrise is None or sunset is None:
-                scoring_comments.append(f"sun never sets at this observatory")
-                exclude = True
             else:
-                if target_altaz is not None:
-                    night_mask = (sunset.jd < t_grid.jd) & (t_grid.jd < sunrise.jd)
-                    night_alt = target_altaz.alt.deg[night_mask]
-                    try:
-                        next_alt = night_alt[0]
-                    except Exception as e:
-                        print(f"t_ref {t_ref.jd}")
-                        print(f"night_alt is {night_alt}")
-                        print(f"t_grid 0, -1: {t_grid[0].jd}, {t_grid[-1].jd}")
-                        print(f"sunset, sunrise {sunset.jd}, {sunrise.jd}")
-                        print(f"night_mask True: {sum(night_mask)} / {len(night_mask)}")
-                        tr = traceback.format_exc()
-                        print(tr)
-                        raise ValueError(e)
+                sunset = obs_info.sunset
+                sunrise = obs_info.sunrise
+                target_altaz = obs_info.target_altaz
+                curr_sun_alt = obs_info.sun_altaz.alt.deg[0]
 
-                    if all(night_alt < min_alt):
-                        exclude = (
-                            True  # NOT reject - it might be interesting elsewhere.
-                        )
-                    else:
-                        if next_alt < min_alt:
-                            exclude = True
-                            comment = f"alt={next_alt:.1f} < min_alt={min_alt:.1f} at {sunset.isot}, {obs_name}"
-                            scoring_comments.append(comment)
-                        else:
-                            observing_factor = calc_observatory_factor(
-                                night_alt, min_alt=min_alt, norm_alt=45.0
-                            )
-                            factors["observing_factor"] = observing_factor
-                            scoring_comments.append(
-                                f"obeserving factor {observing_factor}"
-                            )
+                if obs_info.sunset is None or obs_info.sunrise is None:
+                    scoring_comments.append(f"sun never sets at this observatory")
+                    exclude = True
+
+            if self.exclude_daytime and curr_sun_alt > -18.0:
+                scoring_comments.append(f"exclude as sun up.")
+                exclude = True
+
+            vis_method = self.visibility_method  # so we can force change it if we need.
+            if target_altaz is not None:
+                t_grid = obs_info.t_grid
+                night_mask = (sunset.jd < t_grid.jd) & (t_grid.jd < sunrise.jd)
+                night_alt = target_altaz.alt.deg[night_mask]
+                curr_alt = target_altaz.alt.deg[0]
+
+                if all(night_alt < min_alt):
+                    exclude = True
+            else:
+                if vis_method != "altitude":
+                    msg = (
+                        f"{objectId} obs_info has no target alt_az"
+                        "force vis_method='altitude'"
+                    )
+                    logger.warning(msg)
+                vis_method = "altitude"
+                night_alt = None
+                curr_alt = observatory.altaz(t_ref, target.coord).alt.deg
+
+            if curr_alt < min_alt:
+                exclude = True
+
+            if not exclude:
+                if vis_method == "altitude":
+                    vis_factor = calc_altitude_factor(curr_alt)
+                    score_comm = (
+                        f"vis_factor={vis_factor:.2f} from alt={curr_alt:.2f}deg"
+                    )
+                elif vis_method == "visibility":
+                    vis_factor = calc_visibility_factor(
+                        night_alt, min_alt=min_alt, ref_alt=self.ref_altitude
+                    )
                 else:
-                    logger.warning(f"target {target.objectId} has no target_altaz!")
+                    unexp_comm = f"unexpected method {vis_method}: vis_factor = 1.0"
+                    scoring_comments.append(unexp_comm)
+                    logger.warning(unexp_comm)
+                    vis_factor = 1.0
+                vis_comm = f"vis_factor={vis_factor:.2f} from alt={curr_alt:.2f}deg, method='{vis_method}'"
+                scoring_comments.append(vis_comm)
+                factors["vis_factor"] = vis_factor
 
         scoring_factors = np.array(list(factors.values()))
         if not all(scoring_factors > 0):
@@ -305,7 +355,7 @@ class SupernovaPeakScore:
                 f"    {k}={v}" for k, v in factors.items() if not v > 0
             )
             reject_comments.append(neg_factors)
-            logger.warning(f"{target.objectId} has negative factors:\n{neg_factors}")
+            logger.warning(f"{objectId} has negative factors:\n{neg_factors}")
             reject = True
 
         combined_factors = np.prod(scoring_factors)
@@ -313,12 +363,12 @@ class SupernovaPeakScore:
 
         # scoring_str = "\n".join(f"    {k}={v:.3f}" for k, v in factors.items())
         scoring_str = "\n".join(f"   {comm}" for comm in scoring_comments)
-        logger.debug(f"{target.objectId} has factors:\n {scoring_str}")
+        logger.debug(f"{objectId} has factors:\n {scoring_str}")
 
         if exclude:
             final_score = -1.0
         if reject:
             reject_str = "\n".join(f"    {comm}" for comm in reject_comments)
-            logger.debug(f"{target.objectId}")
+            logger.debug(f"{objectId}")
             final_score = -np.inf
         return final_score, scoring_comments, reject_comments

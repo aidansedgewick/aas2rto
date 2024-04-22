@@ -9,10 +9,7 @@ import pandas as pd
 
 from astropy.table import Table
 
-try:
-    import sncosmo
-except ModuleNotFoundError as e:
-    sncosmo = None
+import sncosmo
 
 try:
     import iminuit
@@ -53,7 +50,7 @@ except FileNotFoundError as e:
 
 def build_astropy_lightcurve(detections: pd.DataFrame) -> Table:
     data = dict(
-        time=detections["jd"].values,  # .values is an np array...
+        time=detections["mjd"].values,  # .values is an np array...
         # band=detections["band"].map(ztf_band_lookup).values,
         band=detections["band"].values,
         mag=detections["mag"].values,
@@ -184,6 +181,7 @@ class SncosmoSaltModeler:
                 known_redshift = tns_data.parameters.get("Redshift", None)
 
         if known_redshift is not None:
+            print(type(known_redshift))
             logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
             model.set(z=known_redshift)
             fitting_params.remove("z")

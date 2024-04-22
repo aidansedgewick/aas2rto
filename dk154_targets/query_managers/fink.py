@@ -108,6 +108,8 @@ def process_fink_lightcurve(raw_lightcurve: pd.DataFrame):
     lightcurve = raw_lightcurve.copy(deep=True)
     if not lightcurve.empty:
         lightcurve.sort_values("jd", inplace=True)
+        mjd_col = Time(lightcurve["jd"], format="jd").mjd
+        lightcurve.insert(0, "mjd", mjd_col)
     else:
         lightcurve["jd"] = 0  # Fails later without a date column...
         lightcurve["mjd"] = 0
@@ -301,7 +303,7 @@ class FinkQueryManager(BaseQueryManager):
         kafka_config = self.fink_config.get("kafka_config", None)
         if kafka_config is None:
             logger.warning(
-                "no kafka_config: \033[31;1mwill not listen for alerts.\033[0m"
+                "no kafka_config: \033[33;1mwill not listen for alerts.\033[0m"
             )
             return None
         kafka_parameters.update(kafka_config)
@@ -630,6 +632,10 @@ class FinkQueryManager(BaseQueryManager):
         except pd.errors.EmptyDataError as e:
             logger.warning(f"bad lightcurve file for {objectId}")
             return None
+        if "mjd" not in lightcurve.columns:
+            mjd_dat = Time(lightcurve["jd"], format="jd").mjd
+            lightcurve.insert(1, "mjd", mjd_dat)
+
         # print(f"{objectId} {len(lightcurve)} rows", time.perf_counter() - t1)
         return lightcurve
 
@@ -711,11 +717,12 @@ class FinkQueryManager(BaseQueryManager):
                 continue
             target.send_updates = True
             topic_str = alert["topic"]
-            timestamp = alert.get("timestamp")
             alert_jd = alert.get("jd")
+            alert_time = Time(alert_jd, format="jd")
+            timestamp = alert_time.strftime("%Y-%m-%d %H:%M:%S")
             alert_text = (
                 f"FINK alert from {topic_str}\n"
-                f"     broadcast at jd={alert_jd:.5f}={timestamp}\n"
+                f"     broadcast at mjd={alert_time.mjd:.5f}={timestamp}\n"
             )
             target.update_messages.append(alert_text)
 

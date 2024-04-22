@@ -30,7 +30,7 @@ def calc_file_age(filepath, t_ref, allow_missing=True):
     return dt.jd
 
 
-def print_header(s) -> None:
+def print_header(s: str) -> None:
     """
     Print a nicely formatted header line.
 
@@ -38,8 +38,8 @@ def print_header(s) -> None:
     ----------
     s [str]
 
-    eg. if your string s="Hello!", print:
-    ### ============ Hello! ============ ###
+    eg. if your string s="Hello!", print:\n
+    \#\#\# ============ Hello! ============ \#\#\#
     """
     try:
         tsize = shutil.get_terminal_size()

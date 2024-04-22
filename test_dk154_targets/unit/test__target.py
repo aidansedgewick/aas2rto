@@ -331,7 +331,7 @@ class Test__TargetInit:
         assert np.isclose(t.dec, 60.0)
         assert isinstance(t.coord, SkyCoord)
         assert isinstance(t.astroplan_target, FixedTarget)
-        assert np.isclose(t.base_score, 100.0)
+        assert np.isclose(t.base_score, 1.0)
         assert t.compiled_lightcurve is None
 
         assert isinstance(t.target_data, dict)

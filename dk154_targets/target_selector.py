@@ -40,6 +40,7 @@ matplotlib.use("Agg")
 
 VALID_SKIP_TASKS = (
     "qm_tasks",
+    "obs_info",
     "pre_check",
     "modeling",
     "evaluate",
@@ -76,7 +77,9 @@ class TargetSelector:
         "minimum_score": 0.0,
         "retained_recovery_files": 5,
         "skip_tasks": [],
+        "obs_info_dt": 0.5 / 24.0,
         "lazy_modeling": True,
+        "lazy_compile": False,
         "lazy_plotting": True,
         "plotting_interval": 0.25,
         "write_comments": True,
@@ -319,7 +322,7 @@ class TargetSelector:
         self.target_lookup[target.objectId] = target
 
     def compute_observatory_info(
-        self, t_ref: Time = None, horizon: u.Quantity = -18 * u.deg
+        self, t_ref: Time = None, horizon: u.Quantity = -18 * u.deg, dt=0.5 / 24.0
     ):
         """
         Precompute some expensive information about the altitude for each observatory.
@@ -333,7 +336,7 @@ class TargetSelector:
                 continue
 
             obs_info = ObservatoryInfo.for_observatory(
-                observatory, t_ref=t_ref, horizon=horizon
+                observatory, t_ref=t_ref, horizon=horizon, dt=dt
             )
 
             for objectId, target in self.target_lookup.items():
@@ -396,7 +399,7 @@ class TargetSelector:
         return successful_targets, existing_targets, failed_targets
 
     def compile_target_lightcurves(
-        self, lightcurve_compiler: Callable = None, t_ref=None
+        self, lightcurve_compiler: Callable = None, lazy=False, t_ref=None
     ):
         """
         Compile all the data from the target_data into a convenient location,
@@ -413,26 +416,33 @@ class TargetSelector:
 
         if lightcurve_compiler is None:
             lightcurve_compiler = DefaultLightcurveCompiler()
-        logger.info("compile photometric data")
 
         try:
             lc_compiler_name = lightcurve_compiler.__name__
         except AttributeError as e:
             lc_compiler_name = type(lightcurve_compiler).__name__
+        logger.info("compile photometric data:")
         logger.info(f"use {lc_compiler_name}")
 
         compiled = []
-        not_compiled = []
+        skipped = []
+        failed = []
         for objectId, target in self.target_lookup.items():
+            compiled_exists = target.compiled_lightcurve is not None
+            if compiled_exists and (not target.updated) and lazy:
+                skipped.append(objectId)
+                continue
             compiled_lc = lightcurve_compiler(target, t_ref=t_ref)
             target.compiled_lightcurve = compiled_lc
             if compiled_lc is None:
-                not_compiled.append(objectId)
+                failed.append(objectId)
                 continue
             compiled.append(objectId)
-        if len(not_compiled) > 0:
-            logger.info(f"{len(not_compiled)} have no compiled lightcurve")
-        return compiled, not_compiled
+
+        logger.info(f"compiled:{len(compiled)}, skipped (lazy):{len(skipped)}")
+        if len(failed) > 0:
+            logger.warning(f"failed:{len(failed)} (no compiled lc!)")
+        return compiled, failed
 
     def perform_query_manager_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -509,9 +519,9 @@ class TargetSelector:
             scoring_res = scoring_function(target, observatory, t_ref)
         except Exception as e:
             details = [
-                f"For target {target.objectId} at obs {obs_name} at {t_ref.isot}, "
-                f"scoring with {scoring_function.__name__} failed. "
-                f"Set score to -1.0, to exclude."
+                f"    For target {target.objectId} at obs {obs_name} at {t_ref.isot},\n"
+                f"    scoring with {scoring_function.__name__} failed.\n"
+                f"    Set score to -1.0, to exclude.\n"
             ]
             scoring_res = (-1.0, details, [])
             self.send_crash_reports(text=details)
@@ -629,14 +639,16 @@ class TargetSelector:
                     model = func(target)
                     built.append(objectId)
                 except Exception as e:
+                    print(traceback.format_exc())
                     model = None
                     failed.append(objectId)
                     logger.warning(f"{model_key} failed for {objectId}")
                 target.models[model_key] = model
                 target.models_t_ref[model_key] = t_ref
 
-            summ_str = f"built:{len(built)} failed:{len(failed)} skipped:{len(skipped)}"
-            logger.info(summ_str)
+            logger.info(f"built:{len(built)} skipped (lazy):{len(skipped)}")
+            if len(failed) > 0:
+                logger.warning(f"failed:{len(failed)}")
 
     def write_target_comments(
         self, target_list: List[Target] = None, outdir: Path = None, t_ref: Time = None
@@ -1100,6 +1112,10 @@ class TargetSelector:
 
         # ================= Get some parameters from config ================= #
         write_comments = self.selector_parameters.get("write_comments", True)
+        obs_info_dt = self.selector_parameters.get("obs_info_dt", 0.5 / 24.0)
+        lazy_modeling = self.selector_parameters.get("lazy_modeling", True)
+        lazy_compile = self.selector_parameters.get("lazy_compile", False)
+        lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
         # self.clear_scratch_plots() # NO - lazy plotting re-uses existing plots.
 
         # =============== are there any tasks we should skip? =============== #
@@ -1117,17 +1133,23 @@ class TargetSelector:
             raise ValueError(errmsg)
 
         # =========================== Get new data =========================== #
+        self.check_for_targets_of_opportunity()
         if not "qm_tasks" in skip_tasks:
-            self.check_for_targets_of_opportunity()
             self.perform_query_manager_tasks(t_ref=t_ref)
         else:
             logger.info("skip query manager tasks")
 
         # ================= Prep before modeling and scoring ================= #
         t1 = time.perf_counter()
-        self.compute_observatory_info(t_ref=t_ref)
+        if not "obs_info" in skip_tasks:
+            self.compute_observatory_info(t_ref=t_ref, dt=obs_info_dt)
+        else:
+            logger.info("skip compute new obs_info for each target")
+        perf_times["obs_info"] = time.perf_counter() - t1
+
+        t1 = time.perf_counter()
         self.compile_target_lightcurves(
-            lightcurve_compiler=lightcurve_compiler, t_ref=t_ref
+            lightcurve_compiler=lightcurve_compiler, lazy=lazy_compile, t_ref=t_ref
         )
         perf_times["compile"] = time.perf_counter() - t1
 
@@ -1147,7 +1169,6 @@ class TargetSelector:
         # =========================== Build models =========================== #
         t1 = time.perf_counter()
         if not "modeling" in skip_tasks:
-            lazy_modeling = self.selector_parameters.get("lazy_modeling", True)
             self.build_target_models(modeling_function, t_ref=t_ref, lazy=lazy_modeling)
         perf_times["modeling"] = time.perf_counter() - t1
 
@@ -1179,7 +1200,6 @@ class TargetSelector:
         # ============================ Plotting ============================ #
         t1 = time.perf_counter()
         if not "plotting" in skip_tasks:
-            lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
             plotting_interval = self.selector_parameters.get("plotting_interval", 0.25)
             if lazy_plotting:
                 logger.info(f"re-use vis/lc plots <{plotting_interval*24:.1f}hr old")

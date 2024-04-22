@@ -237,7 +237,7 @@ class TargetData:
             return pd.concat([self.lightcurve, updates], ignore_index=True)
         if isinstance(updates, Table):
             return vstack([self.lightcurve, updates])
-        raise ValueError("should noth have made it here!")
+        raise ValueError("should not have made it here!")
 
     def integrate_equality(
         self, updates: pd.DataFrame, column, keep_updates=True, nan_values=(0,)
@@ -276,7 +276,7 @@ class Target:
     TODO: docstring here!
     """
 
-    default_base_score = 100.0
+    default_base_score = 1.0
 
     def __init__(
         self,

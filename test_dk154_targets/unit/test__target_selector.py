@@ -456,7 +456,7 @@ class Test__TargetsOfOpportunity:
 
         T101_in = Target("T101", ra=45.0, dec=30.0)
         assert T101_in.target_of_opportunity is False
-        assert np.isclose(T101_in.base_score, 100.0)
+        assert np.isclose(T101_in.base_score, 1.0)
         selector.add_target(T101_in)
 
         t_opp_path = selector.opp_targets_path
@@ -607,12 +607,12 @@ class Test__EvaluateTargets:
         selector.evaluate_targets_at_observatory(basic_scoring, None, t_ref=t_ref)
 
         t_lookup = selector.target_lookup
-        assert np.isclose(t_lookup["T101"].get_last_score(), 200.0)
-        assert np.isclose(t_lookup["T102"].get_last_score(), 180.0)
-        assert np.isclose(t_lookup["T103"].get_last_score(), 160.0)
-        assert np.isclose(t_lookup["T104"].get_last_score(), 140.0)
-        assert np.isclose(t_lookup["T105"].get_last_score(), 120.0)
-        assert np.isclose(t_lookup["T106"].get_last_score(), 100.0)
+        assert np.isclose(t_lookup["T101"].get_last_score(), 2.00)
+        assert np.isclose(t_lookup["T102"].get_last_score(), 1.80)
+        assert np.isclose(t_lookup["T103"].get_last_score(), 1.60)
+        assert np.isclose(t_lookup["T104"].get_last_score(), 1.40)
+        assert np.isclose(t_lookup["T105"].get_last_score(), 1.20)
+        assert np.isclose(t_lookup["T106"].get_last_score(), 1.00)
 
         assert len(t_lookup["T101"].score_comments) == 1
         assert set(t_lookup["T101"].score_comments) == set(["no_observatory"])
@@ -630,12 +630,12 @@ class Test__EvaluateTargets:
         selector.evaluate_targets_at_observatory(basic_scoring, lasilla, t_ref=t_ref)
 
         t_lookup = selector.target_lookup
-        assert np.isclose(t_lookup["T101"].get_last_score(lasilla), 100.0)
-        assert np.isclose(t_lookup["T102"].get_last_score(lasilla), 90.0)
-        assert np.isclose(t_lookup["T103"].get_last_score(lasilla), 80.0)
-        assert np.isclose(t_lookup["T104"].get_last_score(lasilla), 70.0)
-        assert np.isclose(t_lookup["T105"].get_last_score(lasilla), 60.0)
-        assert np.isclose(t_lookup["T106"].get_last_score(lasilla), 50.0)
+        assert np.isclose(t_lookup["T101"].get_last_score(lasilla), 1.00)
+        assert np.isclose(t_lookup["T102"].get_last_score(lasilla), 0.90)
+        assert np.isclose(t_lookup["T103"].get_last_score(lasilla), 0.80)
+        assert np.isclose(t_lookup["T104"].get_last_score(lasilla), 0.70)
+        assert np.isclose(t_lookup["T105"].get_last_score(lasilla), 0.60)
+        assert np.isclose(t_lookup["T106"].get_last_score(lasilla), 0.50)
 
         assert len(t_lookup["T101"].score_comments) == 2
         assert set(t_lookup["T101"].score_comments) == set(
@@ -673,17 +673,17 @@ class Test__EvaluateTargets:
         selector.evaluate_targets(basic_scoring, t_ref=t_ref)
 
         t_lookup = selector.target_lookup
-        assert np.isclose(t_lookup["T101"].get_last_score(), 200.0)
-        assert np.isclose(t_lookup["T101"].get_last_score(lasilla), 100.0)
-        assert np.isclose(t_lookup["T101"].get_last_score("lasilla"), 100.0)
-        assert np.isclose(t_lookup["T101"].get_last_score(ucph), 100.0)
-        assert np.isclose(t_lookup["T101"].get_last_score("ucph"), 100.0)
+        assert np.isclose(t_lookup["T101"].get_last_score(), 2.00)
+        assert np.isclose(t_lookup["T101"].get_last_score(lasilla), 1.00)
+        assert np.isclose(t_lookup["T101"].get_last_score("lasilla"), 1.00)
+        assert np.isclose(t_lookup["T101"].get_last_score(ucph), 1.00)
+        assert np.isclose(t_lookup["T101"].get_last_score("ucph"), 1.00)
 
-        assert np.isclose(t_lookup["T103"].get_last_score(), 160.0)
-        assert np.isclose(t_lookup["T103"].get_last_score(lasilla), 80.0)
-        assert np.isclose(t_lookup["T103"].get_last_score("lasilla"), 80.0)
-        assert np.isclose(t_lookup["T103"].get_last_score(ucph), 80.0)
-        assert np.isclose(t_lookup["T103"].get_last_score("ucph"), 80.0)
+        assert np.isclose(t_lookup["T103"].get_last_score(), 1.60)
+        assert np.isclose(t_lookup["T103"].get_last_score(lasilla), 0.80)
+        assert np.isclose(t_lookup["T103"].get_last_score("lasilla"), 0.80)
+        assert np.isclose(t_lookup["T103"].get_last_score(ucph), 0.80)
+        assert np.isclose(t_lookup["T103"].get_last_score("ucph"), 0.80)
 
         assert set(t_lookup["T101"].score_comments.keys()) == set(
             ["no_observatory", "lasilla", "ucph"]
@@ -707,15 +707,15 @@ class Test__EvaluateTargets:
 
         selector.evaluate_targets(scoring_func, t_ref=t_ref)
 
-        assert np.isclose(t_lookup["T101"].get_last_score(), 2000.0)
-        assert np.isclose(t_lookup["T101"].get_last_score("lasilla"), 1000.0)
-        assert np.isclose(t_lookup["T101"].get_last_score("ucph"), 1000.0)
-        assert np.isclose(t_lookup["T102"].get_last_score(), 1800.0)
-        assert np.isclose(t_lookup["T102"].get_last_score("lasilla"), 900.0)
-        assert np.isclose(t_lookup["T102"].get_last_score("ucph"), 900.0)
-        assert np.isclose(t_lookup["T103"].get_last_score(), 1600.0)
-        assert np.isclose(t_lookup["T103"].get_last_score("lasilla"), 800.0)
-        assert np.isclose(t_lookup["T103"].get_last_score("ucph"), 800.0)
+        assert np.isclose(t_lookup["T101"].get_last_score(), 20.00)
+        assert np.isclose(t_lookup["T101"].get_last_score("lasilla"), 10.00)
+        assert np.isclose(t_lookup["T101"].get_last_score("ucph"), 10.00)
+        assert np.isclose(t_lookup["T102"].get_last_score(), 18.00)
+        assert np.isclose(t_lookup["T102"].get_last_score("lasilla"), 9.00)
+        assert np.isclose(t_lookup["T102"].get_last_score("ucph"), 9.00)
+        assert np.isclose(t_lookup["T103"].get_last_score(), 16.00)
+        assert np.isclose(t_lookup["T103"].get_last_score("lasilla"), 8.00)
+        assert np.isclose(t_lookup["T103"].get_last_score("ucph"), 8.00)
 
     def test__new_target_initial_check(
         self, selector_with_targets: TargetSelector, extra_targets
@@ -739,8 +739,8 @@ class Test__EvaluateTargets:
 
         scored = selector.new_target_initial_check(basic_scoring, t_ref=t_future)
         assert set(scored) == set(["T107", "T108", "T109", "T110"])
-        assert np.isclose(t_lookup["T107"].get_last_score(), 80.0)
-        assert np.isclose(t_lookup["T108"].get_last_score(), 60.0)
+        assert np.isclose(t_lookup["T107"].get_last_score(), 0.80)
+        assert np.isclose(t_lookup["T108"].get_last_score(), 0.60)
         assert np.isclose(t_lookup["T109"].get_last_score(), -1.0)  # fainter than 19.5
         assert np.isclose(t_lookup["T109"].get_last_score(), -1.0)  # fainter than 19.5
 
@@ -774,10 +774,10 @@ class Test__EvaluateTargets:
 
         assert not np.isfinite(t_lookup["T101"].get_last_score())
         assert not np.isfinite(t_lookup["T102"].get_last_score())
-        assert np.isclose(t_lookup["T103"].get_last_score(), 160.0)
-        assert np.isclose(t_lookup["T104"].get_last_score(), 140.0)
-        assert np.isclose(t_lookup["T105"].get_last_score(), 120.0)
-        assert np.isclose(t_lookup["T106"].get_last_score(), 100.0)
+        assert np.isclose(t_lookup["T103"].get_last_score(), 1.60)
+        assert np.isclose(t_lookup["T104"].get_last_score(), 1.40)
+        assert np.isclose(t_lookup["T105"].get_last_score(), 1.20)
+        assert np.isclose(t_lookup["T106"].get_last_score(), 1.00)
 
         # Not testing comms yet...
         removed = selector.remove_rejected_targets(t_ref=t1, write_comments=False)
@@ -1080,16 +1080,16 @@ class Test__Ranking:
 
         assert ranked_list.iloc[0].objectId == "T102"
         assert ranked_list.iloc[0].ranking == 1
-        assert np.isclose(ranked_list.iloc[0].score, 180.0)
+        assert np.isclose(ranked_list.iloc[0].score, 1.8)
         assert ranked_list.iloc[1].objectId == "T103"
         assert ranked_list.iloc[1].ranking == 2
-        assert np.isclose(ranked_list.iloc[1].score, 160.0)
+        assert np.isclose(ranked_list.iloc[1].score, 1.6)
         assert ranked_list.iloc[2].objectId == "T104"
         assert ranked_list.iloc[2].ranking == 3
-        assert np.isclose(ranked_list.iloc[2].score, 140.0)
+        assert np.isclose(ranked_list.iloc[2].score, 1.4)
         assert ranked_list.iloc[3].objectId == "T105"
         assert ranked_list.iloc[3].ranking == 4
-        assert np.isclose(ranked_list.iloc[3].score, 120.0)
+        assert np.isclose(ranked_list.iloc[3].score, 1.2)
 
         # Check rank-history correctly recorded
         T101 = t_lookup["T101"]
@@ -1101,7 +1101,7 @@ class Test__Ranking:
         T102 = t_lookup["T102"]
         assert len(T102.rank_history["no_observatory"]) == 1  # default unranked
         assert T102.rank_history["no_observatory"][0][0] == 1
-        assert np.isclose(T102.get_last_score(), 180.0)
+        assert np.isclose(T102.get_last_score(), 1.80)
         assert np.isclose(T102.rank_history["no_observatory"][0][1].mjd, 60015.0)
 
         T106 = t_lookup["T106"]
@@ -1376,7 +1376,7 @@ class Test__ExisitingTargets:
         assert set(result["objectId"]) == set(exp_objectIds)
 
         result.set_index("objectId", inplace=True)
-        assert np.isclose(result.loc["T106"].base_score, 100.0)
+        assert np.isclose(result.loc["T106"].base_score, 1.0)
         assert np.isclose(result.loc["T107"].base_score, 1000.0)
         assert np.isclose(result.loc["T108"].base_score, 1000.0)
 
