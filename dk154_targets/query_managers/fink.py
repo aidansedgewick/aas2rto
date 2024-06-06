@@ -61,8 +61,8 @@ def combine_fink_detections_non_detections(
     So we remove them from non-detections, add 0 to non_detections `candid` so that the
     int -> float conversion does not break these values, and re-concatenate detections.
     """
-    # Check to see if we're working with sensible data...
 
+    # Check to see if we're working with sensible data...
     try:
         objectId = detections["objectId"].iloc[0]
     except:
@@ -109,14 +109,13 @@ def process_fink_lightcurve(raw_lightcurve: pd.DataFrame):
     if not lightcurve.empty:
         lightcurve.sort_values("jd", inplace=True)
         mjd_col = Time(lightcurve["jd"], format="jd").mjd
-        lightcurve.insert(0, "mjd", mjd_col)
+        lightcurve.insert(1, "mjd", mjd_col)
     else:
         lightcurve["jd"] = 0  # Fails later without a date column...
         lightcurve["mjd"] = 0
     if "candid" not in lightcurve.columns:
-        # ie, LC of only non-detections/badqual - fails to integrate alerts.
+        # ie, LC of only non-detections/badqual - add, else fails to integrate alerts.
         lightcurve["candid"] = -1
-
     return lightcurve
 
 
@@ -242,8 +241,6 @@ class FinkQueryManager(BaseQueryManager):
     default_kafka_parameters = {"n_alerts": 10, "timeout": 10.0}
     required_kafka_parameters = ("username", "group_id", "bootstrap.servers", "topics")
     alert_extra_keys = (
-        "objectId",
-        "candid",
         "timestamp",
         "cdsxmatch",
         "rf_snia_vs_nonia",
@@ -369,13 +366,22 @@ class FinkQueryManager(BaseQueryManager):
 
             candidate["topic"] = topic
             candidate["tag"] = "valid"
-            extra_data = {k: alert[k] for k in self.alert_extra_keys}
+            candidate["mjd"] = Time(candidate["jd"], format="jd").mjd
+            candidate["objectId"] = objectId
+            candidate["candid"] = alert["candid"]
+
+            valid_keys = [k for k in self.alert_extra_keys if k in alert]
+            missing_keys = set(self.alert_extra_keys) - set(valid_keys)
+            if len(valid_keys) > 0:
+                logger.info(f"{objectId} missing keys: {missing_keys}")
+
+            extra_data = {k: alert[k] for k in valid_keys}
             candidate.update(extra_data)
             processed_alerts.append(candidate)
 
             if save_alerts:
-                alert_file = self.get_alert_file(objectId, candidate["candid"])
-                with open(alert_file, "w") as f:
+                alert_filepath = self.get_alert_file(objectId, candidate["candid"])
+                with open(alert_filepath, "w") as f:
                     json.dump(candidate, f, indent=2)
             if save_cutouts:
                 cutouts = {}
@@ -386,8 +392,10 @@ class FinkQueryManager(BaseQueryManager):
                     cutout = readstamp(data, return_type="array")
                     cutouts[imtype.lower()] = cutout
                 if len(cutouts) > 0:
-                    cutout_file = self.get_cutouts_file(objectId, candidate["candid"])
-                    with open(cutout_file, "wb+") as f:
+                    cutouts_filepath = self.get_cutouts_file(
+                        objectId, candidate["candid"]
+                    )
+                    with open(cutouts_filepath, "wb+") as f:
                         pickle.dump(cutouts, f)
         return processed_alerts
 
@@ -432,13 +440,13 @@ class FinkQueryManager(BaseQueryManager):
         lookback = self.query_parameters["object_query_lookback"]
 
         for fink_class in self.object_queries:
-            query_results_file = self.get_query_results_file(fink_class)
-            query_results_file_age = calc_file_age(query_results_file, t_ref)
+            query_results_filepath = self.get_query_results_file(fink_class)
+            query_results_file_age = calc_file_age(query_results_filepath, t_ref)
             # Age is np.inf if missing!
 
             if self.query_results.get(fink_class) is None:
-                if query_results_file.exists():
-                    query_results = pd.read_csv(query_results_file)
+                if query_results_filepath.exists():
+                    query_results = pd.read_csv(query_results_filepath)
                     query_results = process_fink_query_results(query_results)
                     self.query_results[fink_class] = query_results
             if query_results_file_age < self.query_parameters["object_query_interval"]:
@@ -467,9 +475,8 @@ class FinkQueryManager(BaseQueryManager):
             query_results = process_fink_query_results(
                 query_results, comparison=comparison
             )
-            query_results.to_csv(
-                query_results_file, index=False
-            )  # Save even if empty so don't re-query
+            # Save even if empty, so don't re-query unnecessarily.
+            query_results.to_csv(query_results_filepath, index=False)
             self.query_results[fink_class] = query_results
 
         if len(update_dfs) == 0:
@@ -505,9 +512,9 @@ class FinkQueryManager(BaseQueryManager):
 
         to_update = []
         for objectId, target in self.target_lookup.items():
-            lightcurve_file = self.get_lightcurve_file(objectId)
+            lightcurve_filepath = self.get_lightcurve_file(objectId)
             lightcurve_file_age = calc_file_age(
-                lightcurve_file, t_ref, allow_missing=True
+                lightcurve_filepath, t_ref, allow_missing=True
             )
             if (
                 lightcurve_file_age
@@ -528,7 +535,7 @@ class FinkQueryManager(BaseQueryManager):
         failed = []
         t_start = time.perf_counter()
         for objectId in objectId_list:
-            lightcurve_file = self.get_lightcurve_file(objectId)
+            lightcurve_filepath = self.get_lightcurve_file(objectId)
             if len(failed) > self.query_parameters["max_failed_queries"]:
                 msg = f"Too many failed queries ({len(failed)}), stop for now"
                 logger.info(msg)
@@ -560,7 +567,7 @@ class FinkQueryManager(BaseQueryManager):
             lightcurve = process_fink_lightcurve(raw_lightcurve)
             if lightcurve.empty:
                 logger.warning(f"\033[33m{objectId} lightcurve empty!\033[0m")
-            lightcurve.to_csv(lightcurve_file, index=False)
+            lightcurve.to_csv(lightcurve_filepath, index=False)
             success.append(objectId)
 
         if len(success) > 0 or len(failed) > 0:
@@ -621,14 +628,14 @@ class FinkQueryManager(BaseQueryManager):
     def load_single_lightcurve(self, objectId: str):
         t1 = time.perf_counter()
 
-        lightcurve_file = self.get_lightcurve_file(objectId)
-        if not lightcurve_file.exists():
+        lightcurve_filepath = self.get_lightcurve_file(objectId)
+        if not lightcurve_filepath.exists():
             logger.warning(f"{objectId} is missing lightcurve")
             return None
 
         t1 = time.perf_counter()
         try:
-            lightcurve = pd.read_csv(lightcurve_file, dtype={"candid": "Int64"})
+            lightcurve = pd.read_csv(lightcurve_filepath, dtype={"candid": "Int64"})
         except pd.errors.EmptyDataError as e:
             logger.warning(f"bad lightcurve file for {objectId}")
             return None
@@ -655,11 +662,13 @@ class FinkQueryManager(BaseQueryManager):
             existing_candids = fink_data.lightcurve["candid"].values
 
         loaded_alerts = []
-        for alert_file in alert_list:
-            if int(alert_file.stem) in existing_candids:
+        for alert_filepath in alert_list:
+            if int(alert_filepath.stem) in existing_candids:
                 continue
-            with open(alert_file, "r") as f:
+            with open(alert_filepath, "r") as f:
                 alert = json.load(f)
+                if "mjd" not in alert:
+                    alert["mjd"] = Time(alert["jd"], format="jd").mjd
                 loaded_alerts.append(alert)
         return loaded_alerts
 
@@ -672,13 +681,15 @@ class FinkQueryManager(BaseQueryManager):
                 continue
 
             alert_df = pd.DataFrame(loaded_alerts)
+            if "mjd" not in alert_df.columns:
+                alert_df["mjd"] = Time(alert_df["jd"], format="jd").mjd
             fink_data = target.get_target_data("fink")
             fink_data.integrate_lightcurve_updates(alert_df, column="candid")
 
             if save_lightcurve:
-                lightcurve_file = self.get_lightcurve_file(objectId)
+                lightcurve_filepath = self.get_lightcurve_file(objectId)
                 lightcurve = fink_data.lightcurve
-                lightcurve.to_csv(lightcurve_file, index=False)
+                lightcurve.to_csv(lightcurve_filepath, index=False)
             integrated_alerts.append(objectId)
 
             target.updated = True
@@ -694,15 +705,21 @@ class FinkQueryManager(BaseQueryManager):
             fink_data = target.get_target_data("fink")
             cutouts_are_None = [im is None for k, im in fink_data.cutouts.items()]
             for candid in fink_data.detections["candid"][::-1]:
-                cutouts_file = self.get_cutouts_file(objectId, candid)
-                if cutouts_file.exists():
+                cutouts_filepath = self.get_cutouts_file(objectId, candid)
+                if cutouts_filepath.exists():
                     cutouts_candid = fink_data.meta.get("cutouts_candid", None)
                     if cutouts_candid == candid:
                         # If the existing cutouts are from this candid,
                         # they must already be the latest (as we're searching in rev.)
                         break
-                    with open(cutouts_file, "rb") as f:
-                        cutouts = pickle.load(f)
+                    with open(cutouts_filepath, "rb") as f:
+                        try:
+                            cutouts = pickle.load(f)
+                        except EOFError as e:
+                            msg = f"{objectId}: {candid} bad cutouts - deleting file {cutouts_filepath}"
+                            logger.error(msg)
+                            cutouts_filepath.unlink()
+                            continue
                     fink_data.cutouts = cutouts
                     fink_data.meta["cutouts_candid"] = candid
                     loaded_cutouts.append(objectId)

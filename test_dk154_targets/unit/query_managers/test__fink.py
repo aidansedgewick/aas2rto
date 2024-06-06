@@ -198,6 +198,10 @@ def alert_base():
 
 @pytest.fixture
 def alert_list(alert_base):
+    """
+    Make list of fake alerts. each one is a little brighter than the last.
+    """
+
     l = []
     for ii in range(15):
         mjd = Time(60010.0 + ii, format="mjd")  # mjd60010 = 7-mar-23

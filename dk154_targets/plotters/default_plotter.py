@@ -56,6 +56,7 @@ class DefaultLightcurvePlotter:
         self.init_fig(figsize=figsize)
         self.legend_handles = []
         self.peakmag_vals = []
+        self.faintmag_vals = []
         self.photometry_plotted = False
         self.cutouts_added = False
         self.axes_formatted = False
@@ -76,7 +77,15 @@ class DefaultLightcurvePlotter:
 
         self.ztf_colors = {"ztfg": "C0", "ztfr": "C1"}
         self.atlas_colors = {"atlasc": "C2", "atlaso": "C3"}
-        self.plot_colors = {**self.ztf_colors, **self.atlas_colors, "no_band": "k"}
+        self.lsst_colors = {
+            f"lsst{b}": f"C{ii}" for ii, b in enumerate("g r i z y u".split())
+        }
+        self.plot_colors = {
+            **self.ztf_colors,
+            **self.atlas_colors,
+            **self.lsst_colors,
+            "no_band": "k",
+        }
 
         self.det_kwargs = dict(ls="none", marker="o")
         self.ulim_kwargs = dict(ls="none", marker="v", mfc="none")
@@ -166,6 +175,7 @@ class DefaultLightcurvePlotter:
                 )
                 self.photometry_plotted = True
                 self.peakmag_vals.append(ydat.min())
+                self.faintmag_vals.append(ydat.max())
 
     def add_cutouts(self, target: Target):
         cutouts = {}
@@ -223,9 +233,10 @@ class DefaultLightcurvePlotter:
         transform_kwargs = dict(ha="center", va="top", transform=self.fig.transFigure)
         self.ax.text(0.5, 0.98, title, fontsize=14, **transform_kwargs)
 
-        self.peakmag_vals.append(17.00)
+        self.peakmag_vals.append(17.0)
         y_bright = np.nanmin(self.peakmag_vals) - 0.2
-        y_faint = 22.2
+        self.faintmag_vals.append(22.0)
+        y_faint = np.nanmax(self.faintmag_vals) + 0.2
         self.ax.set_ylim(y_faint, y_bright)
         self.ax.axvline(0, color="k")
 

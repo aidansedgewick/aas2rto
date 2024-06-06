@@ -968,8 +968,9 @@ class TargetSelector:
             logger.info("file too small - don't attempt read...")
             return
 
-        logger.info(f"attempt recover targets from\n    {existing_targets_file}")
+        logger.info(f"recover targets from\n    {existing_targets_file}")
         existing_targets_df = pd.read_csv(existing_targets_file)
+        logger.info(f"attempt {len(existing_targets_df)} targets")
         recovered_targets = []
         for ii, row in existing_targets_df.iterrows():
             objectId = row.objectId
@@ -977,8 +978,8 @@ class TargetSelector:
                 logger.warning(f"skip load existing {objectId}")
                 continue
             target = Target(objectId, ra=row.ra, dec=row.dec, base_score=row.base_score)
-            self.recover_score_history(target)
-            self.recover_rank_history(target)
+            # self.recover_score_history(target)
+            # self.recover_rank_history(target)
             self.add_target(target)
             recovered_targets.append(objectId)
         logger.info(f"recovered {len(recovered_targets)} existing targets")
@@ -1239,7 +1240,7 @@ class TargetSelector:
         else:
             logger.info("skip messaging tasks")
 
-        # ======== Reset all targets to unupdated for the next loop ========== #
+        # ======== Reset all targets to un-updated for the next loop ========= #
         self.reset_updated_targets()
 
         perf_times["messaging"] = time.perf_counter() - t1

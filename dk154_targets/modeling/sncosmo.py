@@ -38,9 +38,9 @@ except FileNotFoundError as e:
     sfdq = None
     sfdq_traceback = traceback.format_exc()
 
-    init_path = paths.base_path / "scripts/init_sfd_maps.py"
+    init_filepath = paths.base_path / "scripts/init_sfd_maps.py"
     try:
-        relpath = init_path.relative_to(Path.cwd())
+        relpath = init_filepath.relative_to(Path.cwd())
     except Exception as e:
         relpath = "scripts/init_sfd_maps.py"
 
@@ -104,22 +104,28 @@ class SncosmoSaltModeler:
         self,
         faint_limit=99.0,
         use_badqual=True,
+        min_detections=3,
+        initializer=None,
         existing_models_path=None,
+        show_traceback=True,
         use_emcee=True,
         nsamples=None,
         nwalkers=None,
         **kwargs,
     ):
         self.__name__ = "sncosmo_salt"
-        self.use_emcee = use_emcee
         self.faint_limit = faint_limit
         self.use_badqual = use_badqual
+        self.min_detections = min_detections
 
         if existing_models_path is not None:
             existing_models_path = Path(existing_models_path)
             existing_models_path.mkdir(exist_ok=True, parent=True)
         self.existing_models_path = existing_models_path
 
+        self.show_traceback = show_traceback
+        self.use_emcee = use_emcee
+        self.initializer = initializer
         self.nsamples = nsamples or self.default_nsamples
         self.nwalkers = nwalkers or self.default_nwalkers
 
@@ -129,6 +135,9 @@ class SncosmoSaltModeler:
             logger.info(f"nsamples={self.nsamples}, nwalkers={self.nwalkers}")
         logger.info(f"set faint_limit={self.faint_limit} (no models for fainter)")
         logger.info(f"set use_badqual: {self.use_badqual}")
+
+        for k, v in kwargs.items():
+            logger.warning(f"\033[33;1munknown kwarg\033[0m {k}={v}")
 
     def __call__(self, target: Target):
         if sncosmo is None:
@@ -143,36 +152,49 @@ class SncosmoSaltModeler:
         )
         lightcurve = build_astropy_lightcurve(detections)
 
-        if detections["mag"].min() > self.faint_limit:
+        brightest_detection = detections["mag"].min()
+        if brightest_detection > self.faint_limit:
+            msg = f"brightest {brightest_detection} > {self.faint_limit}: too faint!"
+            logger.info(msg)
             return None
 
         N_detections = {}
         for fid, fid_history in detections.groupby("band"):
             N_detections[fid] = len(fid_history)
 
-        N_ztfg = N_detections.get("ztfg", 0)
-        N_ztfr = N_detections.get("ztfr", 0)
-        enough_detections = (N_ztfg > 1 and N_ztfr > 1) or (N_ztfg + N_ztfr > 2)
-        if not enough_detections:
-            logger.debug(f"{target.objectId} too few detections:\n    {N_detections}")
+        # N_ztfg = N_detections.get("ztfg", 0)
+        # N_ztfr = N_detections.get("ztfr", 0)
+        # enough_detections = (N_ztfg > 1 and N_ztfr > 1) or (N_ztfg + N_ztfr > 2)
+        # if not enough_detections:
+        #     logger.debug(f"{target.objectId} too few detections:\n    {N_detections}")
+        #     return
+        if len(detections) < self.min_detections:
             return
-
-        model = initialise_model()
 
         if sfdq is None:
             print(sfdq_traceback)
-            msg = "sfd.SDFQuery() not initialised properly. try:\n     scripts/init_sfd_maps.py"
+            msg = (
+                "sfd.SDFQuery() not initialised properly. try:\n     "
+                "python3 scripts/init_sfd_maps.py"
+            )
             logger.warning(msg)
             return
 
-        mwebv = sfdq(target.coord)
-        model.set(mwebv=mwebv)
+        if self.initializer is None:
+            model = initialise_model()
+            mwebv = sfdq(target.coord)
+            model.set(mwebv=mwebv)
 
-        fitting_params = model.param_names
-        fitting_params.remove("mwebv")
+            fitting_params = model.param_names
+            fitting_params.remove("mwebv")
+        else:
+            model = self.initializer()
+            fitting_params = model.param_names
 
         # known_redshift = target.tns_data.parameters.get("Redshift", None)
         # if known_redshift is not None and np.isfinite(known_redshift):
+
+        fitting_params = model.param_names
 
         known_redshift = None
         tns_data = target.target_data.get("tns", None)
@@ -181,7 +203,6 @@ class SncosmoSaltModeler:
                 known_redshift = tns_data.parameters.get("Redshift", None)
 
         if known_redshift is not None:
-            print(type(known_redshift))
             logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
             model.set(z=known_redshift)
             fitting_params.remove("z")
@@ -191,7 +212,7 @@ class SncosmoSaltModeler:
 
         try:
             with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
+                warnings.simplefilter("ignore", RuntimeWarning)
                 lsq_result, lsq_fitted_model = sncosmo.fit_lc(
                     lightcurve, model, fitting_params, bounds=bounds
                 )
@@ -206,9 +227,12 @@ class SncosmoSaltModeler:
                             bounds=bounds,
                         )
                     except Exception as e:
-                        tr = traceback.format_exc()
-                        logger.warning(f"{target.objectId} during emcee fitting")
-                        print(tr)
+                        errname = type(e).__name__
+                        msg = f"{target.objectId} mcmc: {errname}\n    {e}"
+                        logger.warning(msg)
+                        if self.show_traceback:
+                            tr = traceback.format_exc()
+                            print(tr)
                         fitted_model = lsq_fitted_model
                         result = lsq_result
                 else:
@@ -218,8 +242,11 @@ class SncosmoSaltModeler:
             logger.debug(f"{target.objectId} fitted model!")
 
         except Exception as e:
-            logger.warning(f"{target.objectId} sncosmo fit failed")
-            tr = traceback.format_exc()
-            print(tr)
+            errname = type(e).__name__
+            msg = f"{target.objectId} lsq: {errname}\n    {e}"
+            logger.warning(msg)
+            if self.show_traceback:
+                tr = traceback.format_exc()
+                print(tr)
             fitted_model = None
         return fitted_model

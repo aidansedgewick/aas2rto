@@ -255,9 +255,12 @@ class TargetData:
         keep = "last" if keep_updates else "first"
         updated_lightcurve = None
         if isinstance(updates, pd.DataFrame):
-            updated_lightcurve = pd.concat(
-                [self.lightcurve, updates], ignore_index=True
-            )
+            if updates is None:
+                updated_lightcurve = self.lightcurve
+            else:
+                updated_lightcurve = pd.concat(
+                    [self.lightcurve, updates], ignore_index=True
+                )
             updated_lightcurve.drop_duplicates(
                 subset=column, keep=keep, inplace=True, ignore_index=True
             )

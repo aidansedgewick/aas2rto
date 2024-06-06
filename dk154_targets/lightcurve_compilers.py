@@ -26,32 +26,36 @@ def prepare_ztf_data(
     badqual_tag=DEFAULT_BADQUAL_TAG,
     ulimit_tag=DEFAULT_ULIMIT_TAG,
 ):
+    # Rename the filters so sncosmo knows what they are.
     ztf_band_lookup = {1: "ztfg", 2: "ztfr", 3: "ztfi"}
     ztf_colmap = {"magpsf": "mag", "sigmapsf": "magerr"}
     use_cols = ["jd", "mjd", "magpsf", "sigmapsf", "diffmaglim", "fid", "tag", "candid"]
 
-    avail_cols = [col for col in use_cols if col in ztf_data.detections.columns]
-    # if len(missing_cols) > 0:
-    #    logger.warning(f"columns unavailable: {missing_cols}")
+    if isinstance(ztf_data, TargetData):
 
-    t1 = time.perf_counter()
+        avail_cols = [col for col in use_cols if col in ztf_data.lightcurve.columns]
 
-    if ztf_data.detections is not None:
-        detections = ztf_data.detections[avail_cols].copy()
-        detections.loc[:, "tag"] = valid_tag
-        data_list = [detections]
-    if ztf_data.badqual is not None:
-        badqual = ztf_data.badqual[avail_cols].copy()
-        badqual.loc[:, "tag"] = badqual_tag
-        data_list.append(badqual)
-    if ztf_data.non_detections is not None:
-        ulimits = ztf_data.non_detections[avail_cols].copy()
-        ulimits.loc[:, "tag"] = ulimit_tag
-        data_list.append(ulimits)
-    if len(data_list) > 0:
-        ztf_lc = pd.concat(data_list, ignore_index=True)
+        data_list = []
+        if ztf_data.detections is not None:
+            detections = ztf_data.detections[avail_cols].copy()
+            detections.loc[:, "tag"] = valid_tag
+            # data_list = [detections]
+            data_list.append(detections)
+        if ztf_data.badqual is not None:
+            badqual = ztf_data.badqual[avail_cols].copy()
+            badqual.loc[:, "tag"] = badqual_tag
+            data_list.append(badqual)
+        if ztf_data.non_detections is not None:
+            ulimits = ztf_data.non_detections[avail_cols].copy()
+            ulimits.loc[:, "tag"] = ulimit_tag
+            data_list.append(ulimits)
+        if len(data_list) > 0:
+            ztf_lc = pd.concat(data_list, ignore_index=True)
+        else:
+            ztf_lc = ztf_data.lightcurve
     else:
-        ztf_lc = ztf_data.lightcurve
+        logger.warning(f"")
+        ztf_lc = ztf_data
 
     ztf_lc.loc[:, "band"] = ztf_lc["fid"].map(ztf_band_lookup)
 
@@ -70,6 +74,7 @@ def prepare_ztf_data(
 def prepare_atlas_data(
     atlas_data: TargetData,
     average_epochs=True,
+    rolling_window=0.1,
     valid_tag=DEFAULT_VALID_TAG,
     badqual_tag=DEFAULT_BADQUAL_TAG,
     ulimit_tag=DEFAULT_ULIMIT_TAG,
@@ -81,17 +86,22 @@ def prepare_atlas_data(
     atlas_lc = atlas_data.lightcurve.copy()
 
     # atlas_df["snr"] = atlas_df["uJy"] / atlas_df["duJy"]
-    atlas_lc["snr"] = 2.5 / (np.log(10.0) * atlas_lc["dm"])
+
+    dm_snr = 2.5 / np.log(10.0)
+    atlas_lc["snr"] = dm_snr / atlas_lc["dm"]
 
     flux_vals = 10 ** (-0.4 * (abs(atlas_lc["m"]) - 23.9))
-    flux_sign = flux_vals / abs(flux_vals)
+    flux_sign = np.sign(atlas_lc["m"])
     atlas_lc["flux"] = flux_vals * flux_sign
-    atlas_lc["fluxerr"] = atlas_lc["flux"] / atlas_lc["snr"]
+    atlas_lc["fluxerr"] = flux_vals / atlas_lc["snr"]
+    atlas_lc["flux5sig"] = 10 ** (-0.4 * (atlas_lc["mag5sig"] - 23.9))
 
     atlas_lc.sort_values("mjd", inplace=True)
 
     if average_epochs:
-        mjd_group = (atlas_lc["mjd"] > atlas_lc["mjd"].shift() + 0.1).cumsum()
+        mjd_group = (
+            atlas_lc["mjd"] > atlas_lc["mjd"].shift() + rolling_window
+        ).cumsum()
         atlas_lc["mjd_group"] = mjd_group
 
         row_list = []
@@ -100,6 +110,7 @@ def prepare_atlas_data(
 
             row = group.mean()
             row["F"] = f_id
+            row["N_exp"] = len(group)
             if len(group) == 1:
                 row_list.append(row)
                 continue
@@ -109,13 +120,16 @@ def prepare_atlas_data(
             fluxerr = 1.0 / np.sqrt(np.sum(weights))
             row["flux"] = flux
             row["fluxerr"] = fluxerr
+            row["mag5sig"] = (-2.5 * np.log10(row["flux5sig"])) + 23.9
             row_list.append(row)
 
         atlas_lc = pd.DataFrame(row_list)
         atlas_lc["snr"] = atlas_lc["flux"] / atlas_lc["fluxerr"]
         flux_sign = np.sign(atlas_lc["flux"])
         atlas_lc["m"] = (-2.5 * np.log10(abs(atlas_lc["flux"])) + 23.9) * flux_sign
-        atlas_lc["dm"] = (np.log(10) / 2.5) / abs(atlas_lc["snr"])
+        atlas_lc["dm"] = dm_snr / abs(atlas_lc["snr"])
+    else:
+        atlas_lc["N_exp"] = 1
 
     atlas_lc.reset_index(drop=True, inplace=True)
 
@@ -129,7 +143,7 @@ def prepare_atlas_data(
         atlas_lc.loc[:, "tag"] = pd.Series(tag_data)
 
     atlas_lc.rename(atlas_colmap, axis=1, inplace=True)
-    use_cols = ["mjd", "jd", "mag", "magerr", "diffmaglim", "tag", "band"]
+    use_cols = ["mjd", "jd", "mag", "magerr", "diffmaglim", "tag", "band", "N_exp"]
     return atlas_lc[use_cols]
 
 
@@ -162,7 +176,7 @@ class DefaultLightcurveCompiler:
         for key, val in config.items():
             logger.warning(f"unknown config option: {key} ({val})")
 
-    def __call__(self, target: Target, t_ref):
+    def __call__(self, target: Target, t_ref: Time):
         lightcurve_dfs = []
 
         tags = {
@@ -218,5 +232,5 @@ class DefaultLightcurveCompiler:
         compiled_lightcurve = None
         if len(lightcurve_dfs) > 0:
             compiled_lightcurve = pd.concat(lightcurve_dfs, ignore_index=True)
-            compiled_lightcurve.sort_values("jd", inplace=True, ignore_index=True)
+            compiled_lightcurve.sort_values("mjd", inplace=True, ignore_index=True)
         return compiled_lightcurve

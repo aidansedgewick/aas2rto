@@ -22,9 +22,9 @@ from dk154_targets.plotters.default_plotter import DefaultLightcurvePlotter
 logger = getLogger(__name__.split(".")[-1])
 
 
-def plot_sncosmo_lightcurve(target: Target, t_ref: Time = None) -> plt.Figure:
+def plot_sncosmo_lightcurve(target: Target, t_ref: Time = None, **kwargs) -> plt.Figure:
     t_ref = t_ref or Time.now()
-    plotter = SncosmoLightcurvePlotter.plot(target, t_ref=t_ref)
+    plotter = SncosmoLightcurvePlotter.plot(target, t_ref=t_ref, **kwargs)
     if plotter.target_has_models and (not plotter.models_plotted):
         logger.warning(f"{target.objectId} has models but none were plotted")
     return plotter.fig
@@ -43,13 +43,15 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
     def __init__(
         self,
         t_ref: Time = None,
-        figsize=None,
-        forecast_days=15.0,
-        grid_dt=0.2,
-        model_name="sncosmo_salt",
+        figsize: tuple = None,
+        forecast_days: float = 15.0,
+        backcast_days: float = None,
+        grid_dt: float = 0.5,
+        model_name: str = "sncosmo_salt",
     ):
         super().__init__(t_ref=t_ref, figsize=figsize)
         self.forecast_days = forecast_days
+        self.backcast_days = backcast_days
         self.grid_dt = grid_dt
 
         self.target_has_models = False
@@ -74,6 +76,8 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
         self.target_has_models = True
         lightcurve = target.compiled_lightcurve
         t_start = target.compiled_lightcurve["mjd"].min()
+        if self.backcast_days is not None:
+            t_start = self.t_ref.mjd - self.backcast_days
         t_end = self.t_ref.mjd + self.forecast_days
         tgrid_main = np.arange(t_start, t_end + self.grid_dt, self.grid_dt)
 
@@ -106,7 +110,7 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
             samples_tgrid = np.arange(
                 sample_tgrid_start, sample_tgrid_end, self.grid_dt
             )
-            samples_tgrid_shift = samples_tgrid - self.t_ref.jd
+            samples_tgrid_shift = samples_tgrid - self.t_ref.mjd
 
             model_mag = -2.5 * np.log10(model_flux) + 8.9
             self.peakmag_vals.append(np.nanmin(model_mag))
