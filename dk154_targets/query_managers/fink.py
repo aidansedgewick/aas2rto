@@ -241,7 +241,7 @@ class FinkQueryManager(BaseQueryManager):
     default_kafka_parameters = {"n_alerts": 10, "timeout": 10.0}
     required_kafka_parameters = ("username", "group_id", "bootstrap.servers", "topics")
     alert_extra_keys = (
-        "timestamp",
+        # "timestamp", # doesn't exist anymore?!
         "cdsxmatch",
         "rf_snia_vs_nonia",
         "snn_snia_vs_nonia",
@@ -261,6 +261,7 @@ class FinkQueryManager(BaseQueryManager):
     ):
         self.fink_config = fink_config
         self.target_lookup = target_lookup
+
         utils.check_unexpected_config_keys(
             self.fink_config,
             self.expected_fink_parameters,
@@ -273,7 +274,7 @@ class FinkQueryManager(BaseQueryManager):
                 "fink_client module not imported correctly!\n"
                 "Either install with `\033[32;1mpython3 -m pip install fink_client\033[0m` "
                 "(you may also need to install `\033[32;1mfastavro\033[0m`), "
-                "or switch `use: False` in config file."
+                "or switch `use: False` in fink config, in config file."
             )
 
         object_queries = self.fink_config.get("object_queries", [])
@@ -287,7 +288,7 @@ class FinkQueryManager(BaseQueryManager):
         utils.check_config_keys(
             self.query_parameters,
             self.default_query_parameters,
-            name="fink.query_parameters",
+            name="fink_config.query_parameters",
         )
 
         self.query_results = {}
@@ -328,6 +329,7 @@ class FinkQueryManager(BaseQueryManager):
 
         if fink_client is None:
             logger.warning("no fink_client module: can't listen for alerts!")
+            return
 
         if self.kafka_config is None:
             logger.info("can't listen for alerts: no kafka config!")
@@ -372,7 +374,7 @@ class FinkQueryManager(BaseQueryManager):
 
             valid_keys = [k for k in self.alert_extra_keys if k in alert]
             missing_keys = set(self.alert_extra_keys) - set(valid_keys)
-            if len(valid_keys) > 0:
+            if len(missing_keys) > 0:
                 logger.info(f"{objectId} missing keys: {missing_keys}")
 
             extra_data = {k: alert[k] for k in valid_keys}
@@ -410,8 +412,7 @@ class FinkQueryManager(BaseQueryManager):
                 raise MissingObjectIdError("objectId is `None` in fink_alert")
             target = self.target_lookup.get(objectId, None)
             if target is not None:
-                # Don't need to make a target.
-                existing.append(objectId)
+                existing.append(objectId)  # Don't need to make a target.
                 continue
             target = target_from_fink_alert(alert, t_ref=t_ref)
             self.target_lookup[objectId] = target
@@ -495,7 +496,7 @@ class FinkQueryManager(BaseQueryManager):
             return new_targets
 
         for idx, row in updates.iterrows():
-            objectId = row.objectId
+            objectId = row["objectId"]
             target = self.target_lookup.get(objectId, None)
             if target is not None:
                 continue
@@ -516,15 +517,17 @@ class FinkQueryManager(BaseQueryManager):
             lightcurve_file_age = calc_file_age(
                 lightcurve_filepath, t_ref, allow_missing=True
             )
-            if (
-                lightcurve_file_age
-                > self.query_parameters["lightcurve_update_interval"]
-            ):
+            interval = self.query_parameters["lightcurve_update_interval"]
+            if lightcurve_file_age > interval:
                 to_update.append(objectId)
         return to_update
 
     def perform_lightcurve_queries(
-        self, objectId_list: List[str], t_ref: Time = None, use_lookup=False
+        self,
+        objectId_list: List[str],
+        t_ref: Time = None,
+        chunk_size=10,
+        bulk_filepath=None,
     ):
         t_ref = t_ref or Time.now()
 
@@ -533,42 +536,52 @@ class FinkQueryManager(BaseQueryManager):
 
         success = []
         failed = []
+        failed_queries = 0
+
+        bulk_results = []
         t_start = time.perf_counter()
-        for objectId in objectId_list:
-            lightcurve_filepath = self.get_lightcurve_file(objectId)
-            if len(failed) > self.query_parameters["max_failed_queries"]:
-                msg = f"Too many failed queries ({len(failed)}), stop for now"
+        for objectId_chunk in utils.chunk_list(objectId_list, chunk_size=chunk_size):
+            if failed_queries > self.query_parameters["max_failed_queries"]:
+                msg = f"Too many failed LC queries ({failed_queries}), stop for now"
                 logger.info(msg)
                 break
             t_now = time.perf_counter()
             if t_now - t_start > self.query_parameters["max_total_query_time"]:
                 logger.info(f"querying time ({t_now - t_start:.1f}s) exceeded max")
                 break
+
+            objectId_str = ",".join(objectId for objectId in objectId_chunk)
             try:
-                # detections = FinkQuery.query_objects(
-                #    objectId=objectId,
-                #    withupperlim=False,
-                #    return_df=True,
-                #    fix_keys=True,
-                # ) # withupperlim destroys 'candid' field, so get them separately.
-                non_detections = FinkQuery.query_objects(
-                    objectId=objectId,
-                    withupperlim=True,
-                    return_df=True,
-                    fix_keys=True,
+                logger.info(f"query {len(objectId_chunk)} LCs...")
+                chunk_result = FinkQuery.query_objects(
+                    objectId=objectId_str, withupperlim=True, return_df=True
                 )
-            except Exception as e:
-                print(e)
-                logger.warning(f"{objectId} lightcurve query failed")
-                failed.append(objectId)
+                if not chunk_result.empty:
+                    bulk_results.append(chunk_result)
+            except:
+                logger.info(f"fink query")
+                failed.extend(objectId_chunk)
+                failed_queries = failed_queries + 1
                 continue
-            raw_lightcurve = non_detections
-            # raw_lightcurve = combine_fink_detections_non_detections(detections, non_detections)
-            lightcurve = process_fink_lightcurve(raw_lightcurve)
-            if lightcurve.empty:
-                logger.warning(f"\033[33m{objectId} lightcurve empty!\033[0m")
-            lightcurve.to_csv(lightcurve_filepath, index=False)
-            success.append(objectId)
+
+            if "objectId" not in chunk_result:
+                # Still need this column to be able to split...
+                chunk_result["objectId"] = "0"
+
+            for objectId in objectId_chunk:
+                raw_lightcurve = chunk_result[chunk_result["objectId"] == objectId]
+                lightcurve_filepath = self.get_lightcurve_file(objectId)
+                # raw_lightcurve = non_detections
+                # raw_lightcurve = combine_fink_detections_non_detections(detections, non_detections)
+                lightcurve = process_fink_lightcurve(raw_lightcurve)
+                if lightcurve.empty:
+                    logger.warning(f"\033[33m{objectId} lightcurve empty!\033[0m")
+                lightcurve.to_csv(lightcurve_filepath, index=False)
+                success.append(objectId)
+
+        if len(bulk_results) > 0 and bulk_filepath is not None:
+            bulk_lc = pd.concat(bulk_results, ignore_index=True)
+            bulk_lc.to_csv(bulk_filepath, index=False)
 
         if len(success) > 0 or len(failed) > 0:
             t_end = time.perf_counter()
@@ -594,7 +607,7 @@ class FinkQueryManager(BaseQueryManager):
 
         for objectId in objectId_list:
             # TODO: not optimum to read every time... but not a bottleneck for now.
-            lightcurve = self.load_single_lightcurve(objectId)
+            lightcurve = self.load_single_lightcurve(objectId, t_ref=t_ref)
             if lightcurve is None:
                 missing.append(objectId)
                 logger.info(f"{objectId} lightcurve is bad")
@@ -605,15 +618,16 @@ class FinkQueryManager(BaseQueryManager):
                 logger.warning(f"load_lightcurve: {objectId} not in target_lookup!")
                 missing.append(objectId)
                 continue
+
             fink_data = target.get_target_data("fink")
             existing_lightcurve = fink_data.lightcurve
             if existing_lightcurve is not None:
                 if len(lightcurve) <= len(existing_lightcurve):
                     skipped.append(objectId)
                     continue
-            loaded.append(objectId)
-            # lightcurve = lightcurve[lightcurve["jd"] < t_ref.jd]
+
             fink_data.add_lightcurve(lightcurve)
+            loaded.append(objectId)
             target.updated = True
         t_end = time.perf_counter()
 
@@ -625,15 +639,12 @@ class FinkQueryManager(BaseQueryManager):
         logger.info(msg)
         return loaded, missing
 
-    def load_single_lightcurve(self, objectId: str):
-        t1 = time.perf_counter()
-
+    def load_single_lightcurve(self, objectId: str, t_ref=None):
         lightcurve_filepath = self.get_lightcurve_file(objectId)
         if not lightcurve_filepath.exists():
             logger.warning(f"{objectId} is missing lightcurve")
             return None
 
-        t1 = time.perf_counter()
         try:
             lightcurve = pd.read_csv(lightcurve_filepath, dtype={"candid": "Int64"})
         except pd.errors.EmptyDataError as e:
@@ -746,22 +757,20 @@ class FinkQueryManager(BaseQueryManager):
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        t1 = time.perf_counter()
         alerts = self.listen_for_alerts()
         processed_alerts = self.process_alerts(alerts, t_ref=t_ref)
         self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
-        # print("fink alerts:", time.perf_counter() - t1)
 
-        new_alerts = set([alert["objectId"] for alert in processed_alerts])
-        success, failed = self.perform_lightcurve_queries(new_alerts)
+        new_targets = list(set([alert["objectId"] for alert in processed_alerts]))
+        success, failed = self.perform_lightcurve_queries(new_targets)
 
         # updated_objects = self.query_for_object_updates(t_ref=t_ref)
         # success, failed = self.perform_lightcurve_queries(updated_objects["objectId"].values)
 
         lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
+        logger.info(f"update {len(lcs_to_query)} old lightcurves")
         success, failed = self.perform_lightcurve_queries(lcs_to_query)
 
-        t1 = time.perf_counter() - t1
         loaded_lcs, missing_lcs = self.load_target_lightcurves(t_ref=t_ref)
 
         self.integrate_alerts()

@@ -43,19 +43,9 @@ class UnknownPhotometryTagWarning(UserWarning):
 
 
 class TargetData:
-    default_valid_tags = (
-        "valid",
-        "detection",
-    )
-    default_badqual_tags = (
-        "badquality",
-        "badqual",
-        "dubious",
-    )
-    default_nondet_tags = (
-        "upperlim",
-        "nondet",
-    )
+    default_valid_tags = ("valid", "detection", "det")
+    default_badqual_tags = ("badquality", "badqual", "dubious")
+    default_nondet_tags = ("upperlim", "nondet")
 
     date_columns = ("jd", "mjd", "JD", "MJD")
 
@@ -92,16 +82,19 @@ class TargetData:
     def __setattr__(self, name, value):
         if name == "lightcurve":
             msg = (
-                "\nYou should use the targetdata.add_lightcurve(lc) method."
-                "\nThis will correctly set the attributes "
-                "`detections`, `badqual` and `non_detections` attributes,"
-                "\nif the column `tag` is avalable."
+                "\nYou should use the `target_data.add_lightcurve(lc, tag_col=<tag>)` method."
+                "\nIf the column `tag` is avalable, this will correctly set the attributes:"
+                "    `target_data.detections`, `target_data.badqual` and `target_data.non_detections`"
+                "\nYou can choose to include badqual "
             )
             warnings.warn(SettingLightcurveDirectlyWarning(msg))
         super().__setattr__(name, value)
 
     def add_lightcurve(
-        self, lightcurve: pd.DataFrame, tag_col="tag", include_badqual=False
+        self,
+        lightcurve: Union[pd.DataFrame, Table],
+        tag_col="tag",
+        include_badqual=False,
     ):
         lightcurve = lightcurve.copy()
 
@@ -112,6 +105,7 @@ class TargetData:
             lightcurve.sort(date_col)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=SettingLightcurveDirectlyWarning)
+            # We don't need to be warned here - we are correctly setting the attributes!
             self.lightcurve = lightcurve
 
         if include_badqual:
@@ -136,7 +130,12 @@ class TargetData:
             known_tag_mask = np.isin(lightcurve[tag_col], all_tags)
             if not all(known_tag_mask):
                 unknown_tags = self.lightcurve[tag_col][~known_tag_mask]
-                msg = f"\nin {tag_col}: {unknown_tags}\nexpected {all_tags}"
+                msg = (
+                    f"\nin {tag_col}: {unknown_tags}\nexpected:"
+                    f"    valid: {self.valid_tags}"
+                    f"    badqual: {self.badqual_tags}"
+                    f"    nondet: {self.nondet_tags}"
+                )
                 warnings.warn(UnknownPhotometryTagWarning(msg))
         else:
             self.detections = self.lightcurve.copy()
@@ -279,15 +278,13 @@ class Target:
     TODO: docstring here!
     """
 
-    default_base_score = 1.0
-
     def __init__(
         self,
         objectId: str,
         ra: float,
         dec: float,
         target_data: Dict[str, TargetData] = None,
-        base_score: float = None,
+        base_score: float = 1.0,
         target_of_opportunity: bool = False,
         t_ref: Time = None,
     ):
@@ -296,7 +293,7 @@ class Target:
         # Basics
         self.objectId = objectId
         self.update_coordinates(ra, dec)
-        self.base_score = base_score or self.default_base_score
+        self.base_score = base_score
         self.compiled_lightcurve = None
 
         # Target data
@@ -329,14 +326,16 @@ class Target:
             return f"{self.objectId}: NO COORDINATES FOUND!"
         return f"{self.objectId}: ra={self.ra:.5f} dec={self.dec:.5f}"
 
-    def update_coordinates(self, ra, dec):
+    def update_coordinates(self, ra: float, dec: float):
         self.ra = ra
         self.dec = dec
         self.coord = None
         self.astroplan_target = None
         if ra is not None and dec is not None:
             self.coord = SkyCoord(ra=ra, dec=dec, unit="deg")
-            self.astroplan_target = FixedTarget(self.coord, self.objectId)  # for plots
+            self.astroplan_target = FixedTarget(self.coord, self.objectId)  # for plots?
+        else:
+            logger.warning(f"{self.objectId}: ra={ra} or dec={dec} is None!")
 
     def get_target_data(self, source):
         """
@@ -376,7 +375,10 @@ class Target:
         return source_data
 
     def update_score_history(
-        self, score_value: float, observatory: Observer, t_ref: Time = None
+        self,
+        score_value: float,
+        observatory: Observer = None,
+        t_ref: Time = None,
     ):
         t_ref = t_ref or Time.now()
 
@@ -404,7 +406,12 @@ class Target:
         )
         return score_history_df
 
-    def update_rank_history(self, rank: int, observatory: Observer, t_ref: Time = None):
+    def update_rank_history(
+        self,
+        rank: int,
+        observatory: Observer = None,
+        t_ref: Time = None,
+    ):
         t_ref = t_ref or Time.now()
 
         obs_name = get_observatory_name(observatory)
@@ -453,7 +460,7 @@ class Target:
         obs_name = get_observatory_name(observatory)  # Returns "no_observatory" if None
 
         if obs_name not in self.score_history.keys():
-            msg = f"Unknown observatory name {obs_name}. Known: {self.score_history.keys()}"
+            msg = f"No scores for observatory {obs_name}. Known: {self.score_history.keys()}"
             warnings.warn(UnknownObservatoryWarning(msg))
 
         obs_history = self.score_history.get(obs_name, [])

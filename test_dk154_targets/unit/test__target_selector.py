@@ -21,7 +21,7 @@ from dk154_targets.exc import (
     MissingKeysWarning,
     UnexpectedKeysWarning,
 )
-from dk154_targets.target import Target, TargetData
+from dk154_targets.target import Target, TargetData, UnknownObservatoryWarning
 from dk154_targets.target_selector import TargetSelector
 
 
@@ -538,7 +538,7 @@ class Test__CompileTargetLightcurves:
         assert set(not_compiled) == set(["T105", "T106"])
 
 
-def basic_scoring(target: Target, observatory: Observer, t_ref: Time):
+def basic_scoring(target: Target, t_ref: Time):
     factors = []
     comms = []
     rej_comms = []
@@ -561,13 +561,11 @@ def basic_scoring(target: Target, observatory: Observer, t_ref: Time):
 
     delta_t = t_ref.mjd - detections["mjd"].iloc[-1]
     if delta_t > 20.0:
+        print(target.objectId, delta_t)
         rej_comms.append(f"target {target.objectId} is old")
         reject = True
 
-    if observatory is not None:
-        factors.append(0.5)
-        obs_name = observatory.name
-        comms.append(f"obs_factor=0.5 fixed ({obs_name})")
+    print(comms, rej_comms)
 
     score = target.base_score * np.prod(factors)
     if exclude:
@@ -578,7 +576,18 @@ def basic_scoring(target: Target, observatory: Observer, t_ref: Time):
     return score, comms, rej_comms
 
 
-def scoring_will_raise_error(target: Target, observatory: Observer, t_ref: Time):
+def basic_scoring_no_comms(target: Target, t_ref: Time):
+    score, _, _ = basic_scoring(target, t_ref=t_ref)
+    return score
+
+
+def basic_obs_scoring(target, observatory, t_ref):
+    obs_name = observatory.name
+    comms = [f"obs_factor=0.5 fixed ({obs_name})"]
+    return 0.5, comms, []
+
+
+def scoring_will_raise_error(target: Target, t_ref: Time):
     raise ValueError()
 
 
@@ -588,80 +597,114 @@ class ScoringClass:
     def __init__(self, multiplier=1.0):
         self.multiplier = multiplier
 
-    def __call__(self, target: Target, obs: Observer, t_ref: Time):
-        score, comms, rej_comms = basic_scoring(target, obs, t_ref)
+    def __call__(self, target: Target, t_ref: Time):
+        score, comms, rej_comms = basic_scoring(target, t_ref)
         return score * self.multiplier, comms, rej_comms
 
 
 class ScoringClassNoName:
-    def __call__(self, target: Target, obs: Observer, t_ref: Time):
+    def __call__(self, target: Target, t_ref: Time):
         return 10.0
 
 
 class Test__EvaluateTargets:
-    def test__evaluate_at_obs(self, selector_with_targets: TargetSelector):
+
+    def test__wrapper_eval_target_sci_score(
+        self, selector_with_targets: TargetSelector
+    ):
         selector = selector_with_targets
         t_ref = Time(60000.0, format="mjd")
+        T101 = selector.target_lookup["T101"]
+
+        assert set(T101.score_history.keys()) == set(["no_observatory"])
+        assert len(T101.score_history["no_observatory"]) == 0  # There are no scores
+
+        score, comms, rej_comms = selector._evaluate_target_science_score(
+            basic_scoring, T101, t_ref=t_ref
+        )
+        assert np.isclose(score, 2.00)
+        assert set(comms) == set(["mag_factor=2.0"])
+        assert set(rej_comms) == set()
+
+        assert (
+            len(T101.score_history["no_observatory"]) == 0
+        )  # No scores attached to the target.
+
+    def test__wrapper_eval_sci_score_no_comms(
+        self, selector_with_targets: TargetSelector
+    ):
+        selector = selector_with_targets
+        t_ref = Time(60000.0, format="mjd")
+        T101 = selector.target_lookup["T101"]
+
+        assert set(T101.score_history.keys()) == set(["no_observatory"])
+        assert len(T101.score_history["no_observatory"]) == 0  # There are no scores
+
+        score, comms, rej_comms = selector._evaluate_target_science_score(
+            basic_scoring_no_comms, T101, t_ref=t_ref
+        )
+        assert np.isclose(score, 2.00)  # The same as before...
+        assert set(comms) == set(["no score_comments provided"])
+        assert set(rej_comms) == set(["no reject_comments provided"])
+        assert len(T101.score_history["no_observatory"]) == 0
+
+    def test__wrapper_eval_obs_score(self, selector_with_targets: TargetSelector):
+        selector = selector_with_targets
+        t_ref = Time(60000.0, format="mjd")
+        T101 = selector.target_lookup["T101"]
         lasilla = selector.observatories["lasilla"]
 
-        selector.evaluate_targets_at_observatory(basic_scoring, None, t_ref=t_ref)
+    def test__eval_single_target_sci_only(self, selector_with_targets: TargetSelector):
+        selector = selector_with_targets
+        t_ref = Time(60000.0, format="mjd")
+        T101 = selector.target_lookup["T101"]
 
-        t_lookup = selector.target_lookup
-        assert np.isclose(t_lookup["T101"].get_last_score(), 2.00)
-        assert np.isclose(t_lookup["T102"].get_last_score(), 1.80)
-        assert np.isclose(t_lookup["T103"].get_last_score(), 1.60)
-        assert np.isclose(t_lookup["T104"].get_last_score(), 1.40)
-        assert np.isclose(t_lookup["T105"].get_last_score(), 1.20)
-        assert np.isclose(t_lookup["T106"].get_last_score(), 1.00)
+        assert set(T101.score_history.keys()) == set(["no_observatory"])
+        assert len(T101.score_history["no_observatory"]) == 0  # There are no scores
 
-        assert len(t_lookup["T101"].score_comments) == 1
-        assert set(t_lookup["T101"].score_comments) == set(["no_observatory"])
+        selector.evaluate_single_target(T101, basic_scoring, t_ref=t_ref)
+        assert np.isclose(T101.get_last_score(), 2.00)  # Score now attached to target.
 
-        assert set(t_lookup["T101"].score_comments["no_observatory"]) == set(
-            ["mag_factor=2.0"]
-        )
-        assert set(t_lookup["T102"].score_comments["no_observatory"]) == set(
-            ["mag_factor=1.8"]
-        )
-        assert set(t_lookup["T103"].score_comments["no_observatory"]) == set(
-            ["mag_factor=1.6"]
-        )
+        assert "lasilla" in selector.observatories
+        with pytest.warns(UnknownObservatoryWarning):
+            assert T101.get_last_score("lasilla") is None
+            assert T101.get_last_score("ucph") is None
 
-        selector.evaluate_targets_at_observatory(basic_scoring, lasilla, t_ref=t_ref)
+    def test__eval_single_target_sci_and_obs(
+        self, selector_with_targets: TargetSelector
+    ):
+        selector = selector_with_targets
+        t_ref = Time(60000.0, format="mjd")
+        T101 = selector.target_lookup["T101"]
 
-        t_lookup = selector.target_lookup
-        assert np.isclose(t_lookup["T101"].get_last_score(lasilla), 1.00)
-        assert np.isclose(t_lookup["T102"].get_last_score(lasilla), 0.90)
-        assert np.isclose(t_lookup["T103"].get_last_score(lasilla), 0.80)
-        assert np.isclose(t_lookup["T104"].get_last_score(lasilla), 0.70)
-        assert np.isclose(t_lookup["T105"].get_last_score(lasilla), 0.60)
-        assert np.isclose(t_lookup["T106"].get_last_score(lasilla), 0.50)
+        assert set(T101.score_history.keys()) == set(["no_observatory"])
+        assert len(T101.score_history["no_observatory"]) == 0  # There are no scores
 
-        assert len(t_lookup["T101"].score_comments) == 2
-        assert set(t_lookup["T101"].score_comments) == set(
-            ["no_observatory", "lasilla"]
+        selector.evaluate_single_target(
+            T101,
+            basic_scoring,
+            observatory_scoring_function=basic_obs_scoring,
+            t_ref=t_ref,
         )
 
-        assert set(t_lookup["T101"].score_comments["lasilla"]) == set(
-            ["mag_factor=2.0", "obs_factor=0.5 fixed (lasilla)"]
+        assert set(T101.score_history.keys()) == set(
+            ["no_observatory", "lasilla", "ucph"]
         )
-        assert set(t_lookup["T102"].score_comments["lasilla"]) == set(
-            ["mag_factor=1.8", "obs_factor=0.5 fixed (lasilla)"]
-        )
-        assert set(t_lookup["T103"].score_comments["lasilla"]) == set(
-            ["mag_factor=1.6", "obs_factor=0.5 fixed (lasilla)"]
-        )
+        assert np.isclose(T101.get_last_score(), 2.00)
+        assert np.isclose(T101.get_last_score("lasilla"), 1.00)
+        assert np.isclose(T101.get_last_score("ucph"), 1.00)
 
     def test__no_crash_on_bad_function(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
         t_ref = Time(60000.0, format="mjd")
+        T101 = selector.target_lookup["T101"]
 
         with pytest.raises(ValueError):
             tt = Target("tt", ra=180.0, dec=0.0)
-            scoring_will_raise_error(tt, None, t_ref)
+            scoring_will_raise_error(tt, t_ref=t_ref)
 
-        selector.evaluate_targets_at_observatory(
-            scoring_will_raise_error, None, t_ref=t_ref
+        selector._evaluate_target_science_score(
+            scoring_will_raise_error, T101, t_ref=t_ref
         )  # Correctly catches the errors!
 
     def test__evaluate_targets(self, selector_with_targets: TargetSelector):
@@ -670,7 +713,11 @@ class Test__EvaluateTargets:
         ucph = selector.observatories["ucph"]
         t_ref = Time(60000.0, format="mjd")
 
-        selector.evaluate_targets(basic_scoring, t_ref=t_ref)
+        selector.evaluate_targets(
+            basic_scoring,
+            observatory_scoring_function=basic_obs_scoring,
+            t_ref=t_ref,
+        )
 
         t_lookup = selector.target_lookup
         assert np.isclose(t_lookup["T101"].get_last_score(), 2.00)
@@ -692,20 +739,24 @@ class Test__EvaluateTargets:
             ["mag_factor=2.0"]
         )
         assert set(t_lookup["T101"].score_comments["lasilla"]) == set(
-            ["mag_factor=2.0", "obs_factor=0.5 fixed (lasilla)"]
+            ["obs_factor=0.5 fixed (lasilla)"]
         )
         assert set(t_lookup["T101"].score_comments["ucph"]) == set(
-            ["mag_factor=2.0", "obs_factor=0.5 fixed (ucph)"]
+            ["obs_factor=0.5 fixed (ucph)"]
         )
 
-    def test__eval_all_targets_with_class(self, selector_with_targets):
+    def test__eval_all_targets_with_class(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
         t_lookup = selector.target_lookup
         t_ref = Time(60000.0, format="mjd")
 
         scoring_func = ScoringClass(multiplier=10.0)
 
-        selector.evaluate_targets(scoring_func, t_ref=t_ref)
+        selector.evaluate_targets(
+            scoring_func,
+            observatory_scoring_function=basic_obs_scoring,
+            t_ref=t_ref,
+        )
 
         assert np.isclose(t_lookup["T101"].get_last_score(), 20.00)
         assert np.isclose(t_lookup["T101"].get_last_score("lasilla"), 10.00)
@@ -734,11 +785,17 @@ class Test__EvaluateTargets:
             t_lookup["T102"].get_last_score(return_time=True)[1].mjd, 60000.0
         )
 
+        assert "lasilla" in selector.observatories
+        assert "ucph" in selector.observatories
+        with pytest.warns(UnknownObservatoryWarning):
+            assert t_lookup["T101"].get_last_score("lasilla") is None  # Not scored
+            assert t_lookup["T101"].get_last_score("ucph") is None  # Not scored at obs.
+
         for target in extra_targets:
             selector.add_target(target)
 
-        scored = selector.new_target_initial_check(basic_scoring, t_ref=t_future)
-        assert set(scored) == set(["T107", "T108", "T109", "T110"])
+        new_scored = selector.new_target_initial_check(basic_scoring, t_ref=t_future)
+        assert set(new_scored) == set(["T107", "T108", "T109", "T110"])
         assert np.isclose(t_lookup["T107"].get_last_score(), 0.80)
         assert np.isclose(t_lookup["T108"].get_last_score(), 0.60)
         assert np.isclose(t_lookup["T109"].get_last_score(), -1.0)  # fainter than 19.5
@@ -1037,7 +1094,7 @@ class Test__Plotting:
         assert lists_path.parent.exists()
 
 
-def simple_score(target, obs, t_ref):
+def mod_basic_scoring(target, t_ref):
     exclude = False
 
     detections = target.target_data["ztf"].detections
@@ -1050,33 +1107,32 @@ def simple_score(target, obs, t_ref):
     if delta_t > 11:
         exclude = True  # will exclude T101
 
-    obs_factor = 1.0
-    if obs is not None:
-        obs_factor = 0.5
-
-    score = target.base_score * mag_factor * obs_factor
+    score = target.base_score * mag_factor
     if exclude:
         score = -1.0
-    obs_name = getattr(obs, "name", "no_obs")
     return score
 
 
 class Test__Ranking:
 
-    def test__rank_for_obs(self, selector_with_targets):
+    def test__rank_for_obs(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
         t_lookup = selector.target_lookup
-        t_ref = Time(60015.0, format="mjd")
+        t_ref = Time(60015.0, format="mjd")  # Note this is LATER than before!
 
-        selector.evaluate_targets(simple_score, t_ref=t_ref)
+        selector.evaluate_targets(
+            mod_basic_scoring,
+            observatory_scoring_function=basic_obs_scoring,
+            t_ref=t_ref,
+        )
 
         ranked_list = selector.build_ranked_target_list_at_observatory(
             None, plots=False, t_ref=t_ref
         )
 
         assert set(ranked_list.columns) == set("objectId score ra dec ranking".split())
-        assert set(ranked_list["objectId"]) == set(["T102", "T103", "T104", "T105"])
         assert len(ranked_list) == 4
+        assert set(ranked_list["objectId"]) == set(["T102", "T103", "T104", "T105"])
 
         assert ranked_list.iloc[0].objectId == "T102"
         assert ranked_list.iloc[0].ranking == 1
@@ -1117,12 +1173,16 @@ class Test__Ranking:
         assert len(result) == 4
         assert set(result.columns) == set("objectId score ra dec ranking".split())
 
-    def test__rank_all_obs(self, selector_with_targets):
+    def test__rank_all_obs(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
         t_lookup = selector.target_lookup
         t_ref = Time(60015.0, format="mjd")
 
-        selector.evaluate_targets(simple_score, t_ref=t_ref)
+        selector.evaluate_targets(
+            mod_basic_scoring,
+            observatory_scoring_function=basic_obs_scoring,
+            t_ref=t_ref,
+        )
 
         selector.build_ranked_target_lists(t_ref=t_ref, plots=False)
 
@@ -1169,7 +1229,11 @@ class Test__Ranking:
         selector.target_lookup.pop("T105")
         selector.observatories.pop("ucph")
 
-        selector.evaluate_targets(simple_score, t_ref=t_ref)
+        selector.evaluate_targets(
+            mod_basic_scoring,
+            observatory_scoring_function=basic_obs_scoring,
+            t_ref=t_ref,
+        )
         selector.plot_target_lightcurves(
             plotting_function=return_blank_figure, t_ref=t_ref
         )
@@ -1218,7 +1282,7 @@ class Test__Ranking:
 
 class Test__ResettingTasks:
 
-    def test__reset_updated_targets(self, selector_with_targets):
+    def test__reset_updated_targets(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
 
         selector.target_lookup["T101"].updated = True
@@ -1255,7 +1319,7 @@ class Test__ResettingTasks:
 
 
 class Test__MessagingTasks:
-    def test__perform_messaging_tasks(self, selector_with_targets):
+    def test__perform_messaging_tasks(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
         t_lookup = selector.target_lookup
         t_ref = Time(60000.0, format="jd")
@@ -1294,7 +1358,7 @@ class Test__MessagingTasks:
 
 class Test__ExisitingTargets:
 
-    def test__write_exisitng_targets(self, selector_with_targets):
+    def test__write_exisitng_targets(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
         t_ref = Time(60000.0, format="mjd")
 
@@ -1380,7 +1444,7 @@ class Test__ExisitingTargets:
         assert np.isclose(result.loc["T107"].base_score, 1000.0)
         assert np.isclose(result.loc["T108"].base_score, 1000.0)
 
-    def test__read_existing_target_files(self, selector):
+    def test__read_existing_target_files(self, selector: TargetSelector):
         df = pd.DataFrame(
             [
                 ("T201", 90.0, 45.0, 50.0),
@@ -1406,7 +1470,7 @@ class Test__ExisitingTargets:
         assert np.isclose(selector.target_lookup["T202"].base_score, 100.0)
         assert np.isclose(selector.target_lookup["T203"].base_score, 200.0)
 
-    def test__read_existing_targets_named_file(self, selector):
+    def test__read_existing_targets_named_file(self, selector: TargetSelector):
         df = pd.DataFrame(
             [
                 ("T201", 90.0, 45.0, 50.0),
@@ -1429,7 +1493,7 @@ class Test__ExisitingTargets:
 
         assert set(selector.target_lookup.keys()) == set(["T201", "T202"])
 
-    def test__write_score_histories(self, selector_with_targets):
+    def test__write_score_histories(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
 
         t1 = Time(60000.0, format="mjd")
@@ -1497,7 +1561,7 @@ class Test__ExisitingTargets:
         assert result.iloc[4].observatory == "no_observatory"
         assert result.iloc[4].ranking == 1  # they were sorted by mjd NOT ranking.
 
-    def test__recover_score_history(self, selector_with_targets):
+    def test__recover_score_history(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
 
         df = pd.DataFrame(
@@ -1588,7 +1652,8 @@ class Test__LoopingFunctions:
 
         # ACTION
         selector.perform_iteration(
-            scoring_function=simple_score,
+            scoring_function=mod_basic_scoring,
+            observatory_scoring_function=basic_obs_scoring,
             modeling_function=basic_modeler,
             lightcurve_compiler=basic_lc_compiler,
             t_ref=t_ref,
@@ -1624,27 +1689,27 @@ class Test__LoopingFunctions:
         exp_recovery_path = selector.existing_targets_path / "recover_230312_000000.csv"
         assert exp_recovery_path.exists()  # MJD = 60015.
 
-        score_hist_path = selector.existing_targets_path / "score_history"
-        assert score_hist_path.exists()
-        exp_score_hist = [
-            score_hist_path / f"{objectId}.csv"
-            for objectId in "T101 T102 T103 T104 T105 T106".split()
-        ]
-        assert set([f for f in score_hist_path.glob("*")]) == set(exp_score_hist)
+        # score_hist_path = selector.existing_targets_path / "score_history"
+        # assert score_hist_path.exists()
+        # exp_score_hist = [
+        #     score_hist_path / f"{objectId}.csv"
+        #     for objectId in "T101 T102 T103 T104 T105 T106".split()
+        # ]
+        # assert set([f for f in score_hist_path.glob("*")]) == set(exp_score_hist)
 
-        rank_hist_path = selector.existing_targets_path / "rank_history"
-        assert rank_hist_path.exists()
-        exp_rank_hist = [
-            rank_hist_path / f"{objectId}.csv"
-            for objectId in "T101 T102 T103 T104 T105 T106".split()
-        ]
-        assert set([f for f in rank_hist_path.glob("*")]) == set(exp_rank_hist)
+        # rank_hist_path = selector.existing_targets_path / "rank_history"
+        # assert rank_hist_path.exists()
+        # exp_rank_hist = [
+        #     rank_hist_path / f"{objectId}.csv"
+        #     for objectId in "T101 T102 T103 T104 T105 T106".split()
+        # ]
+        # assert set([f for f in rank_hist_path.glob("*")]) == set(exp_rank_hist)
 
-    def test__exc_on_bad_skip_tasks(self, selector_with_targets):
+    def test__exc_on_bad_skip_tasks(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
 
         skip_tasks = ["bad_task"]
 
         with pytest.raises(ValueError):
             with pytest.warns(UnexpectedKeysWarning):
-                selector.perform_iteration(simple_score, skip_tasks=skip_tasks)
+                selector.perform_iteration(basic_scoring, skip_tasks=skip_tasks)

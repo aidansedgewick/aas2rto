@@ -123,6 +123,8 @@ class ObservatoryInfo:
         forecast: float = None,
         dt: float = None,
     ):
+        if t_ref is None:
+            logger.warning("t_ref is None! Defaulting to Time.now()")
         t_ref = t_ref or Time.now()
 
         if t_grid is None:

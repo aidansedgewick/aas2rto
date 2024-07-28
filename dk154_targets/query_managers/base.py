@@ -2,8 +2,22 @@ import abc
 
 from pathlib import Path
 
-from dk154_targets import TargetData
+from dk154_targets.target import TargetData
 from dk154_targets import paths
+
+from dk154_targets import utils
+
+
+EXPECTED_DIRECTORIES = [
+    "lightcurves",
+    "alerts",
+    "probabilities",
+    "parameters",
+    "magstats",
+    "query_results",
+    "cutouts",
+    "photometry",
+]
 
 
 class BaseQueryManager(abc.ABC):
@@ -28,6 +42,7 @@ class BaseQueryManager(abc.ABC):
         data_path: Path = None,
         parent_path: Path = None,
         create_paths: bool = True,
+        # paths: list = EXPECTED_DIRECTORIES,
     ):
         """
         If data path is None
@@ -43,6 +58,11 @@ class BaseQueryManager(abc.ABC):
 
         self.parent_path = parent_path
         self.data_path = data_path
+
+        # utils.check_unexpected_config_keys(
+        #    dirs, EXPECTED_DIRECTORIES, name=f"{self.name} qm __init__(paths)"
+        # )
+
         self.lightcurves_path = self.data_path / "lightcurves"
         self.alerts_path = self.data_path / "alerts"
         self.probabilities_path = self.data_path / "probabilities"

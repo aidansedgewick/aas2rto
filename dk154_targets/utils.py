@@ -14,7 +14,12 @@ from astroplan import Observer
 
 from dk154_targets.exc import UnexpectedKeysWarning, MissingKeysWarning
 
-logger = getLogger("utils")
+logger = getLogger("aas2rto_utils")
+
+
+def chunk_list(l, chunk_size=100):
+    for ii in range(0, len(l), chunk_size):
+        yield l[ii : ii + chunk_size]
 
 
 def calc_file_age(filepath, t_ref, allow_missing=True):

@@ -88,13 +88,17 @@ class DefaultLightcurvePlotter:
         }
 
         self.det_kwargs = dict(ls="none", marker="o")
-        self.ulim_kwargs = dict(ls="none", marker="v", mfc="none")
+        self.ulimit_kwargs = dict(ls="none", marker="v", mfc="none")
         self.badqual_kwargs = dict(ls="none", marker="o", mfc="none")
 
         self.tag_col = "tag"
         self.valid_tag = "valid"
         self.ulimit_tag = "upperlim"
         self.badqual_tag = "badqual"
+
+        self.mag_col = "mag"
+        self.magerr_col = "magerr"
+        self.diffmaglim_col = "diffmaglim"
 
         self.band_col = "band"
 
@@ -145,12 +149,12 @@ class DefaultLightcurvePlotter:
 
                 if len(ulimits) > 0:
                     xdat = ulimits["mjd"].values - self.t_ref.mjd
-                    ydat = ulimits["diffmaglim"]
-                    self.ax.errorbar(xdat, ydat, **band_kwargs, **self.ulim_kwargs)
+                    ydat = ulimits[self.diffmaglim_col]
+                    self.ax.errorbar(xdat, ydat, **band_kwargs, **self.ulimit_kwargs)
                 if len(badqual) > 0:
                     xdat = badqual["mjd"].values - self.t_ref.mjd
-                    ydat = badqual["mag"].values
-                    yerr = badqual["magerr"].values
+                    ydat = badqual[self.mag_col].values
+                    yerr = badqual[self.magerr_col].values
                     self.ax.errorbar(
                         xdat, ydat, yerr=yerr, **band_kwargs, **self.badqual_kwargs
                     )
@@ -168,8 +172,8 @@ class DefaultLightcurvePlotter:
 
             if len(detections) > 0:
                 xdat = detections["mjd"] - self.t_ref.mjd
-                ydat = detections["mag"]
-                yerr = detections["magerr"]
+                ydat = detections[self.mag_col]
+                yerr = detections[self.magerr_col]
                 self.ax.errorbar(
                     xdat, ydat, yerr=yerr, **band_kwargs, **self.det_kwargs
                 )

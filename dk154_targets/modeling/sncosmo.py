@@ -203,7 +203,13 @@ class SncosmoSaltModeler:
                 known_redshift = tns_data.parameters.get("Redshift", None)
 
         if known_redshift is not None:
-            logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
+            try:
+                logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
+            except Exception as e:
+                logger.error("error!", e)
+                msg = f"with {target.objectId} z={known_redshift} (type={type(known_redshift)})"
+                logger.error(msg)
+
             model.set(z=known_redshift)
             fitting_params.remove("z")
             bounds = {}

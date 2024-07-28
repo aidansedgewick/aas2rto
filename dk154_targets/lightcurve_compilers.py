@@ -202,6 +202,7 @@ class DefaultLightcurveCompiler:
         if broker_data is not None:
             try:
                 ztf_lc = prepare_ztf_data(broker_data, **tags)
+                ztf_lc["source"] = "ztf"
                 lightcurve_dfs.append(ztf_lc)
             except Exception as e:
                 print(e)
@@ -218,6 +219,7 @@ class DefaultLightcurveCompiler:
                 )
                 if not (len(atlas_df) == 0 or atlas_df.empty):
                     lightcurve_dfs.append(atlas_df)
+                atlas_df["source"] = "atlas"
 
         # Get YSE data
         yse_data = target.target_data.get("yse", None)
@@ -228,6 +230,7 @@ class DefaultLightcurveCompiler:
                 )
                 if not (len(yse_df) == 0 or yse_df.empty):
                     lightcurve_dfs.append(yse_df)
+                yse_df["source"] = "yse"
 
         compiled_lightcurve = None
         if len(lightcurve_dfs) > 0:

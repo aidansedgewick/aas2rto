@@ -11,8 +11,7 @@ from astropy.time import Time
 
 import pytest
 
-from dk154_targets import Target
-from dk154_targets import TargetData
+from dk154_targets.target import Target, TargetData
 from dk154_targets.exc import (
     BadKafkaConfigError,
     MissingObjectIdError,
@@ -39,44 +38,16 @@ def fink_lc_rows():
     """
     candid, jd, objectId, mag, magerr, diffmaglim, ra, dec, tag
     """
+
+    base_id = 23000_10000_20000_5000  # integer NOT str.
     return [
         (-1, 2460001.5, "ZTF00abc", np.nan, np.nan, 17.0, np.nan, np.nan, "upperlim"),
         (-1, 2460002.5, "ZTF00abc", np.nan, np.nan, 17.0, np.nan, np.nan, "upperlim"),
         (-1, 2460003.5, "ZTF00abc", np.nan, np.nan, 17.0, np.nan, np.nan, "upperlim"),
         (-1, 2460004.5, "ZTF00abc", 18.5, 0.5, 19.0, np.nan, np.nan, "badquality"),
-        (
-            23000_10000_20000_5005,
-            2460005.5,
-            "ZTF00abc",
-            18.2,
-            0.1,
-            19.0,
-            30.0,
-            45.0,
-            "valid",
-        ),
-        (
-            23000_10000_20000_5006,
-            2460006.5,
-            "ZTF00abc",
-            18.3,
-            0.1,
-            19.5,
-            30.0,
-            45.0,
-            "valid",
-        ),
-        (
-            23000_10000_20000_5007,
-            2460007.5,
-            "ZTF00abc",
-            18.0,
-            0.1,
-            19.5,
-            30.0,
-            45.0,
-            "valid",
-        ),
+        (base_id + 5, 2460005.5, "ZTF00abc", 18.2, 0.1, 19.0, 30.0, 45.0, "valid"),
+        (base_id + 6, 2460006.5, "ZTF00abc", 18.3, 0.1, 19.5, 30.0, 45.0, "valid"),
+        (base_id + 7, 2460007.5, "ZTF00abc", 18.0, 0.1, 19.5, 30.0, 45.0, "valid"),
     ]
 
 
