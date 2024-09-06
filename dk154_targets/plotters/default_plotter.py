@@ -231,8 +231,8 @@ class DefaultLightcurvePlotter:
         title = str(target)
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
-            known_redshift = tns_data.parameters.get("Redshift", None)
-            if known_redshift is not None:
+            known_redshift = float(tns_data.parameters.get("Redshift", "nan"))
+            if np.isfinite(known_redshift):
                 title = title + r" ($z_{\rm TNS}=" + f"{known_redshift}" + "$)"
         transform_kwargs = dict(ha="center", va="top", transform=self.fig.transFigure)
         self.ax.text(0.5, 0.98, title, fontsize=14, **transform_kwargs)

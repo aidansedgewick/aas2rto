@@ -116,7 +116,8 @@ class Test__CallScoringClass:
 
         score, comms, reject_comms = func(mock_target_with_model, t_ref)
 
-        assert np.isclose(score, 100.0)
+        # x_mag = 10, x_peak = 30.
+        assert np.isclose(score, 300.0)
 
     def test__low_score_old(self, mock_target: Target):
         func = SupernovaPeakScore()
@@ -133,3 +134,152 @@ class Test__CallScoringClass:
         score, comms, reject_comms = func(mock_target, t_ref)
 
         assert not np.isfinite(score)
+
+    def test__use_provided_broker_priority(self, mock_target: Target, rising_lc):
+        t_ref = Time(60005.0, format="mjd")
+
+        td = TargetData(lightcurve=rising_lc[:-2].copy())  # last mag=17.5 here
+        mock_target.target_data["cool_source"] = td
+
+        default_func = SupernovaPeakScore()
+        score, comms, rej_comms = default_func(mock_target, t_ref=t_ref)
+
+        assert np.isclose(score, 10.0)
+
+        mod_func = SupernovaPeakScore(broker_priority=["cool_source", "fink"])
+        mod_score, comms, rej_comms = mod_func(mock_target, t_ref)
+
+        assert np.isclose(mod_score, 10**0.5)
+
+    def test__choose_best_ztf_source(self, mock_target: Target, rising_lc):
+        t_ref = Time(60005.0, format="mjd")
+
+        alerce_td = TargetData(lightcurve=rising_lc[:-2].copy())  # mag = 17.5
+        mock_target.target_data["alerce"] = alerce_td
+
+        fink_data = mock_target.target_data.pop("fink")
+        assert "fink" not in mock_target.target_data.keys()
+
+        func = SupernovaPeakScore()
+
+        score, comms, reject_comms = func(mock_target, t_ref)
+
+        assert np.isclose(score, 10**0.5)
+
+    def test__no_crash_with_no_data(self, mock_target: Target):
+        t_ref = Time(60005.0, format="mjd")
+
+        mock_target.target_data.pop("fink")
+
+        assert set(mock_target.target_data.keys()) == set()
+
+        func = SupernovaPeakScore()
+
+        score, comms, rej_comms = func(mock_target, t_ref)
+
+        assert np.isclose(score, -1.0)
+        assert comms[-1].startswith("ZTF00abc: none of")
+
+    def test__exclude_target_too_faint(self, mock_target: Target):
+        t_ref = Time(60005.0, format="mjd")
+
+        faint_limit = 15.0
+        func = SupernovaPeakScore(faint_limit=faint_limit)
+
+        mag_vals = mock_target.target_data["fink"].lightcurve["magpsf"].values
+        assert all(mag_vals > faint_limit)
+
+        score, comms, reject_comms = func(mock_target, t_ref)
+
+        assert np.isclose(score, -1.0)
+
+        comment_found = False
+        for comm in comms:
+            if "exclude:" in comm and "(faint lim)" in comm:
+                comment_found = True
+                break
+        assert comment_found
+
+    def test__exclude_target_too_young(self, mock_target: Target):
+        t_ref = Time(60005.0, format="mjd")
+
+        min_timespan = 6.0
+        func = SupernovaPeakScore(min_timespan=min_timespan)
+
+        mjd_vals = mock_target.target_data["fink"].lightcurve["mjd"].values
+
+        assert t_ref.mjd - mjd_vals.min() < min_timespan
+
+        score, comms, reject_comms = func(mock_target, t_ref)
+
+        assert np.isclose(score, -1.0)
+
+        comment_found = False
+        for comm in comms:
+            if "exclude: timespan" in comm and "(min)" in comm:
+                comment_found = True
+                break
+        assert comment_found
+
+    def test__exclude_target_too_few_obs(self, mock_target: Target):
+        t_ref = Time(60005.0, format="mjd")
+
+        min_obs = 8
+        func = SupernovaPeakScore(min_ztf_detections=min_obs)
+
+        assert len(mock_target.target_data["fink"].lightcurve) < min_obs
+
+        score, comms, reject_comms = func(mock_target, t_ref)
+
+        assert np.isclose(score, -1.0)
+
+        comment_found = False
+        for comm in comms:
+            if "exclude as detections" in comm and "insufficient" in comm:
+                comment_found = True
+                break
+        assert comment_found
+
+    def test__no_fail_on_inf_model_t0(self, mock_target: Target, mock_salt_model):
+        t_ref = Time(60005.0, format="mjd")
+
+        mock_salt_model["t0"] = np.inf
+
+        mock_target.models["sncosmo_salt"] = mock_salt_model
+
+        func = SupernovaPeakScore()
+
+        score, comms, reject_comms = func(mock_target, t_ref)
+
+        print(comms)
+
+        assert np.isclose(score, 10.0)
+
+        comment_found = False
+        for comm in comms:
+            if f"ZTF00abc interest_factor not finite" in comm:
+                comment_found = True
+                break
+        assert comment_found
+
+    def test__no_fail_on_nan_model_t0(self, mock_target: Target, mock_salt_model):
+        t_ref = Time(60005.0, format="mjd")
+
+        mock_salt_model["t0"] = np.nan
+
+        mock_target.models["sncosmo_salt"] = mock_salt_model
+
+        func = SupernovaPeakScore()
+
+        score, comms, reject_comms = func(mock_target, t_ref)
+
+        print(comms)
+
+        assert np.isclose(score, 10.0)
+
+        comment_found = False
+        for comm in comms:
+            if f"ZTF00abc interest_factor not finite" in comm:
+                comment_found = True
+                break
+        assert comment_found

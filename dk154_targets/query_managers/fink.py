@@ -42,66 +42,66 @@ from dk154_targets import paths
 logger = getLogger(__name__.split(".")[-1])
 
 
-def combine_fink_detections_non_detections(
-    detections: pd.DataFrame, non_detections: pd.DataFrame
-):
-    """
-    Combine fink "detections" and "non-detections", correctly preserving `candid`.
+# def combine_fink_detections_non_detections(
+#     detections: pd.DataFrame, non_detections: pd.DataFrame
+# ):
+#     """
+#     Combine fink "detections" and "non-detections", correctly preserving `candid`.
 
-    Parameters
-    ----------
-    detections
-        the output of `FinkQuery.query_objects(objectId="ZTF23blahbla")`
-    non_detections
-        the output of `FinkQuery.query_objects(objectId="ZTF23blahbla", withupperlim=True)`
+#     Parameters
+#     ----------
+#     detections
+#         the output of `FinkQuery.query_objects(objectId="ZTF23blahbla")`
+#     non_detections
+#         the output of `FinkQuery.query_objects(objectId="ZTF23blahbla", withupperlim=True)`
 
-    Querying objects using `withupperlim=True` will return valid, badqual, and upperlim
-    BUT values `candid` and other long ints from `valid` entries
-    will have been irreversibly converted to floats (removing the last few digits).
-    So we remove them from non-detections, add 0 to non_detections `candid` so that the
-    int -> float conversion does not break these values, and re-concatenate detections.
-    """
+#     Querying objects using `withupperlim=True` will return valid, badqual, and upperlim
+#     BUT values `candid` and other long ints from `valid` entries
+#     will have been irreversibly converted to floats (removing the last few digits).
+#     So we remove them from non-detections, add 0 to non_detections `candid` so that the
+#     int -> float conversion does not break these values, and re-concatenate detections.
+#     """
 
-    # Check to see if we're working with sensible data...
-    try:
-        objectId = detections["objectId"].iloc[0]
-    except:
-        objectId = "bad_objectId"
+#     # Check to see if we're working with sensible data...
+#     try:
+#         objectId = detections["objectId"].iloc[0]
+#     except:
+#         objectId = "bad_objectId"
 
-    if "tag" in non_detections:
-        if "valid" in np.unique(non_detections["tag"]):
-            ldet = len(detections)
-            lvalid = len(non_detections.query("tag=='valid'"))
-            if not ldet == lvalid:
-                msg = f"{objectId}: mismatch : detections ({ldet}) != 'valid' non_detections ({lvalid})"
-                raise ValueError(msg)
-    else:
-        if (not non_detections.empty) and (not detections.empty):
-            msg = (
-                f"{objectId}: non_detections has no 'tag' (no detections), "
-                "but detections is not empty"
-            )
-            raise ValueError(msg)
+#     if "tag" in non_detections:
+#         if "valid" in np.unique(non_detections["tag"]):
+#             ldet = len(detections)
+#             lvalid = len(non_detections.query("tag=='valid'"))
+#             if not ldet == lvalid:
+#                 msg = f"{objectId}: mismatch : detections ({ldet}) != 'valid' non_detections ({lvalid})"
+#                 raise ValueError(msg)
+#     else:
+#         if (not non_detections.empty) and (not detections.empty):
+#             msg = (
+#                 f"{objectId}: non_detections has no 'tag' (no detections), "
+#                 "but detections is not empty"
+#             )
+#             raise ValueError(msg)
 
-    # fix detections
-    detections["tag"] = "valid"
-    if not detections.empty:
-        detections["candid_str"] = detections["candid"].astype(str)
-    if "candid" not in detections.columns:
-        detections["candid"] = 0
+#     # fix detections
+#     detections["tag"] = "valid"
+#     if not detections.empty:
+#         detections["candid_str"] = detections["candid"].astype(str)
+#     if "candid" not in detections.columns:
+#         detections["candid"] = 0
 
-    # fix non-detections
-    if not non_detections.empty:
-        non_detections.query("tag!='valid'", inplace=True)
-        if "candid" in non_detections.columns:
-            if not all(pd.isnull(non_detections["candid"])):
-                raise ValueError(
-                    f"{objectId}: not all non-detections have Null `candid`"
-                )
+#     # fix non-detections
+#     if not non_detections.empty:
+#         non_detections.query("tag!='valid'", inplace=True)
+#         if "candid" in non_detections.columns:
+#             if not all(pd.isnull(non_detections["candid"])):
+#                 raise ValueError(
+#                     f"{objectId}: not all non-detections have Null `candid`"
+#                 )
 
-    non_detections["candid"] = -1
-    lightcurve = pd.concat([detections, non_detections])
-    return lightcurve
+#     non_detections["candid"] = -1
+#     lightcurve = pd.concat([detections, non_detections])
+#     return lightcurve
 
 
 def process_fink_lightcurve(raw_lightcurve: pd.DataFrame):
@@ -174,20 +174,37 @@ def empty_query_results(comparison="ndethist"):
 
 
 def get_updates_from_query_results(
-    existing_results: pd.DataFrame, updated_results: pd.DataFrame, comparison="ndethist"
+    existing_results: pd.DataFrame, latest_results: pd.DataFrame, comparison="ndethist"
 ):
     """
     Compare two dataframes of query_results. Get the rows which have been updated, or are new.
+
+    Parameters
+    ----------
+    existing_results : pd.DataFrame
+        The set of results from earlier (could be None!)
+    latest_results
+        The set of results we've just got (could be None!)
+    comparison : ndethist
+        If the objectId of two FINK objects is the same, check this column to see
+        if it's been updated or not
+
+    Returns
+    -------
+    updates_df
+        Contains all rows not in existing results, or with 'comparison' column
+        with an updated (higher) value.
+
     """
 
-    if updated_results is None or updated_results.empty:
+    if latest_results is None or latest_results.empty:
         # Even if it's None, that's fine.
-        return empty_query_results(comparison=comparison)
+        return empty_query_results(comparison=comparison)  # Ensure df has this col.
 
-    updated_results = process_fink_query_results(updated_results, comparison=comparison)
+    latest_results = process_fink_query_results(latest_results, comparison=comparison)
 
     if existing_results is None or existing_results.empty:
-        return updated_results
+        return latest_results
 
     existing_results = process_fink_query_results(
         existing_results, comparison=comparison
@@ -195,7 +212,7 @@ def get_updates_from_query_results(
     existing_results.set_index("objectId", verify_integrity=True)
 
     updates = []
-    for objectId, updated_row in updated_results.iterrows():
+    for objectId, updated_row in latest_results.iterrows():
         if objectId not in existing_results.index:
             updates.append(updated_row)
             continue
@@ -204,7 +221,7 @@ def get_updates_from_query_results(
             updates.append(updated_row)
 
     if len(updates) == 0:
-        return empty_query_results(comparison=comparison)
+        return empty_query_results(comparison=comparison)  # Ensure df has this col.
     updates_df = pd.DataFrame(updates)
     updates_df.sort_values("objectId", inplace=True)
     # updates_df.set_index("objectId", verify_integrity=True, inplace=True, drop=False)
@@ -235,6 +252,7 @@ class FinkQueryManager(BaseQueryManager):
         "object_query_lookback": 20.0,  # How far back in time to check for alerts [day]
         "object_query_timestep": 0.1,  # Queries in short steps, not one big chunk. [day]
         "lightcurve_update_interval": 2.0,  # How often to update existing LCs.
+        "lightcurve_chunk_size": 25,  # 'N' lightcurves to query for at once.
         "max_failed_queries": 10,
         "max_total_query_time": 300,  # Max time allowed in each query stage. [sec]
     }
@@ -424,14 +442,41 @@ class FinkQueryManager(BaseQueryManager):
     def query_for_object_updates(self, comparison="ndethist", t_ref: Time = None):
         """
         Query for updates for each fink_class in fink_config["object_queries"]
-        Compare with what we currently know about - if any are new, or updated,
-        return these rows.
+        Compare with FINK objects that we currently know about - if any are new,
+        or updated rows, return these rows.
 
         Parameters
         ----------
-        comparison [str]:
+        comparison : str, default="ndethist"
             column_name to compare to existing results to determine updates.
-            default="ndethist"
+
+        Example
+        -------
+        if current query results row is
+            ```
+            objectId ndethist ...
+            -------- --------
+            ZTF00abc       10 ...
+            ZTF00def       11 ...
+            ```
+
+        and new query results:
+            ```
+            objectId ndethist ...
+            -------- --------
+            ZTF00abc       10 ...
+            ZTF00def       12 ...
+            ZTF00hij       5  ...
+            ```
+
+        Then the final output contains only new or updated rows:
+            ```
+            objectId ndethist ...
+            -------- --------
+            ZTF00def       12 ...
+            ZTF00hij       5  ...
+            ```
+
         """
         t_ref = t_ref or Time.now()
 
@@ -457,21 +502,21 @@ class FinkQueryManager(BaseQueryManager):
                 fink_class, step=step, lookback=lookback, t_ref=t_ref
             )
             if query_updates is None:
-                updated_results = empty_query_results(comparison=comparison)
+                latest_results = empty_query_results(comparison=comparison)
             else:
-                updated_results = process_fink_query_results(
+                latest_results = process_fink_query_results(
                     query_updates, comparison=comparison
                 )
             existing_results = self.query_results.get(fink_class, None)
             if existing_results is None:
                 existing_results = empty_query_results(comparison=comparison)
-            updates = get_updates_from_query_results(existing_results, updated_results)
+            updates = get_updates_from_query_results(existing_results, latest_results)
 
             if not updates.empty:
                 update_dfs.append(updates)
 
             query_results = pd.concat(
-                [existing_results, updated_results], ignore_index=True
+                [existing_results, latest_results], ignore_index=True
             )
             query_results = process_fink_query_results(
                 query_results, comparison=comparison
@@ -489,6 +534,15 @@ class FinkQueryManager(BaseQueryManager):
     def new_targets_from_object_updates(
         self, updates: pd.DataFrame, t_ref: Time = None
     ):
+        """
+        Add new targets from `updates` to the target_lookup (uses target_from_fink_query_row())
+
+        Parameters
+        ----------
+        updates : pd.DataFrame
+            updates should contain columns `objectId`, `ra`, `dec`
+        """
+
         t_ref = t_ref or Time.now()
 
         new_targets = []
@@ -526,10 +580,12 @@ class FinkQueryManager(BaseQueryManager):
         self,
         objectId_list: List[str],
         t_ref: Time = None,
-        chunk_size=10,
+        chunk_size=None,
         bulk_filepath=None,
     ):
         t_ref = t_ref or Time.now()
+
+        chunk_size = chunk_size or self.query_parameters["lightcurve_chunk_size"]
 
         if len(objectId_list) > 0:
             logger.info(f"attempt {len(objectId_list)} lightcurve queries")
@@ -540,7 +596,9 @@ class FinkQueryManager(BaseQueryManager):
 
         bulk_results = []
         t_start = time.perf_counter()
-        for objectId_chunk in utils.chunk_list(objectId_list, chunk_size=chunk_size):
+        for ii, objectId_chunk in enumerate(
+            utils.chunk_list(objectId_list, chunk_size=chunk_size)
+        ):
             if failed_queries > self.query_parameters["max_failed_queries"]:
                 msg = f"Too many failed LC queries ({failed_queries}), stop for now"
                 logger.info(msg)
@@ -552,14 +610,14 @@ class FinkQueryManager(BaseQueryManager):
 
             objectId_str = ",".join(objectId for objectId in objectId_chunk)
             try:
-                logger.info(f"query {len(objectId_chunk)} LCs...")
+                logger.info(f"query {len(objectId_chunk)} LCs in chunk {ii}...")
                 chunk_result = FinkQuery.query_objects(
                     objectId=objectId_str, withupperlim=True, return_df=True
                 )
                 if not chunk_result.empty:
                     bulk_results.append(chunk_result)
-            except:
-                logger.info(f"fink query")
+            except Exception as e:
+                logger.info(f"fink query for chunk {ii} failed")
                 failed.extend(objectId_chunk)
                 failed_queries = failed_queries + 1
                 continue
@@ -625,10 +683,9 @@ class FinkQueryManager(BaseQueryManager):
                 if len(lightcurve) <= len(existing_lightcurve):
                     skipped.append(objectId)
                     continue
-
+                target.updated = True
             fink_data.add_lightcurve(lightcurve)
             loaded.append(objectId)
-            target.updated = True
         t_end = time.perf_counter()
 
         N_loaded = len(loaded)
@@ -653,8 +710,6 @@ class FinkQueryManager(BaseQueryManager):
         if "mjd" not in lightcurve.columns:
             mjd_dat = Time(lightcurve["jd"], format="jd").mjd
             lightcurve.insert(1, "mjd", mjd_dat)
-
-        # print(f"{objectId} {len(lightcurve)} rows", time.perf_counter() - t1)
         return lightcurve
 
     def load_missing_alerts(self, objectId: str):
@@ -683,7 +738,7 @@ class FinkQueryManager(BaseQueryManager):
                 loaded_alerts.append(alert)
         return loaded_alerts
 
-    def integrate_alerts(self, save_lightcurve=True):
+    def integrate_alerts(self, save_lightcurves=True):
         integrated_alerts = []
         for objectId, target in self.target_lookup.items():
             # Loop through all targets - not a bottleneck for now.
@@ -695,15 +750,15 @@ class FinkQueryManager(BaseQueryManager):
             if "mjd" not in alert_df.columns:
                 alert_df["mjd"] = Time(alert_df["jd"], format="jd").mjd
             fink_data = target.get_target_data("fink")
-            fink_data.integrate_lightcurve_updates(alert_df, column="candid")
+            fink_data.integrate_lightcurve_updates_equality(
+                alert_df, column="candid", ignore_values=[-1]
+            )
 
-            if save_lightcurve:
+            if save_lightcurves:
                 lightcurve_filepath = self.get_lightcurve_file(objectId)
                 lightcurve = fink_data.lightcurve
                 lightcurve.to_csv(lightcurve_filepath, index=False)
             integrated_alerts.append(objectId)
-
-            target.updated = True
         if len(integrated_alerts):
             logger.info(
                 f"integrate alerts into LC for {len(integrated_alerts)} targets"
@@ -736,6 +791,7 @@ class FinkQueryManager(BaseQueryManager):
                     loaded_cutouts.append(objectId)
                     break  # Leave candid loop, back to outer target loop
         logger.info(f"{len(loaded_cutouts)} cutouts loaded")
+        return loaded_cutouts
 
     def apply_messenger_updates(self, alerts):
         for alert in alerts:
@@ -743,6 +799,7 @@ class FinkQueryManager(BaseQueryManager):
             target = self.target_lookup.get(objectId, None)
             if target is None:
                 continue
+            target.updated = True
             target.send_updates = True
             topic_str = alert["topic"]
             alert_jd = alert.get("jd")
@@ -764,8 +821,11 @@ class FinkQueryManager(BaseQueryManager):
         new_targets = list(set([alert["objectId"] for alert in processed_alerts]))
         success, failed = self.perform_lightcurve_queries(new_targets)
 
-        # updated_objects = self.query_for_object_updates(t_ref=t_ref)
-        # success, failed = self.perform_lightcurve_queries(updated_objects["objectId"].values)
+        updated_objects = self.query_for_object_updates(t_ref=t_ref)
+        new_targets = self.new_targets_from_object_updates(updated_objects)
+        success, failed = self.perform_lightcurve_queries(
+            updated_objects["objectId"].values
+        )
 
         lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
         logger.info(f"update {len(lcs_to_query)} old lightcurves")
@@ -804,18 +864,19 @@ class FinkQuery:
     def __init__(self):
         pass
 
-    @classmethod
-    def fix_dict_keys(cls, data: Dict):
+    @staticmethod
+    def fix_dict_keys_inplace(data: Dict):
         key_lookup = {k: k.split(":")[-1] for k in data.keys()}
         for old_key, new_key in key_lookup.items():
             # Not dangerous, as not iterating over the dict we're updating.
             data[new_key] = data.pop(old_key)
+        # don't return dictionary, dict is modified inplace...
 
     @classmethod
     def process_data(cls, data, fix_keys=True, return_df=True, df_kwargs=None):
         if fix_keys:
             for row in data:
-                cls.fix_dict_keys(row)
+                cls.fix_dict_keys_inplace(row)
         if not return_df:
             return data
         return pd.DataFrame(data)
@@ -843,8 +904,8 @@ class FinkQuery:
             )
         return response
 
-    @classmethod
-    def process_kwargs(cls, **kwargs):
+    @staticmethod
+    def process_kwargs(**kwargs):
         return {k.rstrip("_"): v for k, v in kwargs.items()}
 
     @classmethod
@@ -887,7 +948,7 @@ class FinkQuery:
                 updates = None
 
             if updates is None:
-                return None
+                break
 
             n = query_data["n"]
             if len(updates) == n:

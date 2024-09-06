@@ -1165,7 +1165,7 @@ class TargetSelector:
             last_score = target.get_last_score()
             if last_score is None:
                 skipped.append(objectId)
-                logger.debug(f"last score is None")
+                logger.debug(f"last score is None; skip")
                 continue
 
             if last_score < minimum_score:
@@ -1208,7 +1208,7 @@ class TargetSelector:
 
         Parameters
         ----------
-        text
+        text : str or list of str, default=None
             str or list of str of text to accompany the traceback
         """
         if text is None:
@@ -1222,7 +1222,7 @@ class TargetSelector:
 
     def perform_iteration(
         self,
-        scoring_function: Callable = None,
+        scoring_function: Callable,
         observatory_scoring_function: Callable = None,
         modeling_function: Callable = None,
         lightcurve_compiler: Callable = None,
@@ -1232,6 +1232,61 @@ class TargetSelector:
     ):
         """
         The actual prioritisation loop.
+
+        Most of the parameters are callable functions, which you can provide.
+        Only one is mandatory: scoring_function
+
+        All but one of the user provided functions should have signature:
+            func(target, t_ref) :
+                target : dk154_targets.target.Target
+                t_ref : astropy.time.Time
+        The only exception is observatory_scoring_function, which should have signature
+            func(target, obs: astroplan.Observer, t_ref)
+
+        Parameters
+        ----------
+        scoring_function : Callable
+            The (science) scoring function to prioritise targets.
+            It should have the 'standard' signature defined above.
+            It should return:
+                score : float
+                comments : List of str, optional
+        observatory_scoring_function : Callable, optional
+            The scoring function to evaluate at observatories.
+                If not provided, defaults to dk154_targets.scoring.DefaultObsScore
+                It should have signature func(target, obs, t_ref), where arguments:
+                    target : dk154_targets.target.Target
+                    obs : astroplan.Observer
+                    t_ref : astropy.time.Time
+            It should return:
+                obs_factors : float
+                    The output of this will be multiplied by 'score'
+                    from scoring_function, to get the score for this observatory.
+                comms : list of str, optional
+        modeling_function : Callable or list of Callable
+            Functions which produce models based on target.
+            Exceptions in modeling_function are caught, and the model will be set to None.
+            It should have the 'standard' signature defined above.
+            It should return:
+                model : Any
+                    the model which describes your source. You can access it in
+                    (eg.) scoring functions with target.models[<your_func_name>]
+        lightcurve_compiler : Callable
+            Function which produces a convenient single lightcurve including all data
+            sources. Helpful in scoring, plotting.
+            It should have the 'standard' signature defined above.
+            It should return:
+                compiled_lc : pd.DataFrame or astropy.table.Table
+        lc_plotting_function : Callable
+            Generate a lightcurve figure for each target.
+            It should have the 'standard' signature defined above.
+            it should return:
+                figure : matplotlib.pyplot.Figure
+        skip_tasks : list of str, optional
+            Task(s) which should be skipped.
+            Must be one of
+                "qm_tasks", "obs_info", "pre_check", "modeling", "evaluate",
+                "ranking", "reject", "plotting", "write_targets", "messaging",
         """
 
         t_ref = t_ref or Time.now()
@@ -1393,6 +1448,7 @@ class TargetSelector:
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
         existing_targets_file=False,
+        skip_tasks=None,
         iterations=None,
     ):
         """
@@ -1410,6 +1466,17 @@ class TargetSelector:
 
         existing_targets_file: optional, default=False
             path to an existing_targets_file, or "last"
+
+
+        Examples
+        --------
+        >>> from dk154_targets import paths
+        >>> from dk154_targets import TargetSelector
+        >>> from dk154_targets.scoring.example_functions import latest_flux
+
+        >>> config_path = paths.config_path / "examples/fink_supernovae.yaml"
+        >>> selector = TargetSelector.from_config(config_path)
+        >>> selector.start(scoring_function=latest_flux)
 
         """
         t_ref = Time.now()
@@ -1442,9 +1509,9 @@ class TargetSelector:
         while True:
             t_ref = Time.now()
 
-            skip_tasks = []
+            loop_skip_tasks = skip_tasks or []
             if N_iterations == 0:
-                skip_tasks.append("messaging")
+                loop_skip_tasks.append("messaging")
 
             try:
                 self.perform_iteration(
@@ -1453,7 +1520,7 @@ class TargetSelector:
                     modeling_function=modeling_function,
                     lightcurve_compiler=lightcurve_compiler,
                     lc_plotting_function=lc_plotting_function,
-                    skip_tasks=skip_tasks,
+                    skip_tasks=loop_skip_tasks,
                     t_ref=t_ref,
                 )
             except Exception as e:

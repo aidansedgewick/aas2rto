@@ -371,9 +371,8 @@ class AtlasQueryManager(BaseQueryManager):
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
         try:
-            self.recover_finished_queries(
-                t_ref=t_ref
-            )  # also populates "submitted queries"
+            self.recover_finished_queries(t_ref=t_ref)
+            # also populates "submitted queries"
         except requests.exceptions.JSONDecodeError as e:
             return e
 

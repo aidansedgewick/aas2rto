@@ -24,3 +24,7 @@ class UnexpectedKeysWarning(UserWarning):
 
 class MissingKeysWarning(UserWarning):
     pass
+
+
+class MissingMediaWarning(UserWarning):
+    pass

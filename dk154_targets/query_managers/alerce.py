@@ -411,6 +411,8 @@ class AlerceQueryManager(BaseQueryManager):
         if oid_list is None:
             oid_list = list(self.target_lookup.keys())
             logger.info(f"try loading all {len(oid_list)} lcs in target_lookup")
+        else:
+            logger.info(f"try loading {len(oid_list)} lcs")
 
         for oid in oid_list:
             # TODO: not optimum to read every time... but not a bottleneck for now.
@@ -455,13 +457,11 @@ class AlerceQueryManager(BaseQueryManager):
             logger.warning(f"{oid} is missing lightcurve")
             return None
 
-        t1 = time.perf_counter()
         try:
             lightcurve = pd.read_csv(lightcurve_file, dtype={"candid": "Int64"})
         except pd.errors.EmptyDataError as e:
             logger.warning(f"bad lightcurve file for {oid}")
             return None
-        # print(f"{objectId} time to read", time.perf_counter()-t1)
         return lightcurve
 
     def get_object_probabilities_to_query(self, t_ref: Time = None):

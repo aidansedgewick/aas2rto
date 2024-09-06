@@ -1,5 +1,8 @@
 import copy
+import json
 import os
+import pickle
+import requests
 
 import numpy as np
 
@@ -21,7 +24,7 @@ from dk154_targets.exc import (
 )
 from dk154_targets.query_managers import fink
 from dk154_targets.query_managers.fink import (
-    combine_fink_detections_non_detections,
+    # combine_fink_detections_non_detections,
     process_fink_lightcurve,
     target_from_fink_lightcurve,
     target_from_fink_alert,
@@ -30,6 +33,7 @@ from dk154_targets.query_managers.fink import (
     target_from_fink_query_row,
     FinkQueryManager,
     FinkQuery,
+    FinkQueryError,
 )
 
 
@@ -164,6 +168,7 @@ def alert_base():
         roid=3,
         nalerthist=1,
         rf_kn_vs_nonkn=0.0,
+        tag="valid",
     )
 
 
@@ -194,27 +199,40 @@ def polled_alerts(alert_list):
     return [("interesting_topic", alert, "key_") for alert in alert_list]
 
 
-class MockConsumer:
-    alert_list = None  # TODO: how to get alert_list into class definition?!
+def gen_mock_cutouts(filepath):
+    cutouts = {
+        "science": np.random.uniform(0, 1, (100, 100)),
+        "difference": np.random.uniform(0, 1, (100, 100)),
+        "template": np.random.uniform(0, 1, (100, 100)),
+    }
+    with open(filepath, "wb+") as f:
+        pickle.dump(cutouts, f)
 
-    def __init__(self, topics, config):
-        self.index = 0
 
-    def __enter__(self):
-        return self
+def create_mock_consumer(alerts):
+    class MockConsumer:
+        alert_list = alerts  # TODO: how to get alert_list into class definition?!
 
-    def __exit__(self, type, value, traceback):
-        pass
+        def __init__(self, topics, config):
+            self.index = 0
 
-    def poll(self, timeout=None):
-        if self.alert_list is None:
-            raise ValueError("you should set mock_consumer.alert_list")
+        def __enter__(self):
+            return self
 
-        if self.index > len(self.alert_list):
-            return (None, None, None)
-        result = self.alert_list[self.index]
-        self.index = self.index + 1
-        return ("interesting_topic", result, "key_")
+        def __exit__(self, type, value, traceback):
+            pass
+
+        def poll(self, timeout=None):
+            if self.alert_list is None:
+                raise ValueError("you should set mock_consumer.alert_list")
+
+            if self.index > len(self.alert_list):
+                return (None, None, None)
+            result = self.alert_list[self.index]
+            self.index = self.index + 1
+            return ("interesting_topic", result, "key_")
+
+    return MockConsumer
 
 
 @pytest.fixture
@@ -572,30 +590,30 @@ class Test__FinkQueryManagerInit:
 
 class Test__FinkAlertStreams:
     def test__fink_mock_consumer_behaviour(self, alert_list, monkeypatch):
-        assert MockConsumer.alert_list is None
-        with monkeypatch.context() as m:
-            m.setattr(MockConsumer, "alert_list", alert_list)
-            assert len(MockConsumer.alert_list) == 15
-            with MockConsumer([], []) as mc:
-                assert mc.index == 0
-                poll_result = mc.poll()
-                assert isinstance(poll_result, tuple)
-                assert len(poll_result) == 3
-                assert mc.index == 1
-                assert np.isclose(poll_result[1]["candidate"]["magpsf"], 19.0)
-        assert MockConsumer.alert_list is None  # Back to normal.
+
+        # with alerts as None...
+        MCNone = create_mock_consumer(None)
+        assert MCNone.alert_list is None
+
+        MockConsumer = create_mock_consumer(alert_list)
+        with MockConsumer([], []) as mc:
+            assert mc.index == 0
+            poll_result = mc.poll()
+            assert isinstance(poll_result, tuple)
+            assert len(poll_result) == 3
+            assert mc.index == 1
+            assert np.isclose(poll_result[1]["candidate"]["magpsf"], 19.0)
 
     def test__fink_listen_for_alerts(self, fink_qm, alert_list, monkeypatch):
-        assert MockConsumer.alert_list is None
+        MockConsumer = create_mock_consumer(alert_list)
         assert hasattr(fink.AlertConsumer, "consume")  # Before patch
         with monkeypatch.context() as m:
             # Patch the alert list onto the MockConsumer
-            m.setattr(MockConsumer, "alert_list", alert_list)
-            assert len(MockConsumer.alert_list) == 15  # is patched!
 
             # Patch the MockConsumer into the fink module
             m.setattr("dk154_targets.query_managers.fink.AlertConsumer", MockConsumer)
             assert not hasattr(fink.AlertConsumer, "consume")  # is patched!
+            assert len(fink.AlertConsumer.alert_list) == 15  # is patched!
 
             alerts = fink_qm.listen_for_alerts()
             assert len(alerts) == 10
@@ -609,7 +627,6 @@ class Test__FinkAlertStreams:
             assert alerts[1][1]["candid"] == 23000_10000_20000_5012
             assert alerts[5][1]["candid"] == 23000_10000_20000_5016
             assert alerts[9][1]["candid"] == 23000_10000_20000_5020
-        assert MockConsumer.alert_list is None
         assert hasattr(fink.AlertConsumer, "consume")  # Back to normal.
 
     def test__process_fink_alerts(self, fink_qm, polled_alerts):
@@ -867,17 +884,16 @@ class Test__FinkLightcurveQueries:
         assert set(lcs_to_query) == set(["ZTF00abc", "ZTF01ijk", "ZTF02xyz"])
 
     def test__perform_lightcurve_queries(
-        self, fink_qm, fink_lc, target_list, monkeypatch
+        self, fink_qm: FinkQueryManager, fink_lc: pd.DataFrame, target_list, monkeypatch
     ):
         fink_qm.create_paths()
 
-        def mock_query(objectId, **kwrags):
-            if objectId == "ZTF00abc":
-                return fink_lc
-            if objectId == "ZTF01ijk":
-                return pd.DataFrame(columns="jd mjd".split())
+        def mock_query(objectId, **kwargs):
+            objectId_list = objectId.split(",")
+            if "ZTF00abc" in objectId_list:
+                return fink_lc.copy()
             else:
-                raise Exception
+                return pd.DataFrame()
 
         objectId_list = [t.objectId for t in target_list]
 
@@ -885,10 +901,12 @@ class Test__FinkLightcurveQueries:
             m.setattr(
                 "dk154_targets.query_managers.fink.FinkQuery.query_objects", mock_query
             )
-            success, failed = fink_qm.perform_lightcurve_queries(objectId_list)
+            success, failed = fink_qm.perform_lightcurve_queries(
+                objectId_list, chunk_size=2
+            )
 
-        assert set(success) == set(["ZTF00abc", "ZTF01ijk"])
-        assert set(failed) == set(["ZTF02xyz"])
+        assert set(success) == set(["ZTF00abc", "ZTF01ijk", "ZTF02xyz"])
+        assert set(failed) == set()
 
         exp_ZTF00abc_lc_file = fink_qm.data_path / "lightcurves/ZTF00abc.csv"
         assert exp_ZTF00abc_lc_file.exists()
@@ -901,7 +919,38 @@ class Test__FinkLightcurveQueries:
         assert ZTF01ijk_lc.empty
 
         exp_ZTF02xyz_lc_file = fink_qm.data_path / "lightcurves/ZTF02xyz.csv"
-        assert not exp_ZTF02xyz_lc_file.exists()
+        assert exp_ZTF02xyz_lc_file.exists()
+        ZTF02xyz_lc = pd.read_csv(exp_ZTF01ijk_lc_file)
+        assert ZTF02xyz_lc.empty
+
+    def test__query_fail_does_not_crash(
+        self, fink_qm: FinkQueryManager, fink_lc: pd.DataFrame, target_list, monkeypatch
+    ):
+        fink_qm.create_paths()
+
+        def mock_query(objectId, **kwargs):
+            print("in mock query")
+            objectId_list = objectId.split(",")
+            if all([oId.startswith("ZTF") for oId in objectId_list]):
+                if "ZTF00abc" in objectId_list:
+                    return fink_lc.copy()
+                else:
+                    return pd.DataFrame()
+            raise ValueError
+
+        objectId_list = [t.objectId for t in target_list] + ["CAND_01", "CAND_02"]
+
+        with monkeypatch.context() as m:
+            m.setattr(
+                "dk154_targets.query_managers.fink.FinkQuery.query_objects", mock_query
+            )
+            success, failed = fink_qm.perform_lightcurve_queries(
+                objectId_list, chunk_size=2
+            )
+            # will have chunks (ZTF00, ZTF01), (ZTF02, CAND_01), (CAND_02)
+
+        assert set(success) == set(["ZTF00abc", "ZTF01ijk"])
+        assert set(failed) == set(["ZTF02xyz", "CAND_01", "CAND_02"])
 
     def test__load_single_lightcurve(self, fink_qm, fink_lc):
         fink_qm.create_paths()
@@ -920,6 +969,21 @@ class Test__FinkLightcurveQueries:
         missing_lc = fink_qm.load_single_lightcurve("ZTF01ijk")
         assert missing_lc is None
 
+    def test__load_single_lightcurve_no_crash_on_empty_file(self, fink_qm, fink_lc):
+        fink_qm.create_paths()
+
+        fink_lc_filepath = fink_qm.get_lightcurve_file("ZTF01ijk")
+        with open(fink_lc_filepath, "w+") as f:
+            f.writelines([])
+
+        assert fink_lc_filepath.exists()
+
+        with pytest.raises(pd.errors.EmptyDataError):
+            pd.read_csv(fink_lc_filepath)
+
+        lc = fink_qm.load_single_lightcurve("ZTF01ijk")
+        assert lc is None
+
     def test__load_target_lightcurves(self, fink_qm, target_list, fink_lc):
         fink_qm.create_paths()
 
@@ -934,15 +998,18 @@ class Test__FinkLightcurveQueries:
         assert set(loaded) == set(["ZTF00abc"])
         assert set(missing) == set(["ZTF01ijk", "ZTF02xyz"])
 
-    def test__load_missing_alerts(self, fink_qm, fink_lc, target_list, polled_alerts):
+
+class Test__AlertsIntegrated:
+    def test__load_missing_alerts(
+        self, fink_qm: FinkQueryManager, fink_lc, target_list, polled_alerts
+    ):
         fink_qm.create_paths()
         fink_qm.add_target(target_list[0])
 
         processed_alerts = fink_qm.process_alerts(polled_alerts[:5])
 
-        # Modify lc slightly
+        # Modify lc slightly, so we can test only the missing ones are read in.
         more_alerts = pd.DataFrame(processed_alerts[:2])
-        print((more_alerts))
         fink_lc = pd.concat([fink_lc, more_alerts], ignore_index=True)
         assert len(fink_lc) == 9
         assert 2300010000200005011 in fink_lc["candid"].values
@@ -956,21 +1023,14 @@ class Test__FinkLightcurveQueries:
 
         assert len(processed_alerts) == 5
 
-        exp_alert00_path = (
-            fink_qm.data_path / "alerts/ZTF00abc/2300010000200005011.json"
-        )
-        exp_alert01_path = (
-            fink_qm.data_path / "alerts/ZTF00abc/2300010000200005012.json"
-        )
-        exp_alert02_path = (
-            fink_qm.data_path / "alerts/ZTF00abc/2300010000200005013.json"
-        )
-        exp_alert03_path = (
-            fink_qm.data_path / "alerts/ZTF00abc/2300010000200005014.json"
-        )
-        exp_alert04_path = (
-            fink_qm.data_path / "alerts/ZTF00abc/2300010000200005015.json"
-        )
+        # We expect all five alerts have been written during processing, but
+        # only expect 5013, 5014, 5015 to be re-read.
+        alert_path = fink_qm.data_path / "alerts/ZTF00abc/"
+        exp_alert00_path = alert_path / "2300010000200005011.json"
+        exp_alert01_path = alert_path / "2300010000200005012.json"
+        exp_alert02_path = alert_path / "2300010000200005013.json"
+        exp_alert03_path = alert_path / "2300010000200005014.json"
+        exp_alert04_path = alert_path / "2300010000200005015.json"
 
         assert exp_alert00_path.exists()
         assert exp_alert01_path.exists()
@@ -989,3 +1049,312 @@ class Test__FinkLightcurveQueries:
         ]
 
         assert set(loaded_candids) == set(exp_candids)
+
+    def test__integrate_missing_alerts(
+        self, fink_qm: FinkQueryManager, fink_lc, target_list, polled_alerts, tmp_path
+    ):
+
+        fink_qm.create_paths()
+
+        T1 = target_list[0]
+        for target in target_list:
+            fink_qm.add_target(target)
+
+        lc_path = fink_qm.get_lightcurve_file("ZTF00abc")
+        print(fink_lc)
+        fink_lc.to_csv(lc_path, index=False)
+        fink_qm.load_target_lightcurves()  # loads the target_data.
+
+        # As a reminder...
+        fink_data = T1.target_data["fink"]
+        assert len(fink_data.lightcurve) == 7
+        assert len(fink_data.non_detections) == 3  # with candid == -1
+        assert len(fink_data.badqual) == 1  # with candid == -1
+        assert len(fink_data.detections) == 3  # candid 5004, 5005, 5006
+        candid_base = 23000_10000_20000_0000
+        exp_candids = candid_base + np.array([5005, 5006, 5007])
+        assert set(fink_data.detections["candid"].values) == set(exp_candids)
+
+        processed_alerts = fink_qm.process_alerts(polled_alerts[:5])
+        integ = fink_qm.integrate_alerts(save_lightcurves=True)  # This is by default.
+
+        assert set(integ) == set(["ZTF00abc"])
+
+        fink_data = T1.target_data["fink"]
+        assert len(fink_data.lightcurve) == 12  # 7 + 5 new alerts
+        assert len(fink_data.non_detections) == 3
+        assert len(fink_data.badqual) == 1
+        assert len(fink_data.detections) == 8  # 3 + 5
+
+        new_exp_candids = candid_base + np.array(
+            [5005, 5006, 5007, 5011, 5012, 5013, 5014, 5015]
+        )
+        assert set(fink_data.detections["candid"].values) == set(new_exp_candids)
+
+        # check updated lightcurve has been saved.
+        lc_load = pd.read_csv(lc_path)
+        assert len(lc_load) == 12
+
+
+class Test__Cutouts:
+    def test__load_cutouts_(self, fink_qm: FinkQueryManager, target_list, fink_lc):
+        fink_qm.create_paths()
+
+        T1 = target_list[0]
+        T1.target_data["fink"] = TargetData(lightcurve=fink_lc)
+        T2 = target_list[1]
+        T2.target_data["fink"] = TargetData(lightcurve=fink_lc)
+        T2.target_data["fink"].meta["cutouts_candid"] = 23000_10000_20000_5006
+        T3 = target_list[2]
+        T3.target_data["fink"] = TargetData(lightcurve=fink_lc)
+        T3.target_data["fink"].meta["cutouts_candid"] = 23000_10000_20000_5007
+
+        assert set(T1.target_data["fink"].cutouts.keys()) == set()
+        assert set(T2.target_data["fink"].cutouts.keys()) == set()
+
+        for target in target_list:
+            fink_qm.add_target(target)
+
+        T1_cutouts_filepath = fink_qm.get_cutouts_file(
+            "ZTF00abc", 23000_10000_20000_5007  # T1 has no cutouts_candid yet!
+        )
+        T1_cutouts = gen_mock_cutouts(T1_cutouts_filepath)
+        assert T1_cutouts_filepath.exists()
+
+        T2_cutouts_filepath = fink_qm.get_cutouts_file(
+            "ZTF01ijk", 23000_10000_20000_5007  # Current is 2nd last row, this is last.
+        )
+        T2_cutouts = gen_mock_cutouts(T2_cutouts_filepath)
+        assert T2_cutouts_filepath.exists()
+
+        T3_cutouts_filepath = fink_qm.get_cutouts_file(
+            "ZTF02xyz", 23000_10000_20000_5007  # Current is already == this.
+        )
+        T3_cutouts = gen_mock_cutouts(T3_cutouts_filepath)
+        assert T3_cutouts_filepath.exists()
+
+        loaded_cutouts = fink_qm.load_cutouts()
+
+        assert set(loaded_cutouts) == set(["ZTF00abc", "ZTF01ijk"])
+
+        exp_keys = set(["science", "difference", "template"])
+        assert set(T1.target_data["fink"].cutouts) == exp_keys
+        assert set(T2.target_data["fink"].cutouts) == exp_keys
+        assert set(T3.target_data["fink"].cutouts) == set()
+
+        assert T1.target_data["fink"].meta["cutouts_candid"] == 23000_10000_20000_5007
+        assert T2.target_data["fink"].meta["cutouts_candid"] == 23000_10000_20000_5007
+        assert T3.target_data["fink"].meta["cutouts_candid"] == 23000_10000_20000_5007
+
+
+class Test__PerformAllTasks:
+
+    def test__perform_all_tasks(
+        self, fink_qm, alert_list, fink_lc, fink_query_results, monkeypatch
+    ):
+        t_ref = Time(60050.0, format="mjd")
+
+        fink_qm.create_paths()
+
+        assert set(fink_qm.target_lookup.keys()) == set()
+        assert fink_qm.kafka_config["n_alerts"] == 10
+
+        MockConsumer = create_mock_consumer(alert_list)
+
+        def mock_lc_query(objectId, **kwargs):
+            objectId_list = objectId.split(",")
+            if "ZTF00abc" in objectId_list:
+                return fink_lc.copy()
+            else:
+                return pd.DataFrame()
+
+        def mock_latests_query(*args, **kwargs):
+            return fink_query_results
+
+        with monkeypatch.context() as m:
+            m.setattr("dk154_targets.query_managers.fink.AlertConsumer", MockConsumer)
+            m.setattr(
+                "dk154_targets.query_managers.fink.FinkQuery.query_objects",
+                mock_lc_query,
+            )
+            m.setattr(
+                "dk154_targets.query_managers.fink.FinkQuery.query_and_collate_latests",
+                mock_latests_query,
+            )
+
+            fink_qm.perform_all_tasks(t_ref=t_ref)
+
+        assert set(fink_qm.target_lookup.keys()) == set(
+            ["ZTF00abc", "ZTF01ijk", "ZTF02xyz"]
+        )
+
+        exp_results_file = fink_qm.get_query_results_file("interesting_topic")
+        assert exp_results_file.exists()
+
+        T1_alerts_dir = fink_qm.alerts_path / "ZTF00abc"
+        T1_alerts = list(T1_alerts_dir.glob("*.json"))
+        assert len(T1_alerts) == 10  # see kafka config["n_alerts"]
+
+        exp_lc_path = fink_qm.get_lightcurve_file("ZTF00abc")
+        assert exp_lc_path.exists()
+
+        T1 = fink_qm.target_lookup["ZTF00abc"]
+
+        assert (
+            len(T1.target_data["fink"].lightcurve) == 7 + 10
+        )  # initial length + all alerts.
+
+
+class Test__ApplyMessengerUpdates:
+
+    def test__normal_behaviour(self, fink_qm: FinkQueryManager, target_list):
+
+        for target in target_list:
+            fink_qm.add_target(target)
+
+        for objectId, target in fink_qm.target_lookup.items():
+            assert not target.updated
+
+        alerts = [
+            dict(objectId="ZTF00abc", jd=2_460_000, topic="topic_01"),
+            dict(objectId="ZTF00abc", jd=2_460_001, topic="topic_02"),  # new jd
+            dict(objectId="ZTF01ijk", jd=2_460_000, topic="topic_01"),
+        ]
+
+        fink_qm.apply_messenger_updates(alerts)
+
+        assert fink_qm.target_lookup["ZTF00abc"].updated is True
+        assert fink_qm.target_lookup["ZTF01ijk"].updated is True
+        assert fink_qm.target_lookup["ZTF02xyz"].updated is False
+
+        assert len(fink_qm.target_lookup["ZTF00abc"].update_messages) == 2
+        assert len(fink_qm.target_lookup["ZTF01ijk"].update_messages) == 1
+        assert len(fink_qm.target_lookup["ZTF02xyz"].update_messages) == 0
+
+
+@pytest.fixture
+def mock_data(fink_lc):
+    data = [{f"i:{k}": v for k, v in row.items()} for ii, row in fink_lc.iterrows()]
+    return data
+
+
+@pytest.fixture
+def mock_json_data(mock_data):
+    return json.dumps(mock_data)
+
+
+class Elapsed:
+    def __init__(self, elapsed):
+        self.elapsed = elapsed
+
+    def total_seconds(self):
+        return self.elapsed
+
+
+class MockResponse:
+    def __init__(self, data: str, status_code, elapsed=5.0):
+        self.content = data.encode("utf-8")
+        self.status_code = status_code = status_code
+        self.elapsed = Elapsed(elapsed)
+
+
+class Test__FinkQuery:
+
+    def test__init(self):
+        fq = FinkQuery()
+
+    def test__fix_dict_keys(self):
+
+        d = {"v:param_01": 0, "i:param_02": 10, "param_03": 100}
+
+        FinkQuery.fix_dict_keys_inplace(d)
+
+        assert set(d.keys()) == set(["param_01", "param_02", "param_03"])
+        assert d["param_01"] == 0  # params are unchanged.
+        assert d["param_02"] == 10
+        assert d["param_03"] == 100
+
+    def test__process_kwargs(self):
+
+        d = {"param_01_": 1, "param_02": 10}
+
+        d_mod = FinkQuery.process_kwargs(**d)
+        assert set(d_mod.keys()) == set(["param_01", "param_02"])
+
+    def test__process_data(self, mock_data):
+
+        df_keys = "candid jd objectId mag magerr diffmaglim ra dec tag".split()
+        exp_keys = [f"i:{k}" for k in df_keys]
+        assert set(mock_data[0].keys()) == set(exp_keys)
+
+        data_01 = FinkQuery.process_data(mock_data, fix_keys=False, return_df=True)
+        assert isinstance(data_01, pd.DataFrame)
+        assert set(data_01.columns) == set(exp_keys)
+
+        data_02 = FinkQuery.process_data(mock_data, fix_keys=True, return_df=False)
+        assert isinstance(data_02, list)
+        assert isinstance(data_02[0], dict)
+        assert set(data_02[0].keys()) == set(df_keys)
+
+        data_03 = FinkQuery.process_data(mock_data, fix_keys=True, return_df=True)
+
+    def test__process_response(self, mock_json_data):
+
+        res = MockResponse(mock_json_data, 200)
+
+        result = FinkQuery.process_response(res)
+
+        df_keys = "candid jd objectId mag magerr diffmaglim ra dec tag".split()
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 7
+        assert set(result.columns) == set(df_keys)
+
+    def test__process_response_bad_status(self, mock_json_data):
+
+        res = MockResponse(mock_json_data, 404)
+
+        with pytest.raises(FinkQueryError):
+            result = FinkQuery.process_response(res)
+
+
+class MockQueryLatests:
+    __name__ = "mock_query_latests"
+
+    def __init__(self, data: list):
+        self.data = data
+        self.ii = 0
+
+    def __call__(self, *args, **kwargs):
+        result = self.data[self.ii]
+        self.ii = self.ii + 1
+        return result
+
+
+class Test__FinkQueryLatests:
+    def test__query_and_collate_latests(
+        self, fink_query_results, fink_updated_query_results, monkeypatch
+    ):
+
+        assert len(fink_query_results) == 7
+        assert len(fink_updated_query_results) == 6
+        assert set(fink_query_results["objectId"]) == set(
+            ["ZTF00abc", "ZTF01ijk", "ZTF02xyz"]
+        )
+        assert set(fink_updated_query_results["objectId"]) == set(
+            ["ZTF01ijk", "ZTF02xyz", "ZTF03lmn"]
+        )
+
+        mock_query_latests = MockQueryLatests(
+            [fink_query_results, fink_updated_query_results, None]
+        )
+
+        with monkeypatch.context() as m:
+            m.setattr(
+                "dk154_targets.query_managers.fink.FinkQuery.query_latests",
+                mock_query_latests,
+            )
+            assert FinkQuery.query_latests.__name__ == "mock_query_latests"
+
+            results = FinkQuery.query_and_collate_latests("some_class")
+
+        assert len(results) == 13

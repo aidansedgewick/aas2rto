@@ -1,7 +1,10 @@
+import copy
+import pickle
 import traceback
 import warnings
 from logging import getLogger
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -87,12 +90,38 @@ def initialise_model() -> sncosmo.Model:
     return model
 
 
-def write_emcee_salt_model():
-    pass
+def write_salt_model(model: sncosmo.Model, filepath: Path):
+    parameters = {k: v for k, v in zip(model.param_names, model.parameters)}
+    model_result = getattr(model, "result", None)
+
+    model_data = {"parameters": parameters, "result": model_result}
+
+    # CANNOT just pickle whole model: sncosmo.F99Dust() is not serializable.
+    try:
+        with open(filepath, "wb+") as f:
+            pickle.dump(model_data, f)
+    except Exception as e:
+        print(e)
+        msg = "could not pickle data from {type(model)} into {filepath}"
+        logger.error(msg)
+    return
 
 
-def read_emcee_salt_model():
-    pass
+def read_salt_model(filepath: Path, initializer: Callable = None):
+    with open(filepath, "rb") as f:
+        try:
+            model_data = pickle.load(f)
+        except Exception as e:
+            return None
+
+    if initializer is None:
+        model = initialise_model()
+    else:
+        model = initializer()
+
+    model.set(**model_data["parameters"])
+    model.result = model_data.get("result", None)
+    return model
 
 
 class SncosmoSaltModeler:
@@ -111,6 +140,7 @@ class SncosmoSaltModeler:
         use_emcee=True,
         nsamples=None,
         nwalkers=None,
+        z_max=0.2,
         **kwargs,
     ):
         self.__name__ = "sncosmo_salt"
@@ -129,6 +159,8 @@ class SncosmoSaltModeler:
         self.nsamples = nsamples or self.default_nsamples
         self.nwalkers = nwalkers or self.default_nwalkers
 
+        self.z_max = z_max
+
         logger.info
         logger.info(f"set use_emcee: {self.use_emcee}")
         if self.use_emcee:
@@ -146,6 +178,18 @@ class SncosmoSaltModeler:
                 "\033[33;1mpython3 -m pip install sncosmo\033[0m"
             )
             raise ModuleNotFoundError(msg)
+
+        objectId = target.objectId
+        model_key = self.__name__
+        target_has_model = model_key in target.models
+        if self.existing_models_path is not None:
+            model_filepath = self.existing_models_path / f"{objectId}_{model_key}.pkl"
+            if not target_has_model and model_filepath.exists():
+                model = read_salt_model(model_filepath, initializer=self.initializer)
+                if model is not None:
+                    return model
+        else:
+            model_filepath = None
 
         detections = get_detections(
             target.compiled_lightcurve, use_badqual=self.use_badqual
@@ -196,25 +240,15 @@ class SncosmoSaltModeler:
 
         fitting_params = model.param_names
 
-        known_redshift = None
+        bounds = {"z": (0.001, self.z_max)}
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
-            if tns_data.parameters is not None:
-                known_redshift = tns_data.parameters.get("Redshift", None)
-
-        if known_redshift is not None:
-            try:
+            known_redshift = float(tns_data.parameters.get("Redshift", "nan"))
+            if np.isfinite(known_redshift):
                 logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
-            except Exception as e:
-                logger.error("error!", e)
-                msg = f"with {target.objectId} z={known_redshift} (type={type(known_redshift)})"
-                logger.error(msg)
-
-            model.set(z=known_redshift)
-            fitting_params.remove("z")
-            bounds = {}
-        else:
-            bounds = dict(z=(0.001, 0.2))
+                model.set(z=known_redshift)
+                fitting_params.remove("z")
+                bounds.pop("z")
 
         try:
             with warnings.catch_warnings():
@@ -255,4 +289,8 @@ class SncosmoSaltModeler:
                 tr = traceback.format_exc()
                 print(tr)
             fitted_model = None
+
+        if model_filepath is not None:
+            write_salt_model(model, model_filepath)
+
         return fitted_model

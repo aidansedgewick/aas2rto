@@ -23,6 +23,7 @@ parser.add_argument("-i", "--iterations", default=None, type=int)
 parser.add_argument(
     "-x", "--existing-targets-file", default=False, const="last", nargs="?", type=str
 )
+parser.add_argument("--skip-tasks", nargs="*")
 parser.add_argument("--debug", default=False, action="store_true")
 
 
@@ -67,6 +68,7 @@ if __name__ == "__main__":
             lc_plotting_function=lc_plotting_function,
             iterations=args.iterations,
             existing_targets_file=args.existing_targets_file,
+            skip_tasks=args.skip_tasks,
         )
     except Exception as e:
         t_crash = Time.now()

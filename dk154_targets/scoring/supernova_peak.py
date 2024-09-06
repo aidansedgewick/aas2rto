@@ -53,7 +53,7 @@ def tuned_interest_function(x):
 
 
 def peak_only_interest_function(x):
-    return max(gauss(x, 10.0, 0.0, 2.0), 1e-2)
+    return max(gauss(x, 30.0, 0.0, 2.0), 1e-2)
 
 
 def calc_color_factor(gmag, rmag):
@@ -67,7 +67,7 @@ class SupernovaPeakScore:
         self,
         faint_limit: float = 19.0,
         min_timespan: float = 1.0,
-        max_timespan: float = 30.0,
+        max_timespan: float = 25.0,
         characteristic_timespan: float = 20.0,
         min_rising_fraction: float = 0.4,
         min_ztf_detections: int = 3,
@@ -84,7 +84,7 @@ class SupernovaPeakScore:
         self.min_rising_fraction = min_rising_fraction
         self.default_color_factor = default_color_factor
         self.min_ztf_detections = min_ztf_detections
-        self.broker_priority = broker_priority or DEFAULT_ZTF_BROKER_PRIORITY
+        self.broker_priority = tuple(broker_priority)
         self.use_compiled_lightcurve = use_compiled_lightcurve
 
     def __call__(self, target: Target, t_ref: Time) -> Tuple[float, List, List]:
@@ -173,6 +173,7 @@ class SupernovaPeakScore:
         for fid in unique_fid:
             fid_detections = ztf_detections[ztf_detections["fid"] == fid]
             N_detections[fid] = len(fid_detections)
+
             rising_fraction_fid = calc_rising_fraction(fid_detections)
             fid_comm = f"f_rising={rising_fraction_fid:.2f} for {len(fid_detections)} band {fid} obs"
             scoring_comments.append(fid_comm)
@@ -184,15 +185,15 @@ class SupernovaPeakScore:
 
         ###===== How many observations =====###
         if len(ztf_detections) < self.min_ztf_detections:
-            scoring_comments.append(
-                f"exclude as detections {N_detections} insufficient"
-            )
+            comm = f"exclude as detections {N_detections} insufficient"
+            scoring_comments.append(comm)
             exclude = True
 
         ###===== Factors dependent on Model =====###
+
         model = target.models.get("sncosmo_salt", None)
-        sncosmo_model = copy.deepcopy(model)
-        if sncosmo_model is not None:
+        if model is not None:
+            sncosmo_model = copy.deepcopy(model)
             # Get "result" if it exists, else empty dict. Then ask for "samples", else get None.
 
             ###===== Samples
@@ -207,8 +208,7 @@ class SupernovaPeakScore:
             ###===== Time from peak?
             t0 = sncosmo_model["t0"]
             peak_dt = t_ref.mjd - sncosmo_model["t0"]
-            interest_factor = peak_only_interest_function(peak_dt)
-            if not np.isfinite(interest_factor):
+            if not np.isfinite(peak_dt):
                 interest_factor = 1.0
                 msg = (
                     f"{objectId} interest_factor not finite:\n    "
@@ -217,6 +217,8 @@ class SupernovaPeakScore:
                 )
                 logger.warning(msg)
                 scoring_comments.append(msg)
+            else:
+                interest_factor = peak_only_interest_function(peak_dt)
 
             factors["interest_factor"] = interest_factor
             interest_comment = (
@@ -229,25 +231,27 @@ class SupernovaPeakScore:
                 reject_comments.append(f"too far past peak {peak_dt:.1f}")
 
             ###===== Blue colour?
-            ztfg_mag = sncosmo_model.bandmag("ztfg", "ab", t_ref.mjd)
-            ztfr_mag = sncosmo_model.bandmag("ztfr", "ab", t_ref.mjd)
 
-            if N_detections.get(1, 0) == 0 or N_detections.get(2, 0) == 0:
-                color_factor = self.default_color_factor
-                scoring_comments.append(f"color set as {color_factor:.1} due to N_det")
-            else:
-                color_factor = calc_color_factor(ztfg_mag, ztfr_mag)
-            if not np.isfinite(color_factor):
-                color_factor = self.default_color_factor
-                color_comment = f"infinite color factor set as {color_factor:1f} (g={ztfg_mag}, r={ztfr_mag})"
-                scoring_comments.append(color_comment)
-            else:
-                scoring_comments.append(
-                    f"color factor={color_factor:.2f} from model g-r={ztfg_mag-ztfr_mag:.2f}"
-                )
+            # ztfg_mag = sncosmo_model.bandmag("ztfg", "ab", t_ref.mjd)
+            # ztfr_mag = sncosmo_model.bandmag("ztfr", "ab", t_ref.mjd)
+
+            # if N_detections.get(1, 0) == 0 or N_detections.get(2, 0) == 0:
+            #     color_factor = self.default_color_factor
+            #     scoring_comments.append(f"color set as {color_factor:.1} due to N_det")
+            # else:
+            #     color_factor = calc_color_factor(ztfg_mag, ztfr_mag)
+            # if not np.isfinite(color_factor):
+            #     color_factor = self.default_color_factor
+            #     color_comment = f"infinite color factor set as {color_factor:1f} (g={ztfg_mag}, r={ztfr_mag})"
+            #     scoring_comments.append(color_comment)
+            # else:
+            #     scoring_comments.append(
+            #         f"color factor={color_factor:.2f} from model g-r={ztfg_mag-ztfr_mag:.2f}"
+            #     )
             # factors["color_factor"] = color_factor
 
             ###===== chisq
+
             model_result = getattr(model, "result", {})
             chisq = model_result.get("chisq", np.nan)
             ndof = model_result.get("ndof", np.nan)

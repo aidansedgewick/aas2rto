@@ -94,7 +94,6 @@ def target_from_lasair_lightcurve(
     lasair_data = TargetData(lightcurve=lightcurve)
     target = Target(objectId, ra=ra, dec=dec)
     target.target_data["lasair"] = lasair_data
-    target.updated = True
     return target
 
 
@@ -271,8 +270,8 @@ class LasairQueryManager(BaseQueryManager):
             alert["alert_timestamp"] = timestamp
 
             if save_alerts:
-                alert_file = self.get_alert_file(objectId, alert["candid"])
-                with open(alert_file, "w") as f:
+                alert_filepath = self.get_alert_file(objectId, alert["candid"])
+                with open(alert_filepath, "w") as f:
                     json.dump(alert, f)
         return alerts
 
@@ -312,10 +311,12 @@ class LasairQueryManager(BaseQueryManager):
                 to_query.append(objectId)
         return to_query
 
-    def perform_lightcurve_queries(self, objectId_list: List, t_ref: Time = None):
+    def perform_lightcurve_queries(
+        self, objectId_list: List, chunk_size=25, t_ref: Time = None
+    ):
         t_ref = t_ref or Time.now()
 
-        if self.token is None:
+        if self.client_token is None:
             err_msg = f"Must provied `client_token` for lightcurves"
             raise ValueError(err_msg)
 
@@ -325,24 +326,31 @@ class LasairQueryManager(BaseQueryManager):
         success = []
         failed = []
         t_start = time.perf_counter()
-        for objectId in objectId_list:
+        for ii, objectId_chunk in enumerate(
+            utils.chunk_list(objectId_list, chunk_size=chunk_size)
+        ):
             if len(failed) > self.query_parameters["max_failed_queries"]:
                 msg = f"Too many failed LC queries ({len(failed)}). Stop for now."
                 logger.warning(msg)
                 break
             client = lasair_client(self.client_token)
             try:
-                lc = client.lightcurves([objectId])
+                lc_data_chunk = client.lightcurves(objectId_chunk)
             except Exception as e:
                 logger.warning(e)
-                failed.append(objectId)
+                failed.extend(objectId_chunk)
                 continue
-            if not len(lc) == 1:  # lasair_client returns a list.
-                logger.warning(f"lasair_client returned {len(lc)}")
-            lightcurve = process_lasair_lightcurve(lc[0])
-            lightcurve_file = self.get_lightcurve_file(objectId)
-            lightcurve.to_csv(lightcurve_file, index=False)
-            success.append(objectId)
+            if not len(lc_data_chunk) == len(
+                objectId_chunk
+            ):  # lasair_client returns a list.
+                msg = f"lasair_client returned {len(lc_data_chunk)} - request {len(objectId_chunk)}"
+                logger.warning(msg)
+            for lc_data in lc_data_chunk:
+                objectId = lc_data["objectId"]
+                lightcurve = process_lasair_lightcurve(lc_data)
+                lightcurve_filepath = self.get_lightcurve_file(objectId)
+                lightcurve.to_csv(lightcurve_filepath, index=False)
+                success.append(objectId)
 
         if len(success) > 0 or len(failed) > 0:
             t_end = time.perf_counter()
@@ -384,6 +392,8 @@ class LasairQueryManager(BaseQueryManager):
                 if len(lightcurve) <= len(existing_lightcurve):
                     skipped.append(objectId)
                     continue
+                # Not updated if there was no data to begin with...
+                target.updated = True
 
             if target.coord is None:
                 ra_vals = lightcurve["ra"].dropna()
@@ -392,10 +402,8 @@ class LasairQueryManager(BaseQueryManager):
                     target.update_coordinates(np.average(ra_vals), np.average(dec_vals))
                 except Exception as e:
                     logger.error(f"failed to add missing coords to {objectId}")
-
             lasair_data.add_lightcurve(lightcurve)
             loaded.append(objectId)
-            target.updated = True
         t_end = time.perf_counter()
 
         N_loaded = len(loaded)
@@ -423,14 +431,15 @@ class LasairQueryManager(BaseQueryManager):
             objectId = alert["objectId"]
             target = self.target_lookup.get(objectId, None)
             if target is None:
+                msg = f"No target {objectId} in target lookup after alert..."
+                logger.warning(msg)
                 continue
+            target.updated = True
             target.send_updates = True
             topic_str = alert["topic"]
             timestamp = alert["alert_timestamp"]
             alert_text = (
-                f"LASAIR alert from {topic_str}\n"
-                f"     broadcast at jd={timestamp}\n"
-                f"     see lasair-ztf.lsst.ac.uk/objects/{objectId}/"
+                f"LASAIR alert from {topic_str}\n" f"     broadcast at jd={timestamp}\n"
             )
             target.update_messages.append(alert_text)
 

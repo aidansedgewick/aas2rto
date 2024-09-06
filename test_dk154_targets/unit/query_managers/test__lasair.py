@@ -168,39 +168,50 @@ class MockMessage:
         return False
 
 
-class MockConsumer:
-    alert_list = None  # TODO: how to get alert_list into class definition?!
-    test_attr = True
+def create_mock_consumer(alerts):
+    class MockConsumer:
+        alert_list = alerts
+        test_attr = True
 
-    def __init__(self, host, group_id, topic):
-        self.index = 0
+        def __init__(self, host, group_id, topic):
+            self.index = 0
 
-    def __enter__(self):
-        return self
+        def __enter__(self):
+            return self
 
-    def __exit__(self, type, value, traceback):
-        pass
+        def __exit__(self, type, value, traceback):
+            pass
 
-    def poll(self, timeout=None):
-        if self.alert_list is None:
-            raise ValueError("you should set mock_consumer.alert_list")
+        def poll(self, timeout=None):
+            if self.alert_list is None:
+                raise ValueError("you should set mock_consumer.alert_list")
 
-        if self.index >= len(self.alert_list):
-            return None
-        result = self.alert_list[self.index]
-        self.index = self.index + 1
-        return MockMessage(result)
+            if self.index >= len(self.alert_list):
+                return None
+            result = self.alert_list[self.index]
+            self.index = self.index + 1
+            return MockMessage(result)
 
-class MockClient:
-    lightcurve = None
+    return MockConsumer
 
-    def __init__(self, token):
-        self.token = token
-    
-    def lightcurves(self, objectId_list):
-        query_return = [lc for lc in objectId_list]
-        return query_return
-    
+
+def create_mock_client(lc):
+    class MockClient:
+        lightcurve = lc
+
+        def __init__(self, token):
+            self.token = token
+
+        def lightcurves(self, objectId_list):
+            query_return = []
+            for objectId in objectId_list:
+                lc = copy.deepcopy(self.lightcurve)
+                lc["objectId"] = objectId
+                query_return.append(lc)
+            return query_return
+
+    return MockClient
+
 
 class Test__ProcessLasairLightcurve:
 
@@ -388,9 +399,9 @@ class Test__LasairQueryManagerInit:
 
 class Test__LasairAlertStreams:
     def test__lasair_mock_consumer_behaviour(self, alert_list, monkeypatch):
-        assert MockConsumer.alert_list is None
+
+        MockConsumer = create_mock_consumer(alert_list)
         with monkeypatch.context() as m:
-            m.setattr(MockConsumer, "alert_list", alert_list)
             assert len(MockConsumer.alert_list) == 15
             with MockConsumer("localhost:8080", "test_123", "topic_001") as mc:
                 assert mc.index == 0
@@ -399,17 +410,15 @@ class Test__LasairAlertStreams:
                 assert isinstance(poll_result.alert, dict)
                 assert mc.index == 1  # Consumer has moved on an index!
                 assert np.isclose(poll_result.alert["magpsf"], 19.0)
-        assert MockConsumer.alert_list is None  # Back to normal.
 
     def test__lasair_listen_for_alerts(
         self, lasair_qm: LasairQueryManager, alert_list, monkeypatch
     ):
-        assert MockConsumer.alert_list is None
+
+        MockConsumer = create_mock_consumer(alert_list)
         assert not hasattr(lasair.lasair_consumer, "test_attr")  # Before patch!
         with monkeypatch.context() as m:
             # Patch the alert list onto the MockConsumer
-            m.setattr(MockConsumer, "alert_list", alert_list)
-            assert len(MockConsumer.alert_list) == 15  # is patched!
 
             # Patch the MockConsumer into the lasair module
             m.setattr(
@@ -428,19 +437,17 @@ class Test__LasairAlertStreams:
             assert alerts[1]["candid"] == 23000_10000_20000_5012
             assert alerts[5]["candid"] == 23000_10000_20000_5016
             assert alerts[9]["candid"] == 23000_10000_20000_5020
-        assert MockConsumer.alert_list is None
         assert not hasattr(lasair.lasair_consumer, "test_attr")  # Back to normal.
 
     def test__break_after_none(
         self, lasair_qm: LasairQueryManager, alert_list, monkeypatch
     ):
 
-        assert MockConsumer.alert_list is None
+        MockConsumer = create_mock_consumer(alert_list[:5])
         assert not hasattr(lasair.lasair_consumer, "test_attr")  # Before patch!
 
         with monkeypatch.context() as m:
             # Patch the alert list onto the MockConsumer
-            m.setattr(MockConsumer, "alert_list", alert_list[:5])
             assert len(MockConsumer.alert_list) == 5  # is patched!
 
             # Patch the MockConsumer into the lasair module
@@ -526,8 +533,23 @@ class Test__LasairLightcurveQueries:
         to_query = lasair_qm.get_lightcurves_to_query()
         assert set(to_query) == set(["ZTF01ijk", "ZTF02xyz"])
 
-    def test__perform_lightcurve_queries(self, lasair_qm: LasairQueryManager, target_list, lasair_lc, monkeypatch):
-        pass
+    def test__perform_lightcurve_queries(
+        self, lasair_qm: LasairQueryManager, lasair_lc, monkeypatch
+    ):
+        lasair_qm.create_paths()
 
-        #with monkeypatch.context() as m:
-            
+        MockClient = create_mock_client(lasair_lc)
+
+        objectId_list = ["ZTF00abc", "ZTF01ijk"]
+
+        with monkeypatch.context() as m:
+            m.setattr("dk154_targets.query_managers.lasair.lasair_client", MockClient)
+            success, failed = lasair_qm.perform_lightcurve_queries(objectId_list)
+
+        assert set(success) == set(objectId_list)
+
+        T1_exp_filepath = lasair_qm.get_lightcurve_file("ZTF00abc")
+        assert T1_exp_filepath.exists()
+
+        T2_exp_filepath = lasair_qm.get_lightcurve_file("ZTF01ijk")
+        assert T2_exp_filepath.exists()

@@ -61,10 +61,11 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
 
     def plot_target(self, target: Target):
         self.plot_sncosmo_models(target)
-        self.plot_photometry(target)
-        self.add_cutouts(target)
-        self.format_axes(target)
-        self.add_comments(target)
+        super().plot_target(target)
+        # self.plot_photometry(target)
+        # self.add_cutouts(target)
+        # self.format_axes(target)
+        # self.add_comments(target)
 
     def plot_sncosmo_models(self, target: Target):
 
@@ -163,12 +164,12 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
             l1 = self.ax.plot(x, y, ls="--", color="k", label="LC samples median")
             l2 = self.ax.plot(x, y, ls=":", color="k", label="mean parameters")
             lines_legend = self.ax.legend(handles=[l0[0], l1[0], l2[0]], loc=4)
-            # extra [0] indexing because ax.plot reutrns LIST of n-1 lines for n points.
+            # extra [0] indexing because ax.plot returns LIST of n-1 lines for n points.
             self.ax.add_artist(lines_legend)
         return
 
 
-def get_model_median_params(model, vparam_names=None, samples=None):
+def get_model_median_params(model, vparam_names=None, samples=None, burnin=0):
     model_copy = copy.deepcopy(model)
     vparam_names = vparam_names or model.result.get("vparam_names")
     samples = samples or model.result.get("samples", None)
@@ -184,7 +185,7 @@ def get_model_median_params(model, vparam_names=None, samples=None):
 
 
 def get_sample_quartiles(
-    time_grid, model, band, samples=None, vparam_names=None, q=0.5, spacing=20
+    time_grid, model, band, samples=None, vparam_names=None, q=0.5, spacing=20, burnin=0
 ):
     model_copy = copy.deepcopy(model)
     vparam_names = vparam_names or model.result.get("vparam_names")
@@ -195,7 +196,7 @@ def get_sample_quartiles(
 
     lc_evaluations = []
     t_start = time.perf_counter()
-    for p_jj, params in enumerate(samples[::spacing]):
+    for p_jj, params in enumerate(samples[burnin::spacing]):
         pdict = {k: v for k, v in zip(vparam_names, params)}
         model_copy.update(pdict)
         lc_flux_jj = model_copy.bandflux(band, time_grid, zp=8.9, zpsys="ab")

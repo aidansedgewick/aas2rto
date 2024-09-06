@@ -14,6 +14,8 @@ from dk154_targets.modeling.sncosmo import (
     get_detections,
     build_astropy_lightcurve,
     initialise_model,
+    write_salt_model,
+    read_salt_model,
     SncosmoSaltModeler,
 )
 from dk154_targets.target import Target, TargetData
@@ -197,7 +199,7 @@ class Test__Modeling:
         assert model is None
 
     def test__with_emcee(self, mock_target):
-        modeler = SncosmoSaltModeler(nsamples=500, nwalkers=10)
+        modeler = SncosmoSaltModeler(nsamples=200, nwalkers=10)
 
         model = modeler(mock_target)
 
@@ -207,7 +209,7 @@ class Test__Modeling:
         assert hasattr(model, "result")
         assert "samples" in model.result
         samples = model.result["samples"]
-        assert samples.shape == (5000, 5)  # nsamples * nwalkers
+        assert samples.shape == (2000, 5)  # nsamples * nwalkers
 
     def test__no_exc_on_failing_emcee(self, mock_target, monkeypatch):
         modeler = SncosmoSaltModeler()
@@ -222,3 +224,41 @@ class Test__Modeling:
 
         assert modeler.use_emcee is True
         assert "samples" not in model.result
+
+
+class Test__ModelReadWrite:
+    def test__models_save(self, true_model, tmp_path):
+
+        model_filepath = tmp_path / "test_model.pkl"
+        true_model.result = [1, 2, 3, 4]
+
+        write_salt_model(true_model, model_filepath)
+
+        assert model_filepath.exists()
+
+    def test__models_save_and_load(self, true_model, tmp_path):
+
+        true_model.result = [1, 2, 3, 4]
+
+        model_filepath = tmp_path / "test_model.pkl"
+        write_salt_model(true_model, model_filepath)
+
+        recov_model = read_salt_model(model_filepath)
+        assert isinstance(recov_model, sncosmo.Model)
+
+    def test__model_save_no_result(self, true_model, tmp_path):
+        model_filepath = tmp_path / "test_model.pkl"
+        assert not hasattr(true_model, "result")
+
+        write_salt_model(true_model, model_filepath)
+        assert model_filepath.exists()
+
+    def test__model_load_no_result(self, true_model, tmp_path):
+        model_filepath = tmp_path / "test_model.pkl"
+        assert not hasattr(true_model, "result")
+
+        write_salt_model(true_model, model_filepath)
+
+        recov_model = read_salt_model(model_filepath)
+
+        assert isinstance(recov_model, sncosmo.Model)

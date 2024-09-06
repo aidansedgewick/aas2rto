@@ -23,7 +23,7 @@ from dk154_targets.utils import calc_file_age
 
 logger = getLogger(__name__.split(".")[-1])
 
-allowed_tns_parameters = [
+ALLOWED_TNS_PARAMETERS = [
     "discovered_period_value",
     "discovered_period_units",
     "unclassified_at",
@@ -157,7 +157,7 @@ class TnsQueryManager(BaseQueryManager):
         tns_parameters = self.tns_config.get("tns_parameters", {})
         self.tns_parameters.update(tns_parameters)
         utils.check_unexpected_config_keys(
-            self.tns_parameters, allowed_tns_parameters, name="tns.tns_parameters"
+            self.tns_parameters, ALLOWED_TNS_PARAMETERS, name="tns.tns_parameters"
         )
 
         self.process_paths(parent_path=parent_path, create_paths=create_paths)
@@ -293,21 +293,23 @@ class TnsQueryManager(BaseQueryManager):
 
 
 class TnsQuery:
-    allowed_parameters = allowed_tns_parameters
+    # allowed_parameters = allowed_tns_parameters
     tns_base_url = "https://www.wis-tns.org/search"
     sleep_time = 3.0
 
     def __init__(self):
         pass
 
-    @classmethod
-    def check_parameters(cls, search_params: dict):
+    @staticmethod
+    def check_parameters(
+        search_params: dict, allowed_parameters=ALLOWED_TNS_PARAMETERS
+    ):
         for k, v in search_params.items():
-            if not k in cls.allowed_parameters:
+            if not k in allowed_parameters:
                 logger.warning(f"unexpected TNS keyword {k}")
 
-    @classmethod
-    def build_param_url(cls, search_params: dict):
+    @staticmethod
+    def build_param_url(search_params: dict):
         url_components = []
         for k, v in search_params.items():
             if isinstance(v, bool):
@@ -339,7 +341,7 @@ class TnsQuery:
     @classmethod
     def query(cls, search_params: dict, tns_headers: dict):
         utils.check_unexpected_config_keys(
-            search_params, cls.allowed_parameters, name="tns_query.search_params"
+            search_params, ALLOWED_TNS_PARAMETERS, name="tns_query.search_params"
         )
 
         num_page = int(search_params.get("num_page", 50))
