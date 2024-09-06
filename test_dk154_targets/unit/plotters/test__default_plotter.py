@@ -115,12 +115,13 @@ class Test__DefaultLightcurvePlotter:
         assert hasattr(plotter, "ztf_colors")
         assert hasattr(plotter, "atlas_colors")
         assert hasattr(plotter, "det_kwargs")
-        assert hasattr(plotter, "ulim_kwargs")
+        assert hasattr(plotter, "ulimit_kwargs")
         assert hasattr(plotter, "badqual_kwargs")
 
         assert hasattr(plotter, "tag_col")
         assert hasattr(plotter, "valid_tag")
         assert hasattr(plotter, "badqual_tag")
+        assert hasattr(plotter, "ulimit_tag")
 
         assert hasattr(plotter, "band_col")
 

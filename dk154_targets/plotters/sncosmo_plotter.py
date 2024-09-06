@@ -22,9 +22,9 @@ from dk154_targets.plotters.default_plotter import DefaultLightcurvePlotter
 logger = getLogger(__name__.split(".")[-1])
 
 
-def plot_sncosmo_lightcurve(target: Target, t_ref: Time = None) -> plt.Figure:
+def plot_sncosmo_lightcurve(target: Target, t_ref: Time = None, **kwargs) -> plt.Figure:
     t_ref = t_ref or Time.now()
-    plotter = SncosmoLightcurvePlotter.plot(target, t_ref=t_ref)
+    plotter = SncosmoLightcurvePlotter.plot(target, t_ref=t_ref, **kwargs)
     if plotter.target_has_models and (not plotter.models_plotted):
         logger.warning(f"{target.objectId} has models but none were plotted")
     return plotter.fig
@@ -37,33 +37,49 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
         t_ref = t_ref or Time.now()
 
         plotter = cls(t_ref=t_ref, **kwargs)
-        plotter.plot_sncosmo_models(target)
-        plotter.plot_photometry(target)
-        plotter.add_cutouts(target)
-        plotter.format_axes(target)
-        plotter.add_comments(target)
+        plotter.plot_target(target)
         return plotter
 
     def __init__(
-        self, t_ref: Time = None, figsize=None, forecast_days=15.0, grid_dt=0.2
+        self,
+        t_ref: Time = None,
+        figsize: tuple = None,
+        forecast_days: float = 15.0,
+        backcast_days: float = None,
+        grid_dt: float = 0.5,
+        model_name: str = "sncosmo_salt",
     ):
         super().__init__(t_ref=t_ref, figsize=figsize)
         self.forecast_days = forecast_days
+        self.backcast_days = backcast_days
         self.grid_dt = grid_dt
 
+        self.target_has_models = False
         self.models_plotted = False
         self.samples_plotted = False
+        self.model_name = model_name
+
+    def plot_target(self, target: Target):
+        self.plot_sncosmo_models(target)
+        super().plot_target(target)
+        # self.plot_photometry(target)
+        # self.add_cutouts(target)
+        # self.format_axes(target)
+        # self.add_comments(target)
 
     def plot_sncosmo_models(self, target: Target):
 
-        model = target.models.get("sncosmo_salt", None)
+        model = target.models.get(self.model_name, None)
         if model is None:
             return
         if target.compiled_lightcurve is None:
             return
+        self.target_has_models = True
         lightcurve = target.compiled_lightcurve
-        t_start = target.compiled_lightcurve["jd"].min()
-        t_end = self.t_ref.jd + self.forecast_days
+        t_start = target.compiled_lightcurve["mjd"].min()
+        if self.backcast_days is not None:
+            t_start = self.t_ref.mjd - self.backcast_days
+        t_end = self.t_ref.mjd + self.forecast_days
         tgrid_main = np.arange(t_start, t_end + self.grid_dt, self.grid_dt)
 
         for ii, (band, band_history) in enumerate(lightcurve.groupby(self.band_col)):
@@ -88,14 +104,14 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
             model_flux = model_flux[pos_mask]
             tgrid = tgrid_main[pos_mask]
 
-            tgrid_shift = tgrid - self.t_ref.jd
+            tgrid_shift = tgrid - self.t_ref.mjd
 
             sample_tgrid_start = tgrid[0] - self.grid_dt
             sample_tgrid_end = (tgrid[-1] + 1.5 * self.grid_dt,)
             samples_tgrid = np.arange(
                 sample_tgrid_start, sample_tgrid_end, self.grid_dt
             )
-            samples_tgrid_shift = samples_tgrid - self.t_ref.jd
+            samples_tgrid_shift = samples_tgrid - self.t_ref.mjd
 
             model_mag = -2.5 * np.log10(model_flux) + 8.9
             self.peakmag_vals.append(np.nanmin(model_mag))
@@ -148,12 +164,12 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
             l1 = self.ax.plot(x, y, ls="--", color="k", label="LC samples median")
             l2 = self.ax.plot(x, y, ls=":", color="k", label="mean parameters")
             lines_legend = self.ax.legend(handles=[l0[0], l1[0], l2[0]], loc=4)
-            # extra [0] indexing because ax.plot reutrns LIST of n-1 lines for n points.
+            # extra [0] indexing because ax.plot returns LIST of n-1 lines for n points.
             self.ax.add_artist(lines_legend)
         return
 
 
-def get_model_median_params(model, vparam_names=None, samples=None):
+def get_model_median_params(model, vparam_names=None, samples=None, burnin=0):
     model_copy = copy.deepcopy(model)
     vparam_names = vparam_names or model.result.get("vparam_names")
     samples = samples or model.result.get("samples", None)
@@ -169,7 +185,7 @@ def get_model_median_params(model, vparam_names=None, samples=None):
 
 
 def get_sample_quartiles(
-    time_grid, model, band, samples=None, vparam_names=None, q=0.5, spacing=20
+    time_grid, model, band, samples=None, vparam_names=None, q=0.5, spacing=20, burnin=0
 ):
     model_copy = copy.deepcopy(model)
     vparam_names = vparam_names or model.result.get("vparam_names")
@@ -180,7 +196,7 @@ def get_sample_quartiles(
 
     lc_evaluations = []
     t_start = time.perf_counter()
-    for p_jj, params in enumerate(samples[::spacing]):
+    for p_jj, params in enumerate(samples[burnin::spacing]):
         pdict = {k: v for k, v in zip(vparam_names, params)}
         model_copy.update(pdict)
         lc_flux_jj = model_copy.bandflux(band, time_grid, zp=8.9, zpsys="ab")

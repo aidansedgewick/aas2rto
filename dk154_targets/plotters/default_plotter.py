@@ -39,47 +39,68 @@ def plot_default_lightcurve(target: Target, t_ref: Time = None) -> plt.Figure:
 
 
 class DefaultLightcurvePlotter:
-    lc_gs = plt.GridSpec(3, 4)
-    zscaler = ZScaleInterval()
-
-    default_figsize = (6.5, 5)
-
-    ztf_colors = {"ztfg": "C0", "ztfr": "C1"}
-    atlas_colors = {"atlasc": "C2", "atlaso": "C3"}
-    plot_colors = {**ztf_colors, **atlas_colors, "no_band": "k"}
-
-    det_kwargs = dict(ls="none", marker="o")
-    ulim_kwargs = dict(ls="none", marker="v", mfc="none")
-    badqual_kwargs = dict(ls="none", marker="o", mfc="none")
-
-    tag_col = "tag"
-    valid_tag = "valid"
-    ulimit_tag = "upperlim"
-    badqual_tag = "badqual"
-
-    band_col = "band"
 
     @classmethod
     def plot(cls, target: Target, t_ref: Time = None, **kwargs) -> plt.Figure:
         t_ref = t_ref or Time.now()
 
         plotter = cls(t_ref=t_ref, **kwargs)
-        plotter.plot_photometry(target)
-        plotter.add_cutouts(target)
-        plotter.format_axes(target)
-        plotter.add_comments(target)
+        plotter.plot_target(target)
         return plotter
 
     def __init__(self, t_ref: Time = None, figsize: tuple = None):
         self.t_ref = t_ref or Time.now()
 
+        self.set_default_plot_params()
+
         self.init_fig(figsize=figsize)
         self.legend_handles = []
         self.peakmag_vals = []
+        self.faintmag_vals = []
         self.photometry_plotted = False
         self.cutouts_added = False
         self.axes_formatted = False
         self.comments_added = False
+
+    def plot_target(self, target: Target):
+
+        self.plot_photometry(target)
+        self.add_cutouts(target)
+        self.format_axes(target)
+        self.add_comments(target)
+
+    def set_default_plot_params(self):
+        self.lc_gs = plt.GridSpec(3, 4)
+        self.zscaler = ZScaleInterval()
+
+        self.default_figsize = (6.5, 5)
+
+        self.ztf_colors = {"ztfg": "C0", "ztfr": "C1"}
+        self.atlas_colors = {"atlasc": "C2", "atlaso": "C3"}
+        self.lsst_colors = {
+            f"lsst{b}": f"C{ii}" for ii, b in enumerate("g r i z y u".split())
+        }
+        self.plot_colors = {
+            **self.ztf_colors,
+            **self.atlas_colors,
+            **self.lsst_colors,
+            "no_band": "k",
+        }
+
+        self.det_kwargs = dict(ls="none", marker="o")
+        self.ulimit_kwargs = dict(ls="none", marker="v", mfc="none")
+        self.badqual_kwargs = dict(ls="none", marker="o", mfc="none")
+
+        self.tag_col = "tag"
+        self.valid_tag = "valid"
+        self.ulimit_tag = "upperlim"
+        self.badqual_tag = "badqual"
+
+        self.mag_col = "mag"
+        self.magerr_col = "magerr"
+        self.diffmaglim_col = "diffmaglim"
+
+        self.band_col = "band"
 
     def init_fig(self, figsize: tuple = None):
         figsize = figsize or self.default_figsize
@@ -94,14 +115,14 @@ class DefaultLightcurvePlotter:
             return self.fig
         lightcurve = target.compiled_lightcurve.copy()
 
-        if "jd" not in lightcurve.columns:
-            if "mjd" in lightcurve.columns:
-                time_dat = Time(lightcurve["mjd"].values, format="mjd")
+        if "mjd" not in lightcurve.columns:
+            if "jd" in lightcurve.columns:
+                time_dat = Time(lightcurve["jd"].values, format="jd")
             else:
                 msg = f"{objectId} missing date column to plot lightcurve: {lightcurve.columns}"
                 logger.error(msg)
                 raise ValueError(msg)
-            lightcurve.loc[:, "jd"] = time_dat.jd
+            lightcurve.loc[:, "mjd"] = time_dat.mjd
 
         band_col = band_col or self.band_col
         if band_col not in lightcurve.columns:
@@ -127,13 +148,13 @@ class DefaultLightcurvePlotter:
                 badqual = band_history[band_history[self.tag_col] == self.badqual_tag]
 
                 if len(ulimits) > 0:
-                    xdat = ulimits["jd"].values - self.t_ref.jd
-                    ydat = ulimits["diffmaglim"]
-                    self.ax.errorbar(xdat, ydat, **band_kwargs, **self.ulim_kwargs)
+                    xdat = ulimits["mjd"].values - self.t_ref.mjd
+                    ydat = ulimits[self.diffmaglim_col]
+                    self.ax.errorbar(xdat, ydat, **band_kwargs, **self.ulimit_kwargs)
                 if len(badqual) > 0:
-                    xdat = badqual["jd"].values - self.t_ref.jd
-                    ydat = badqual["mag"].values
-                    yerr = badqual["magerr"].values
+                    xdat = badqual["mjd"].values - self.t_ref.mjd
+                    ydat = badqual[self.mag_col].values
+                    yerr = badqual[self.magerr_col].values
                     self.ax.errorbar(
                         xdat, ydat, yerr=yerr, **band_kwargs, **self.badqual_kwargs
                     )
@@ -150,14 +171,15 @@ class DefaultLightcurvePlotter:
                 detections = band_history
 
             if len(detections) > 0:
-                xdat = detections["jd"] - self.t_ref.jd
-                ydat = detections["mag"]
-                yerr = detections["magerr"]
+                xdat = detections["mjd"] - self.t_ref.mjd
+                ydat = detections[self.mag_col]
+                yerr = detections[self.magerr_col]
                 self.ax.errorbar(
                     xdat, ydat, yerr=yerr, **band_kwargs, **self.det_kwargs
                 )
                 self.photometry_plotted = True
                 self.peakmag_vals.append(ydat.min())
+                self.faintmag_vals.append(ydat.max())
 
     def add_cutouts(self, target: Target):
         cutouts = {}
@@ -209,15 +231,16 @@ class DefaultLightcurvePlotter:
         title = str(target)
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
-            known_redshift = tns_data.parameters.get("Redshift", None)
-            if known_redshift is not None:
+            known_redshift = float(tns_data.parameters.get("Redshift", "nan"))
+            if np.isfinite(known_redshift):
                 title = title + r" ($z_{\rm TNS}=" + f"{known_redshift}" + "$)"
         transform_kwargs = dict(ha="center", va="top", transform=self.fig.transFigure)
         self.ax.text(0.5, 0.98, title, fontsize=14, **transform_kwargs)
 
-        self.peakmag_vals.append(17.00)
+        self.peakmag_vals.append(17.0)
         y_bright = np.nanmin(self.peakmag_vals) - 0.2
-        y_faint = 22.2
+        self.faintmag_vals.append(22.0)
+        y_faint = np.nanmax(self.faintmag_vals) + 0.2
         self.ax.set_ylim(y_faint, y_bright)
         self.ax.axvline(0, color="k")
 
@@ -241,9 +264,9 @@ class DefaultLightcurvePlotter:
         s = 10
         xmin = np.sign(x0) * np.floor(abs(x0) / s) * s
         xmax = np.sign(x1) * np.ceil(abs(x1) / s) * s
-        xticks = self.t_ref.jd + np.arange(xmin, xmax, s)
-        xticklabels = [Time(int(x), format="jd").strftime("%d %b") for x in xticks]
-        twiny.set_xticks(xticks - self.t_ref.jd)
+        xticks = self.t_ref.mjd + np.arange(xmin, xmax, s)
+        xticklabels = [Time(int(x), format="mjd").strftime("%d %b") for x in xticks]
+        twiny.set_xticks(xticks - self.t_ref.mjd)
         twiny.set_xticklabels(xticklabels)
 
     def add_comments(self, target):

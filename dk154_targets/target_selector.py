@@ -29,6 +29,7 @@ from dk154_targets import utils
 from dk154_targets.lightcurve_compilers import DefaultLightcurveCompiler
 from dk154_targets.obs_info import ObservatoryInfo
 from dk154_targets.plotters import plot_default_lightcurve, plot_visibility
+from dk154_targets.scoring.default_obs_scoring import DefaultObservatoryScoring
 from dk154_targets.target import Target
 
 from dk154_targets import paths
@@ -40,9 +41,11 @@ matplotlib.use("Agg")
 
 VALID_SKIP_TASKS = (
     "qm_tasks",
+    "obs_info",
     "pre_check",
     "modeling",
     "evaluate",
+    "ranking",
     "reject",
     "plotting",
     "write_targets",
@@ -76,7 +79,9 @@ class TargetSelector:
         "minimum_score": 0.0,
         "retained_recovery_files": 5,
         "skip_tasks": [],
+        "obs_info_dt": 0.5 / 24.0,
         "lazy_modeling": True,
+        "lazy_compile": False,
         "lazy_plotting": True,
         "plotting_interval": 0.25,
         "write_comments": True,
@@ -279,9 +284,39 @@ class TargetSelector:
         if len(self.query_managers) == 0:
             logger.warning("no query managers initialised!")
 
-    def initialize_observatories(self) -> Dict[str, Observer]:
+    def add_query_manager(
+        self, qm_config, QueryManagerClass, create_paths=True, **kwargs
+    ):
+        qm_name = getattr(QueryManagerClass, "name", None)
+        if qm_name is None:
+            qm_name = QueryManagerClass.__name__
+            QueryManagerClass.name = qm_name  # Monkey patch!
+            msg = f"new query manager {qm_name} should name class attribute 'name'"
+            logger.warning(msg)
+
+        has_tasks_method = hasattr(QueryManagerClass, "perform_all_tasks")
+        if not has_tasks_method:
+            msg = f"query manager {qm_name} must have method 'perform_all_tasks()'"
+            raise AttributeError(msg)
+
+        qm_config.update(kwargs)
+        qm = QueryManagerClass(
+            qm_config,
+            self.target_lookup,
+            parent_path=self.data_path,
+            create_paths=create_paths,
+        )
+        self.query_managers[qm_name] = qm
+
+    def _get_empty_observatory_lookup(self) -> Dict[str, Observer]:
+        return {}
+
+    def initialize_observatories(self):
         logger.info(f"init observatories")
-        self.observatories = {"no_observatory": None}
+        self.observatories = (
+            self._get_empty_observatory_lookup()
+        )  # {"no_observatory": None}
+        self.observatories["no_observatory"] = None
         for obs_name, location_val in self.observatories_config.items():
             if isinstance(location_val, str):
                 earth_loc = EarthLocation.of_site(location_val)
@@ -319,7 +354,7 @@ class TargetSelector:
         self.target_lookup[target.objectId] = target
 
     def compute_observatory_info(
-        self, t_ref: Time = None, horizon: u.Quantity = -18 * u.deg
+        self, t_ref: Time = None, horizon: u.Quantity = -18 * u.deg, dt=0.5 / 24.0
     ):
         """
         Precompute some expensive information about the altitude for each observatory.
@@ -333,7 +368,7 @@ class TargetSelector:
                 continue
 
             obs_info = ObservatoryInfo.for_observatory(
-                observatory, t_ref=t_ref, horizon=horizon
+                observatory, t_ref=t_ref, horizon=horizon, dt=dt
             )
 
             for objectId, target in self.target_lookup.items():
@@ -373,13 +408,14 @@ class TargetSelector:
             if objectId in self.target_lookup:
                 logger.info(f"{objectId} already in target list!")
                 existing_target = self.target_lookup[objectId]
-                existing_target.base_score = base_score
+                if base_score is not None:
+                    existing_target.base_score = base_score
                 existing_target.target_of_opportunity = True
                 existing_targets.append(opp_target_file)
             else:
                 opp_target = Target(
                     objectId, ra=ra, dec=dec, base_score=base_score, t_ref=t_ref
-                )
+                )  # Target()
                 opp_target.target_of_opportunity = True
                 self.add_target(opp_target)
                 successful_targets.append(opp_target_file)
@@ -396,7 +432,7 @@ class TargetSelector:
         return successful_targets, existing_targets, failed_targets
 
     def compile_target_lightcurves(
-        self, lightcurve_compiler: Callable = None, t_ref=None
+        self, lightcurve_compiler: Callable = None, lazy=False, t_ref=None
     ):
         """
         Compile all the data from the target_data into a convenient location,
@@ -413,26 +449,33 @@ class TargetSelector:
 
         if lightcurve_compiler is None:
             lightcurve_compiler = DefaultLightcurveCompiler()
-        logger.info("compile photometric data")
 
         try:
             lc_compiler_name = lightcurve_compiler.__name__
         except AttributeError as e:
             lc_compiler_name = type(lightcurve_compiler).__name__
+        logger.info("compile photometric data:")
         logger.info(f"use {lc_compiler_name}")
 
         compiled = []
-        not_compiled = []
+        skipped = []
+        failed = []
         for objectId, target in self.target_lookup.items():
+            compiled_exists = target.compiled_lightcurve is not None
+            if compiled_exists and (not target.updated) and lazy:
+                skipped.append(objectId)
+                continue
             compiled_lc = lightcurve_compiler(target, t_ref=t_ref)
             target.compiled_lightcurve = compiled_lc
             if compiled_lc is None:
-                not_compiled.append(objectId)
+                failed.append(objectId)
                 continue
             compiled.append(objectId)
-        if len(not_compiled) > 0:
-            logger.info(f"{len(not_compiled)} have no compiled lightcurve")
-        return compiled, not_compiled
+
+        logger.info(f"compiled:{len(compiled)}, skipped (lazy):{len(skipped)}")
+        if len(failed) > 0:
+            logger.warning(f"failed:{len(failed)} (no compiled lc!)")
+        return compiled, failed
 
     def perform_query_manager_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -448,89 +491,179 @@ class TargetSelector:
             t_end = time.perf_counter()
             logger.info(f"{qm_name} tasks in {t_end-t_start:.1f} sec")
 
-    def evaluate_targets(self, scoring_function: Callable, t_ref: Time = None):
-        """
-        Evaluate all targets according to a provided `scoring_function`, for
-        each observatory and 'no_observatory' (`None`).
-
-        Parameters
-        ----------
-        scoring_function
-            Callable, your scoring function, with signature
-            (target: `Target`, observatory: `astroplan.Observer`, t_ref: `Time`)
-        t_ref
-            astropy.time.Time, optional - if not provided, defaults to Time.now()
-        """
-        t_ref = t_ref or Time.now()
-
-        logger.info(f"evaluate {len(self.target_lookup)} targets")
-        logger.info(f"evaluate with {scoring_function.__name__}")
-        for obs_name, observatory in self.observatories.items():
-            logger.info(f"evaluate for {obs_name}")
-            self.evaluate_targets_at_observatory(
-                scoring_function, observatory, t_ref=t_ref
-            )
-
-    def evaluate_targets_at_observatory(
-        self, scoring_function: Callable, observatory: Observer, t_ref: Time = None
+    def evaluate_targets(
+        self,
+        science_scoring_function: Callable,
+        observatory_scoring_function: Callable = None,
+        t_ref: Time = None,
     ):
-        """
-        Evaluate all targets at a particular observatory (this could be `None`).
-        This function is used mainly by `evaluate_all_targets`.
-
-        Parameters
-        ----------
-        scoring_function
-            `Callable`, your scoring function, with signature:
-            (target: `Target`, observatory: `astroplan.Observer`, t_ref: `Time`)
-        observatory
-            `astroplan.Observer`. The observatory the score should be calculated at.
-        t_ref
-            astropy.time.Time, optional - if not provided, defaults to Time.now()
-        """
         t_ref = t_ref or Time.now()
+        logger.info("evalutate all targets")
+
+        if observatory_scoring_function is None:
+            observatory_scoring_function = DefaultObservatoryScoring()
 
         for objectId, target in self.target_lookup.items():
             self.evaluate_single_target(
-                scoring_function, target, observatory, t_ref=t_ref
+                target,
+                science_scoring_function,
+                observatory_scoring_function=observatory_scoring_function,
+                t_ref=t_ref,
             )
 
     def evaluate_single_target(
         self,
-        scoring_function: Callable,
         target: Target,
-        observatory: Observer,
+        science_scoring_function: Callable,
+        observatory_scoring_function: Observer = None,
         t_ref: Time = None,
     ):
+        """
+        Evaluate a single target with the provided `science_scoring_function`,
+        to give a `science_score`.
+        If `observatory_scoring_function` is provided, modify the `science_score`
+        by this result.
+        This function is used mainly by `evaluate_all_targets`.
+
+        Parameters
+        ----------
+        target : Target
+        science_scoring_function : Callable
+            Your scoring function, with signature:
+            (target: `Target`, t_ref: `Time`)
+        observatory_scoring_function : Callable, default: None
+            Your observatory_scoring_function, with score
+            if observatory_scoring_function is not None, multiply the result
+            of science_scoring_function by the result of this function.
+            It should have signature:
+            (target: `Target`, observatory: `astroplan.Observer`, t_ref: `Time`)
+        t_ref : astropy.time.Time, optional
+            if not provided, defaults to Time.now()
+        """
+        t_ref = t_ref or Time.now()
+        minimum_score = self.selector_parameters["minimum_score"]
+
+        # ===== Compute score according to
+        science_score, score_comments, reject_comments = (
+            self._evaluate_target_science_score(
+                science_scoring_function, target, t_ref=t_ref
+            )
+        )
+
+        obs_name = "no_observatory"
+        target.update_score_history(science_score, obs_name, t_ref=t_ref)
+        target.score_comments[obs_name] = score_comments
+        target.reject_comments[obs_name] = reject_comments
+
+        if observatory_scoring_function is None:
+            return
+
+        for obs_name, observatory in self.observatories.items():
+            if observatory is None:
+                if not obs_name == "no_observatory":
+                    raise ValueError(f"observatory {obs_name} is None!")
+                continue
+
+            if science_score > minimum_score and np.isfinite(science_score):
+                # ===== Modify score for each observatory
+                obs_factors, score_comments, reject_comments = (
+                    self._evaluate_target_observatory_score(
+                        observatory_scoring_function, target, observatory, t_ref
+                    )
+                )
+                observatory_score = science_score * obs_factors
+            else:
+                obs_factors = 1.0
+                observatory_score = science_score
+                score_comments = ["excluded by no_observatory score"]
+                reject_comments = []
+
+            target.update_score_history(observatory_score, obs_name, t_ref=t_ref)
+            target.score_comments[obs_name] = score_comments
+            target.reject_comments[obs_name] = reject_comments
+        return
+
+    def _evaluate_target_science_score(
+        self, science_scoring_function: Callable, target: Target, t_ref: Time = None
+    ):
+        """
+        Wrapper function around user-provided science_scoring_function, to catch
+        exceptions.
+
+        """
+
         t_ref = t_ref or Time.now()
 
-        obs_name = getattr(observatory, "name", "no_observatory")
+        obs_name = "no_observatory"
         try:
-            scoring_res = scoring_function(target, observatory, t_ref)
+            scoring_res = science_scoring_function(target, t_ref)
         except Exception as e:
-            details = [
-                f"For target {target.objectId} at obs {obs_name} at {t_ref.isot}, "
-                f"scoring with {scoring_function.__name__} failed. "
-                f"Set score to -1.0, to exclude."
-            ]
+            details = (
+                f"    For target {target.objectId} at obs {obs_name} at {t_ref.isot},\n"
+                f"    scoring with {science_scoring_function.__name__} failed.\n"
+                f"    Set score to -1.0, to exclude.\n"
+            )
             scoring_res = (-1.0, details, [])
             self.send_crash_reports(text=details)
 
         if isinstance(scoring_res, tuple):
             if len(scoring_res) == 3:
-                score, score_comments, reject_comments = scoring_res
+                science_score, score_comments, reject_comments = scoring_res
             else:
-                raise ValueError("your scoring_function should ")
-
+                msg = f"your scoring_function {science_scoring_function.__name__} should return\n    "
+                f"score [float], score_comments [List[str]], reject_comments [List[str]]"
+                raise ValueError(msg)
         elif isinstance(scoring_res, float) or isinstance(scoring_res, int):
-            score = scoring_res
-            score_comments = []
-            reject_comments = []
+            science_score = scoring_res
+            score_comments = ["no score_comments provided"]
+            reject_comments = ["no reject_comments provided"]
         else:
             raise ValueError
-        target.update_score_history(score, observatory, t_ref=t_ref)
-        target.score_comments[obs_name] = score_comments
-        target.reject_comments[obs_name] = reject_comments
+
+        return science_score, score_comments, reject_comments
+
+    def _evaluate_target_observatory_score(
+        self,
+        observatory_scoring_function: Callable,
+        target: Target,
+        observatory: Observer,
+        t_ref: Time,
+    ):
+
+        obs_name = observatory.name
+        try:
+            scoring_res = observatory_scoring_function(target, observatory, t_ref=t_ref)
+        except Exception as e:
+            details = (
+                f"    For target {target.objectId} at obs {obs_name} at {t_ref.isot},\n"
+                f"    scoring with {observatory_scoring_function.__name__} failed.\n"
+                f"    Set score to -1.0, to exclude.\n"
+            )
+            scoring_res = (-1.0, details, [])
+            self.send_crash_reports(text=details)
+
+        if isinstance(scoring_res, tuple):
+            if len(scoring_res) == 3:
+                obs_factors, score_comments, reject_comments = scoring_res
+            else:
+                raise ValueError(
+                    "your scoring_function should return float, or tuple len 3:\n"
+                    "score [float], or (score [float], score_comms [list], reject_comms [list])"
+                )
+        elif isinstance(scoring_res, float) or isinstance(scoring_res, int):
+            obs_factors = scoring_res
+            score_comments = ["no score_comments provided"]
+            reject_comments = ["no reject_comments provided"]
+        else:
+            raise ValueError
+        if not np.isfinite(obs_factors):
+            msg = (
+                f"observatory_score not finite ={obs_factors} "
+                f"for {target.objectId} at {obs_name}."
+            )
+            logger.warning(msg)
+
+        return obs_factors, score_comments, reject_comments
 
     def new_target_initial_check(
         self, scoring_function: Callable, t_ref: Time = None
@@ -559,7 +692,12 @@ class TargetSelector:
             last_score = target.get_last_score("no_observatory")
             if last_score is not None:
                 continue
-            self.evaluate_single_target(scoring_function, target, None, t_ref=t_ref)
+            self.evaluate_single_target(
+                target,
+                scoring_function,
+                observatory_scoring_function=None,
+                t_ref=t_ref,
+            )
             new_targets.append(objectId)
         return new_targets
 
@@ -577,11 +715,11 @@ class TargetSelector:
             if target is None:
                 logger.warning(f"can't remove non-existent target {objectId}")
                 continue
-            last_score = target.get_last_score()
+            last_score = target.get_last_score()  # at no_observatory.
             if last_score is None:
                 logger.warning(f"in reject: {objectId} has no score")
             if np.isfinite(last_score):
-                continue
+                continue  # it can stay...
             target = self.target_lookup.pop(objectId)
             if write_comments:
                 target.write_comments(self.rejected_targets_path, t_ref=t_ref)
@@ -629,14 +767,16 @@ class TargetSelector:
                     model = func(target)
                     built.append(objectId)
                 except Exception as e:
+                    print(traceback.format_exc())
                     model = None
                     failed.append(objectId)
                     logger.warning(f"{model_key} failed for {objectId}")
                 target.models[model_key] = model
                 target.models_t_ref[model_key] = t_ref
 
-            summ_str = f"built:{len(built)} failed:{len(failed)} skipped:{len(skipped)}"
-            logger.info(summ_str)
+            logger.info(f"built:{len(built)} skipped (lazy):{len(skipped)}")
+            if len(failed) > 0:
+                logger.warning(f"failed:{len(failed)}")
 
     def write_target_comments(
         self, target_list: List[Target] = None, outdir: Path = None, t_ref: Time = None
@@ -956,8 +1096,9 @@ class TargetSelector:
             logger.info("file too small - don't attempt read...")
             return
 
-        logger.info(f"attempt recover targets from\n    {existing_targets_file}")
+        logger.info(f"recover targets from\n    {existing_targets_file}")
         existing_targets_df = pd.read_csv(existing_targets_file)
+        logger.info(f"attempt {len(existing_targets_df)} targets")
         recovered_targets = []
         for ii, row in existing_targets_df.iterrows():
             objectId = row.objectId
@@ -965,8 +1106,8 @@ class TargetSelector:
                 logger.warning(f"skip load existing {objectId}")
                 continue
             target = Target(objectId, ra=row.ra, dec=row.dec, base_score=row.base_score)
-            self.recover_score_history(target)
-            self.recover_rank_history(target)
+            # self.recover_score_history(target)
+            # self.recover_rank_history(target)
             self.add_target(target)
             recovered_targets.append(objectId)
         logger.info(f"recovered {len(recovered_targets)} existing targets")
@@ -1024,7 +1165,7 @@ class TargetSelector:
             last_score = target.get_last_score()
             if last_score is None:
                 skipped.append(objectId)
-                logger.debug(f"last score is None")
+                logger.debug(f"last score is None; skip")
                 continue
 
             if last_score < minimum_score:
@@ -1067,7 +1208,7 @@ class TargetSelector:
 
         Parameters
         ----------
-        text
+        text : str or list of str, default=None
             str or list of str of text to accompany the traceback
         """
         if text is None:
@@ -1081,7 +1222,8 @@ class TargetSelector:
 
     def perform_iteration(
         self,
-        scoring_function: Callable = None,
+        scoring_function: Callable,
+        observatory_scoring_function: Callable = None,
         modeling_function: Callable = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
@@ -1089,7 +1231,62 @@ class TargetSelector:
         t_ref: Time = None,
     ):
         """
-        The actual loop.
+        The actual prioritisation loop.
+
+        Most of the parameters are callable functions, which you can provide.
+        Only one is mandatory: scoring_function
+
+        All but one of the user provided functions should have signature:
+            func(target, t_ref) :
+                target : dk154_targets.target.Target
+                t_ref : astropy.time.Time
+        The only exception is observatory_scoring_function, which should have signature
+            func(target, obs: astroplan.Observer, t_ref)
+
+        Parameters
+        ----------
+        scoring_function : Callable
+            The (science) scoring function to prioritise targets.
+            It should have the 'standard' signature defined above.
+            It should return:
+                score : float
+                comments : List of str, optional
+        observatory_scoring_function : Callable, optional
+            The scoring function to evaluate at observatories.
+                If not provided, defaults to dk154_targets.scoring.DefaultObsScore
+                It should have signature func(target, obs, t_ref), where arguments:
+                    target : dk154_targets.target.Target
+                    obs : astroplan.Observer
+                    t_ref : astropy.time.Time
+            It should return:
+                obs_factors : float
+                    The output of this will be multiplied by 'score'
+                    from scoring_function, to get the score for this observatory.
+                comms : list of str, optional
+        modeling_function : Callable or list of Callable
+            Functions which produce models based on target.
+            Exceptions in modeling_function are caught, and the model will be set to None.
+            It should have the 'standard' signature defined above.
+            It should return:
+                model : Any
+                    the model which describes your source. You can access it in
+                    (eg.) scoring functions with target.models[<your_func_name>]
+        lightcurve_compiler : Callable
+            Function which produces a convenient single lightcurve including all data
+            sources. Helpful in scoring, plotting.
+            It should have the 'standard' signature defined above.
+            It should return:
+                compiled_lc : pd.DataFrame or astropy.table.Table
+        lc_plotting_function : Callable
+            Generate a lightcurve figure for each target.
+            It should have the 'standard' signature defined above.
+            it should return:
+                figure : matplotlib.pyplot.Figure
+        skip_tasks : list of str, optional
+            Task(s) which should be skipped.
+            Must be one of
+                "qm_tasks", "obs_info", "pre_check", "modeling", "evaluate",
+                "ranking", "reject", "plotting", "write_targets", "messaging",
         """
 
         t_ref = t_ref or Time.now()
@@ -1100,9 +1297,13 @@ class TargetSelector:
 
         # ================= Get some parameters from config ================= #
         write_comments = self.selector_parameters.get("write_comments", True)
+        obs_info_dt = self.selector_parameters.get("obs_info_dt", 0.5 / 24.0)
+        lazy_modeling = self.selector_parameters.get("lazy_modeling", True)
+        lazy_compile = self.selector_parameters.get("lazy_compile", False)
+        lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
         # self.clear_scratch_plots() # NO - lazy plotting re-uses existing plots.
 
-        # =============== are there any tasks we should skip? =============== #
+        # =============== Are there any tasks we should skip? =============== #
         config_skip_tasks = self.selector_parameters.get("skip_tasks", [])
         skip_tasks = skip_tasks or []
         skip_tasks = skip_tasks + config_skip_tasks
@@ -1117,17 +1318,23 @@ class TargetSelector:
             raise ValueError(errmsg)
 
         # =========================== Get new data =========================== #
+        self.check_for_targets_of_opportunity()
         if not "qm_tasks" in skip_tasks:
-            self.check_for_targets_of_opportunity()
             self.perform_query_manager_tasks(t_ref=t_ref)
         else:
             logger.info("skip query manager tasks")
 
         # ================= Prep before modeling and scoring ================= #
         t1 = time.perf_counter()
-        self.compute_observatory_info(t_ref=t_ref)
+        if not "obs_info" in skip_tasks:
+            self.compute_observatory_info(t_ref=t_ref, dt=obs_info_dt)
+        else:
+            logger.info("skip compute new obs_info for each target")
+        perf_times["obs_info"] = time.perf_counter() - t1
+
+        t1 = time.perf_counter()
         self.compile_target_lightcurves(
-            lightcurve_compiler=lightcurve_compiler, t_ref=t_ref
+            lightcurve_compiler=lightcurve_compiler, lazy=lazy_compile, t_ref=t_ref
         )
         perf_times["compile"] = time.perf_counter() - t1
 
@@ -1147,15 +1354,18 @@ class TargetSelector:
         # =========================== Build models =========================== #
         t1 = time.perf_counter()
         if not "modeling" in skip_tasks:
-            lazy_modeling = self.selector_parameters.get("lazy_modeling", True)
             self.build_target_models(modeling_function, t_ref=t_ref, lazy=lazy_modeling)
         perf_times["modeling"] = time.perf_counter() - t1
 
         # ========================= Do the scoring, ========================== #
         t1 = time.perf_counter()
         if "evaluate" not in skip_tasks:
-            self.evaluate_targets(scoring_function, t_ref=t_ref)
-            logger.info(f"{len(self.target_lookup)} targets before rejecting")
+            self.evaluate_targets(
+                scoring_function,
+                observatory_scoring_function=observatory_scoring_function,
+                t_ref=t_ref,
+            )
+            logger.info(f"{len(self.target_lookup)} targets after evaluation")
         perf_times["evaluate"] = time.perf_counter() - t1
 
         # ===================== Remove rejected targets ====================== #
@@ -1179,7 +1389,6 @@ class TargetSelector:
         # ============================ Plotting ============================ #
         t1 = time.perf_counter()
         if not "plotting" in skip_tasks:
-            lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
             plotting_interval = self.selector_parameters.get("plotting_interval", 0.25)
             if lazy_plotting:
                 logger.info(f"re-use vis/lc plots <{plotting_interval*24:.1f}hr old")
@@ -1208,8 +1417,8 @@ class TargetSelector:
         t1 = time.perf_counter()
         if "write_targets" not in skip_tasks:
             self.write_existing_target_list(t_ref=t_ref)
-            self.write_score_histories(t_ref=t_ref)
-            self.write_rank_histories(t_ref=t_ref)
+            # self.write_score_histories(t_ref=t_ref)
+            # self.write_rank_histories(t_ref=t_ref)
         perf_times["checkpoint"] = time.perf_counter() - t1
 
         # ====================== Broadcast any messages ====================== #
@@ -1219,7 +1428,7 @@ class TargetSelector:
         else:
             logger.info("skip messaging tasks")
 
-        # ======== Reset all targets to unupdated for the next loop ========== #
+        # ======== Reset all targets to un-updated for the next loop ========= #
         self.reset_updated_targets()
 
         perf_times["messaging"] = time.perf_counter() - t1
@@ -1234,10 +1443,12 @@ class TargetSelector:
     def start(
         self,
         scoring_function: Callable = None,
+        observatory_scoring_function: Callable = None,
         modeling_function: List[Callable] = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
         existing_targets_file=False,
+        skip_tasks=None,
         iterations=None,
     ):
         """
@@ -1255,6 +1466,17 @@ class TargetSelector:
 
         existing_targets_file: optional, default=False
             path to an existing_targets_file, or "last"
+
+
+        Examples
+        --------
+        >>> from dk154_targets import paths
+        >>> from dk154_targets import TargetSelector
+        >>> from dk154_targets.scoring.example_functions import latest_flux
+
+        >>> config_path = paths.config_path / "examples/fink_supernovae.yaml"
+        >>> selector = TargetSelector.from_config(config_path)
+        >>> selector.start(scoring_function=latest_flux)
 
         """
         t_ref = Time.now()
@@ -1287,17 +1509,18 @@ class TargetSelector:
         while True:
             t_ref = Time.now()
 
-            skip_tasks = []
+            loop_skip_tasks = skip_tasks or []
             if N_iterations == 0:
-                skip_tasks.append("messaging")
+                loop_skip_tasks.append("messaging")
 
             try:
                 self.perform_iteration(
                     scoring_function=scoring_function,
+                    observatory_scoring_function=observatory_scoring_function,
                     modeling_function=modeling_function,
                     lightcurve_compiler=lightcurve_compiler,
                     lc_plotting_function=lc_plotting_function,
-                    skip_tasks=skip_tasks,
+                    skip_tasks=loop_skip_tasks,
                     t_ref=t_ref,
                 )
             except Exception as e:

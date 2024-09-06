@@ -1,4 +1,6 @@
 import copy
+import sys
+import traceback
 import warnings
 from logging import getLogger
 
@@ -121,6 +123,8 @@ class ObservatoryInfo:
         forecast: float = None,
         dt: float = None,
     ):
+        if t_ref is None:
+            logger.warning("t_ref is None! Defaulting to Time.now()")
         t_ref = t_ref or Time.now()
 
         if t_grid is None:
@@ -135,10 +139,20 @@ class ObservatoryInfo:
 
         delta_t = t_grid[1] - t_grid[0]
 
+        try:
+            sun_altaz = observatory.sun_altaz(t_grid)
+        except Exception as e:
+            if observatory is None:
+                msg = (
+                    "\n    You're trying to compute obs_info for \033[31;1mobservatory=None\033[0m."
+                    f"\n    This is probably why there's an exception, type={type(e).__name__}\n"
+                )
+                logger.error(msg)
+            raise  # Bare raise re-raises the exception we just caught.
+
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=AstropyDeprecationWarning)
             moon_altaz = observatory.moon_altaz(t_grid)
-        sun_altaz = observatory.sun_altaz(t_grid)
 
         sunset, sunrise = get_next_valid_sunset_sunrise(
             observatory, horizon=horizon, t_ref=t_ref, delta_t=delta_t

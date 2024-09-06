@@ -19,14 +19,14 @@ def fixed_t0():
     return t0
 
 
-@pytest.fixture
-def t0_jd(fixed_t0):
-    return fixed_t0 + 2_400_000.5
+# @pytest.fixture
+# def t0_jd(fixed_t0):
+#     return fixed_t0 + 2_400_000.5
 
 
 @pytest.fixture
-def fixed_params(t0_jd):
-    return dict(z=0.05, t0=t0_jd, x0=2e-3, x1=-0.5, c=0.0)
+def fixed_params(fixed_t0):
+    return dict(z=0.05, t0=fixed_t0, x0=2e-3, x1=-0.5, c=0.0)
 
 
 @pytest.fixture  # (scope="module")
@@ -66,15 +66,15 @@ def dt_vals():
 
 
 @pytest.fixture
-def mock_lc(true_model, t0_jd, dt_vals):
+def mock_lc(true_model, fixed_t0, dt_vals):
     """
     photometry samples are drawn FROM THE MODEL!
     This is so we're not testing the actual fitting here. just plotting.
     """
 
     dt = np.array(dt_vals)
-    ztfg_t_grid = t0_jd + dt
-    ztfr_t_grid = t0_jd + dt + 0.1
+    ztfg_t_grid = fixed_t0 + dt
+    ztfr_t_grid = fixed_t0 + dt + 0.1
     gmag = true_model.bandmag("ztfg", "ab", ztfg_t_grid)
     gmag = np.random.normal(gmag, 0.2, len(ztfg_t_grid))
     rmag = true_model.bandmag("ztfr", "ab", ztfr_t_grid)
@@ -93,9 +93,9 @@ def mock_lc(true_model, t0_jd, dt_vals):
     tagcol = np.concatenate([gmag_tag, rmag_tag])
 
     df = pd.DataFrame(
-        {"jd": t_grid, "mag": mag, "magerr": magerr, "band": band_col, "tag": tagcol}
+        {"mjd": t_grid, "mag": mag, "magerr": magerr, "band": band_col, "tag": tagcol}
     )
-    df.sort_values("jd", inplace=True, ignore_index=True)
+    df.sort_values("mjd", inplace=True, ignore_index=True)
     return df
 
 
@@ -158,7 +158,7 @@ class Test__Plotter:
         plotter.fig.savefig(fig_path)
 
     def test__plotter_no_samples(self, mock_target_model, tmp_path):
-        t_ref = Time(60045, format="mjd")
+        t_ref = Time(60045.0, format="mjd")
 
         plotter = SncosmoLightcurvePlotter(t_ref=t_ref, grid_dt=1.0)
 

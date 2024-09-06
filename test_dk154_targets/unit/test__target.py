@@ -101,20 +101,13 @@ class Test__TargetData:
         assert isinstance(td.cutouts, dict)
         assert len(td.cutouts) == 0
 
-        assert td.valid_tags == (
-            "valid",
-            "detection",
-        )
-        assert td.badqual_tags == (
-            "badquality",
-            "badqual",
-            "dubious",
-        )
-        assert td.nondet_tags == ("upperlim", "nondet")
+        assert set(td.valid_tags) == set(["valid", "detection", "det"])
+        assert set(td.badqual_tags) == set(["badquality", "badqual", "dubious"])
+        assert set(td.nondet_tags) == set(["upperlim", "nondet"])
 
     def test__change_tags(self):
-        td = TargetData(valid_tags=("valid",))
-        assert td.valid_tags == ("valid",)
+        td = TargetData(valid_tags=(["valid"]))
+        assert set(td.valid_tags) == set(["valid"])
 
     def test__init_with_lc_no_tag(self, mock_lc):
         mock_lc.drop("tag", axis=1, inplace=True)
@@ -171,15 +164,26 @@ class Test__TargetData:
         assert isinstance(result, dict)
         assert len(result) == 0
 
+
+class Test__IntegratingUpdates:
     def test__integrate_equality_no_lightcurve(self, mock_lc_updates):
         td = TargetData()
-        result = td.integrate_equality(mock_lc_updates, column="obsId")
+        assert td.lightcurve is None
+
+        result = td.integrate_lightcurve_updates_equality(
+            mock_lc_updates, column="obsId"
+        )
         assert len(result) == 3
+        assert len(td.lightcurve) == 3
+        assert len(td.detections) == 2
+        assert len(td.badqual) == 1
 
     def test__integrate_equality(self, mock_lc, mock_lc_updates):
         td = TargetData(lightcurve=mock_lc)
 
-        result = td.integrate_equality(mock_lc_updates, column="obsId")
+        result = td.integrate_lightcurve_updates_equality(
+            mock_lc_updates, column="obsId"
+        )
         assert len(result) == 13
         assert set(result["obsId"]) == set(range(1, 14))
 
@@ -190,7 +194,7 @@ class Test__TargetData:
         mock_lc["source"] = "original"
 
         td = TargetData(lightcurve=mock_lc)
-        result = td.integrate_equality(updates, column="obsId")
+        result = td.integrate_lightcurve_updates_equality(updates, column="obsId")
         assert len(result) == 13
         assert all(result.iloc[:7].source == "original")
         assert all(result.iloc[7:].source == "updates")
@@ -204,7 +208,9 @@ class Test__TargetData:
         mock_lc["source"] = "original"
 
         td = TargetData(lightcurve=mock_lc)
-        result = td.integrate_equality(updates, column="obsId", keep_updates=False)
+        result = td.integrate_lightcurve_updates_equality(
+            updates, column="obsId", keep_updates=False
+        )
         assert len(result) == 13
         assert all(result.iloc[:10].source == "original")
         assert all(result.iloc[10:].source == "updates")
@@ -213,7 +219,7 @@ class Test__TargetData:
 
     def test__integrate_updates(self, mock_lc, mock_lc_updates):
         td = TargetData(lightcurve=mock_lc)
-        td.integrate_lightcurve_updates(mock_lc_updates, column="obsId")
+        td.integrate_lightcurve_updates_equality(mock_lc_updates, column="obsId")
 
         assert len(td.lightcurve) == 13
         assert len(td.detections) == 5
@@ -226,7 +232,7 @@ class Test__TargetData:
 
     def test__integrate_updates_badqual_true(self, mock_lc, mock_lc_updates):
         td = TargetData(lightcurve=mock_lc)
-        td.integrate_lightcurve_updates(
+        td.integrate_lightcurve_updates_equality(
             mock_lc_updates, column="obsId", include_badqual=True
         )
 
@@ -239,6 +245,47 @@ class Test__TargetData:
         assert set(td.badqual["obsId"]) == set()  # Test the column name is there.
         assert set(td.non_detections["obsId"]) == set([1, 2, 3, 4])
 
+    def test__integrate_updates_drop_repeated_rows(self, mock_lc, mock_lc_updates):
+        mock_lc.loc[mock_lc["tag"] == "upperlim", "obsId"] = -1
+        mock_lc.loc[mock_lc["tag"] == "nondet", "obsId"] = -1
+
+        assert all(mock_lc["obsId"].iloc[:3].values == -1)
+
+        td = TargetData(lightcurve=mock_lc)
+        assert len(td.non_detections) == 4
+        assert len(td.badqual) == 3
+        assert len(td.detections) == 3
+
+        td.integrate_lightcurve_updates_equality(mock_lc_updates, column="obsId")
+
+        assert len(td.lightcurve) == 10  # 4 rows with obsId==-1 -- drop all but last!
+        assert len(td.non_detections) == 1
+        assert np.isclose(td.non_detections["mjd"].iloc[0], 60003.0)
+        assert len(td.badqual) == 4
+        assert len(td.detections) == 5
+
+    def test__integrate_updates_keep_repeated_rows(self, mock_lc, mock_lc_updates):
+        mock_lc.loc[mock_lc["tag"] == "upperlim", "obsId"] = -1
+        mock_lc.loc[mock_lc["tag"] == "nondet", "obsId"] = -1
+
+        assert all(mock_lc["obsId"].iloc[:3].values == -1)
+
+        td = TargetData(lightcurve=mock_lc)
+        assert len(td.non_detections) == 4
+        assert len(td.badqual) == 3
+        assert len(td.detections) == 3
+
+        td.integrate_lightcurve_updates_equality(
+            mock_lc_updates, column="obsId", ignore_values=[-1]
+        )
+
+        assert len(td.lightcurve) == 13
+        assert len(td.non_detections) == 4
+        assert np.isclose(td.non_detections["mjd"].iloc[0], 60000.0)
+        assert np.isclose(td.non_detections["mjd"].iloc[3], 60003.0)
+        assert len(td.badqual) == 4
+        assert len(td.detections) == 5
+
 
 class Test__TargetDataAstropyTableCompatibility:
     def test__init_with_table_no_tag(self, mock_lc_astropy):
@@ -250,6 +297,7 @@ class Test__TargetDataAstropyTableCompatibility:
         assert len(td.lightcurve) == 10
         # assert td.detections is None
         assert len(td.detections) == 10
+        assert td.badqual is None
         assert td.non_detections is None
 
     def test__init_with_table_with_tag(self, mock_lc_astropy):
@@ -278,13 +326,17 @@ class Test__TargetDataAstropyTableCompatibility:
 
     def test__equality_no_lc_astropy(self, mock_lc_updates):
         td = TargetData()
-        result = td.integrate_equality(mock_lc_updates, column="obsId")
+        result = td.integrate_lightcurve_updates_equality(
+            mock_lc_updates, column="obsId"
+        )
         assert len(result) == 3
 
     def test__integrate_equality(self, mock_lc, mock_lc_updates):
         td = TargetData(lightcurve=mock_lc)
 
-        result = td.integrate_equality(mock_lc_updates, column="obsId")
+        result = td.integrate_lightcurve_updates_equality(
+            mock_lc_updates, column="obsId"
+        )
         assert len(result) == 13
         assert set(result["obsId"]) == set(range(1, 14))
 
@@ -297,7 +349,7 @@ class Test__TargetDataAstropyTableCompatibility:
         mock_lc_astropy["source"] = "original"
 
         td = TargetData(lightcurve=mock_lc_astropy)
-        result = td.integrate_equality(updates, column="obsId")
+        result = td.integrate_lightcurve_updates_equality(updates, column="obsId")
         assert len(result) == 13
         assert all(result[:7]["source"] == "original")
         assert all(result[7:]["source"] == "updates")
@@ -313,7 +365,9 @@ class Test__TargetDataAstropyTableCompatibility:
         mock_lc_astropy["source"] = "original"
 
         td = TargetData(lightcurve=mock_lc_astropy)
-        result = td.integrate_equality(updates, column="obsId", keep_updates=False)
+        result = td.integrate_lightcurve_updates_equality(
+            updates, column="obsId", keep_updates=False
+        )
         assert len(result) == 13
         assert all(result[:10]["source"] == "original")
         assert all(result[10:]["source"] == "updates")
@@ -331,7 +385,7 @@ class Test__TargetInit:
         assert np.isclose(t.dec, 60.0)
         assert isinstance(t.coord, SkyCoord)
         assert isinstance(t.astroplan_target, FixedTarget)
-        assert np.isclose(t.base_score, 100.0)
+        assert np.isclose(t.base_score, 1.0)
         assert t.compiled_lightcurve is None
 
         assert isinstance(t.target_data, dict)

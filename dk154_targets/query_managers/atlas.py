@@ -197,19 +197,19 @@ class AtlasQueryManager(BaseQueryManager):
                 raw_lightcurve = AtlasQuery.process_response(lightcurve_data)
                 lightcurve = process_atlas_lightcurve(raw_lightcurve)
 
-            lightcurve_file = self.get_lightcurve_file(objectId)
+            lightcurve_filepath = self.get_lightcurve_file(objectId)
             if len(lightcurve) == 0:
-                if lightcurve_file.exists():
+                if lightcurve_filepath.exists():
                     # If there is existing data, might as well keep it, and update
                     # the file timestamp, so we don't submit again needlessly next loop.
-                    lightcurve = pd.read_csv(lightcurve_file)
+                    lightcurve = pd.read_csv(lightcurve_filepath)
                     if len(lightcurve) > 0:
                         logger.warning(
                             f"\033[33matlas returned no data\033[0m\n"
                             f"existing {objectId} lightcurve has"
                             f"len {len(lightcurve)}, but new query returned zero!"
                         )
-            lightcurve.to_csv(lightcurve_file, index=False)
+            lightcurve.to_csv(lightcurve_filepath, index=False)
 
             return self.QUERY_EXISTS
 
@@ -323,8 +323,8 @@ class AtlasQueryManager(BaseQueryManager):
             )  # no observatory means None -> "no_observatory"
             if last_score is None:
                 continue
-            lightcurve_file = self.get_lightcurve_file(objectId)
-            lightcurve_file_age = calc_file_age(lightcurve_file, t_ref)
+            lightcurve_filepath = self.get_lightcurve_file(objectId)
+            lightcurve_file_age = calc_file_age(lightcurve_filepath, t_ref)
             if (
                 lightcurve_file_age
                 < self.query_parameters["lightcurve_update_interval"]
@@ -342,11 +342,11 @@ class AtlasQueryManager(BaseQueryManager):
         missing = []
         t_start = time.perf_counter()
         for objectId, target in self.target_lookup.items():
-            lightcurve_file = self.get_lightcurve_file(objectId)
-            if not lightcurve_file.exists():
+            lightcurve_filepath = self.get_lightcurve_file(objectId)
+            if not lightcurve_filepath.exists():
                 missing.append(objectId)
                 continue
-            lightcurve = pd.read_csv(lightcurve_file)
+            lightcurve = pd.read_csv(lightcurve_filepath)
             if lightcurve.empty:
                 continue
 
@@ -371,9 +371,8 @@ class AtlasQueryManager(BaseQueryManager):
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
         try:
-            self.recover_finished_queries(
-                t_ref=t_ref
-            )  # also populates "submitted queries"
+            self.recover_finished_queries(t_ref=t_ref)
+            # also populates "submitted queries"
         except requests.exceptions.JSONDecodeError as e:
             return e
 
