@@ -3,15 +3,15 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="dk154_targets",
+    name="aas2rto",
     version="0.1.0",
-    description="dk154_targets",
+    description="aas2rto",
     author="Aidan S",
     author_email="aidan.sedgewick@gmail.com",
     # url='',
     packages=find_packages(),
 )
 
-from dk154_targets.utils import init_sfd_dustmaps
+from aas2rto.utils import init_sfd_dustmaps
 
 init_sfd_dustmaps()
