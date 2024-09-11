@@ -24,7 +24,7 @@ except ModuleNotFoundError as e:
     fink_client = None
 
 if fink_client is not None:
-    from fink_client.avroUtils import write_alert, _get_alert_schema, AlertReader
+    from fink_client.avro_utils import write_alert, _get_alert_schema, AlertReader
     from fink_client.consumer import AlertConsumer
 
 from aas2rto import Target, TargetData
