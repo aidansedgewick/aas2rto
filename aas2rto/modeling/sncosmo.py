@@ -25,11 +25,11 @@ except ModuleNotFoundError as e:
 
 from dustmaps import sfd
 
-from dk154_targets.target import Target
-from dk154_targets.utils import check_unexpected_config_keys
+from aas2rto.target import Target
+from aas2rto.utils import check_unexpected_config_keys
 
 
-from dk154_targets import paths
+from aas2rto import paths
 
 logger = getLogger("sncosmo_model")
 

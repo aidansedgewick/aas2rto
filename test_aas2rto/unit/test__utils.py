@@ -6,8 +6,8 @@ import numpy as np
 
 from astropy.time import Time
 
-from dk154_targets.exc import UnexpectedKeysWarning, MissingKeysWarning
-from dk154_targets.utils import calc_file_age, check_config_keys, print_header
+from aas2rto.exc import UnexpectedKeysWarning, MissingKeysWarning
+from aas2rto.utils import calc_file_age, check_config_keys, print_header
 
 
 class Test__CalcFileAge:

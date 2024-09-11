@@ -1,4 +1,4 @@
-from dk154_targets import Target
+from aas2rto import Target
 
 
 class EmptyModel:
