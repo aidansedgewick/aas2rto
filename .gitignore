@@ -1,8 +1,10 @@
 # User added...
 archive/
+lsst_archive/
 projects/
 safe/
 *.csv
+*.fits
 *_aidan.yaml
 
 # Byte-compiled / optimized / DLL files
