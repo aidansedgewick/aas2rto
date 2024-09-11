@@ -14,6 +14,10 @@ class MissingDateError(Exception):
     pass
 
 
+class NotATargetError(Exception):
+    pass
+
+
 class UnknownObservatoryWarning(UserWarning):
     pass
 
@@ -27,4 +31,12 @@ class MissingKeysWarning(UserWarning):
 
 
 class MissingMediaWarning(UserWarning):
+    pass
+
+
+class SettingLightcurveDirectlyWarning(UserWarning):
+    pass
+
+
+class UnknownPhotometryTagWarning(UserWarning):
     pass

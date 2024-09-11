@@ -12,13 +12,17 @@ from astropy.time import Time
 
 from astroplan import FixedTarget, Observer
 
-from dk154_targets.exc import MissingDateError, UnknownObservatoryWarning
+from dk154_targets.exc import (
+    MissingDateError,
+    SettingLightcurveDirectlyWarning,
+    UnknownObservatoryWarning,
+)
 from dk154_targets.obs_info import ObservatoryInfo
 from dk154_targets.plotters.visibility_plotter import (
     VisibilityPlotter,
     plot_visibility,
 )
-from dk154_targets.target import SettingLightcurveDirectlyWarning, Target, TargetData
+from dk154_targets.target import Target, TargetData
 
 
 @pytest.fixture
