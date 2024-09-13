@@ -37,7 +37,34 @@ DEFAULT_ZTF_BROKER_PRIORITY = ("fink", "alerce", "lasair", "antares")
 
 class Target:
     """
-    TODO: docstring here!
+    The main class which holds information about a single (transient)
+    target/object/candidate.
+
+    Parameters
+    ----------
+    objectId: str
+        the main name your object should be called by.
+    ra: float
+        Right Ascension, in decimal degrees.
+    dec: float
+        Declination, in decimal degrees.
+    target_data: Dict[str, aas2rto.target_data.TargetData]
+        A lookup of data from various sources.
+        An entry for `fink` data, one for `atlas` data, one for `tns` data, etc...
+    alternative_ids: Dict [str, str]
+        Lookup to keep track of other names for this target.
+        eg. ZTF24abcdef might also be called SN 24abc.
+        So alternative_ids might be {'fink': 'ZTF24abcdef', 'tns': 'SN 24abc'}
+        It's useful to keep track of these to keep updating data
+        from other surveys.
+    base_score: float, default=1.0
+        The 'unmodified score'.
+    target_of_opportunity: bool, default=False
+        if target_of_opportunity, this target will never be removed from set of
+        unranked targets.
+        But - it might not appear in all ranked lists (due to eg. visibility criteria).
+    t_ref: astropy.time.Time, default=Time.now()
+        Recorded in target.creation_time.
     """
 
     def __init__(
@@ -46,6 +73,7 @@ class Target:
         ra: float,
         dec: float,
         target_data: Dict[str, TargetData] = None,
+        alternative_ids: Dict[str, str] = None,
         base_score: float = 1.0,
         target_of_opportunity: bool = False,
         t_ref: Time = None,
@@ -77,7 +105,8 @@ class Target:
         # Keep track of what's going on
         self.creation_time = t_ref
         self.target_of_opportunity = target_of_opportunity
-        self.alternative_objectIds = {}
+        self.alternative_ids = alternative_ids or {}
+        self.alternative_ids["target_id"] = objectId
         self.updated = False
         self.to_reject = False
         self.send_updates = False
@@ -87,7 +116,7 @@ class Target:
     def __str__(self):
         if self.ra is None or self.dec is None:
             return f"{self.objectId}: NO COORDINATES FOUND!"
-        return f"{self.objectId}: ra={self.ra:.5f} dec={self.dec:.5f}"
+        return f"{self.objectId}: ra={self.ra:.5f} dec={self.dec:+.5f}"
 
     def update_coordinates(self, ra: float, dec: float):
         self.ra = ra

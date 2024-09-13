@@ -8,7 +8,7 @@ import pandas as pd
 from astropy.table import Table, vstack
 from astropy.table import unique as unique_table
 
-from dk154_targets.exc import (
+from aas2rto.exc import (
     MissingDateError,
     SettingLightcurveDirectlyWarning,
     UnknownPhotometryTagWarning,
