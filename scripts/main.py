@@ -5,15 +5,15 @@ from pathlib import Path
 
 from astropy.time import Time
 
-from dk154_targets import TargetSelector
-from dk154_targets.modeling import empty_modeling, SncosmoSaltModeler
-from dk154_targets.plotters import plot_default_lightcurve, plot_sncosmo_lightcurve
-from dk154_targets.scoring import (
+from aas2rto import TargetSelector
+from aas2rto.modeling import empty_modeling, SncosmoSaltModeler
+from aas2rto.plotters import plot_default_lightcurve, plot_sncosmo_lightcurve
+from aas2rto.scoring import (
     example_functions,
     SupernovaPeakScore,
     KilonovaDiscReject,
 )
-from dk154_targets import paths
+from aas2rto import paths
 
 logger = logging.getLogger("main")
 

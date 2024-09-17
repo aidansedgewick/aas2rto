@@ -257,7 +257,7 @@ class FinkQueryManager(BaseQueryManager):
         "max_total_query_time": 300,  # Max time allowed in each query stage. [sec]
     }
     default_kafka_parameters = {"n_alerts": 10, "timeout": 10.0}
-    required_kafka_parameters = ("username", "group_id", "bootstrap.servers", "topics")
+    required_kafka_parameters = ("username", "group.id", "bootstrap.servers", "topics")
     alert_extra_keys = (
         # "timestamp", # doesn't exist anymore?!
         "cdsxmatch",
