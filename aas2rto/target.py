@@ -54,13 +54,14 @@ class Target:
     alternative_ids: Dict [str, str]
         Lookup to keep track of other names for this target.
         eg. ZTF24abcdef might also be called SN 24abc.
-        So alternative_ids might be {'fink': 'ZTF24abcdef', 'tns': 'SN 24abc'}
-        It's useful to keep track of these to keep updating data
-        from other surveys.
+        So alternative_ids might be: `{'fink': 'ZTF24abcdef', 'tns': 'SN 24abc'}`
+        It's useful to keep track of these to keep updating data from other surveys.
     base_score: float, default=1.0
         The 'unmodified score'.
+    data_source: str, default="unknown"
+        Which data are creating this target? eg. `Target(..., data_source='fink')`
     target_of_opportunity: bool, default=False
-        if target_of_opportunity, this target will never be removed from set of
+        If target_of_opportunity, this target will never be rejected/removed from set of
         unranked targets.
         But - it might not appear in all ranked lists (due to eg. visibility criteria).
     t_ref: astropy.time.Time, default=Time.now()
@@ -75,6 +76,7 @@ class Target:
         target_data: Dict[str, TargetData] = None,
         alternative_ids: Dict[str, str] = None,
         base_score: float = 1.0,
+        data_source: str = None,
         target_of_opportunity: bool = False,
         t_ref: Time = None,
     ):
@@ -102,11 +104,25 @@ class Target:
         self.reject_comments = {"no_observatory": []}
         self.rank_history = {"no_observatory": []}
 
+        # Is this source known by any other names?
+        self.alternative_ids = alternative_ids or {}
+        if data_source is None:
+            msg = "Target() should ideally provide string data_source=<src>"
+            logger.warning(msg)
+
+            ii = 1
+            data_source = f"unknown_{ii:03d}"
+            while data_source in self.alternative_ids:
+                ii = ii + 1
+                data_source = f"unknown_{ii:03d}"
+
+        if data_source in self.alternative_ids:
+            msg = f"{objectId}: data_source='{data_source}' already in alternative_ids"
+        self.alternative_ids[data_source] = objectId
+
         # Keep track of what's going on
         self.creation_time = t_ref
         self.target_of_opportunity = target_of_opportunity
-        self.alternative_ids = alternative_ids or {}
-        self.alternative_ids["target_id"] = objectId
         self.updated = False
         self.to_reject = False
         self.send_updates = False

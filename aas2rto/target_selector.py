@@ -31,6 +31,7 @@ from aas2rto.obs_info import ObservatoryInfo
 from aas2rto.plotters import plot_default_lightcurve, plot_visibility
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
 from aas2rto.target import Target
+from aas2rto.target_lookup import TargetLookup
 
 from aas2rto import paths
 
@@ -111,7 +112,7 @@ class TargetSelector:
         self.paths_config = self.selector_config.get("paths", {})
 
         # to keep the targets. Do this here as initQM needs to know about it.
-        self.target_lookup = self._create_empty_target_lookup()
+        self.target_lookup = TargetLookup()  # self._create_empty_target_lookup()
 
         self.ranked_lists = {}
 
@@ -148,10 +149,6 @@ class TargetSelector:
             selector_config = yaml.load(f, Loader=yaml.FullLoader)
         selector = cls(selector_config, create_paths=create_paths)
         return selector
-
-    def _create_empty_target_lookup(self) -> Dict[str, Target]:
-        """Returns an empty dictionary. Only for type hinting."""
-        return dict()
 
     def process_paths(self, create_paths=True):
         base_path = self.paths_config.pop("base_path", "default")
@@ -440,10 +437,10 @@ class TargetSelector:
 
         Parameters
         ----------
-        lightcurve_compiler [Callable]
+        lightcurve_compiler : Callable, optional
             your function that builds a convenient single lightcurve.
-            see aas2rto.lightcurve_compilers.DefaultLigthcurveCompiler for example.
-        t_ref [`astropy.time.Time`]
+            see `aas2rto.lightcurve_compilers.DefaultLigthcurveCompiler` for example.
+        t_ref : astropy.time.Time, optional
         """
         t_ref = t_ref or Time.now()
 
@@ -478,6 +475,16 @@ class TargetSelector:
         return compiled, failed
 
     def perform_query_manager_tasks(self, t_ref: Time = None):
+        """
+        for each of the query managers `qm` in target_selector.query_managers,
+        call the method `qm.perform_all_tasks(t_ref=t_ref)`
+
+        Parameters
+        ----------
+        t_ref : astropy.time.Time, default=Time.now()
+            used in the perform_all_tasks() call.
+        """
+
         t_ref = t_ref or Time.now()
 
         logger.info("begin query manager tasks")

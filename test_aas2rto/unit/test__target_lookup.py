@@ -1,8 +1,14 @@
 import pytest
 
+import numpy as np
+
+from astropy import units as u
+from astropy.time import Time
+
 from aas2rto.exc import NotATargetError
 from aas2rto.target import Target
-from aas2rto.target_lookup import TargetLookup
+from aas2rto.target_data import TargetData
+from aas2rto.target_lookup import TargetLookup, merge_targets
 
 
 @pytest.fixture
@@ -13,7 +19,9 @@ def mock_target():
 @pytest.fixture
 def mock_target_alt_ids():
     alt_names = {"tns": "SN2001A"}
-    return Target("ZTF01def", 60.0, -30.0, alternative_ids=alt_names)
+    return Target(
+        "ZTF01def", 60.0, -30.0, alternative_ids=alt_names, data_source="src01"
+    )
 
 
 @pytest.fixture
@@ -32,6 +40,41 @@ def target_lookup_two_targets(mock_target, mock_target_alt_ids):
     tl[t1.objectId] = t1
     tl[t2.objectId] = t2
     return tl
+
+
+class Test__MergeTargets:
+    def test__two_targets_sort_true(self):
+        t_ref01 = Time(60000.0, format="mjd")
+        t_ref02 = Time(60010.0, format="mjd")
+        t1_alt_ids = {"alt01": "SN00"}
+        t2_alt_ids = {"alt02": "TR_AAA"}
+
+        t1 = Target(
+            "T001",
+            ra=45.0,
+            dec=30.0,
+            alternative_ids=t1_alt_ids,
+            data_source="src01",
+            t_ref=t_ref01,
+        )
+        t2 = Target(
+            "T002",
+            ra=30.0,
+            dec=16.0,
+            alternative_ids=t2_alt_ids,
+            data_source="src02",
+            t_ref=t_ref02,
+        )
+
+        output = merge_targets([t2, t1], sort=True)
+
+        assert np.isclose(output.ra, 45.0)  # ie, keep coords from the first one.
+        assert np.isclose(output.dec, 30.0)
+
+        assert output.objectId == "T001"
+
+        assert output.alternative_ids["src01"] == "T001"
+        assert output.alternative_ids["src02"] == "T002"
 
 
 class Test__TargetLookupInit:
@@ -88,7 +131,7 @@ class Test__DunderGetSet:
         assert tlookup.id_mapping["ZTF01def"] == "ZTF01def"
         assert tlookup.id_mapping["SN2001A"] == "ZTF01def"
 
-    def test__dunder_set_fails_on_not_target(self):
+    def test__dunder_set_fails_on_not_target_cls(self):
         tlookup = TargetLookup()
 
         with pytest.raises(NotATargetError):
@@ -161,15 +204,18 @@ class Test__PopMethod:
         tlookup = target_lookup_two_targets
         assert len(tlookup) == 2
 
+        assert "ZTF00abc" in tlookup
         assert "ZTF01def" in tlookup
+        assert set(tlookup.lookup.keys()) == set(["ZTF00abc", "ZTF01def"])
         assert "SN2001A" in tlookup
 
         removed = tlookup.pop("ZTF01def")
+        assert removed.objectId == "ZTF01def"
+
         assert len(tlookup) == 1
+        assert "ZTF01def" not in tlookup.lookup
         assert "ZTF01def" not in tlookup
         assert "SN2001A" not in tlookup
-
-        assert removed.objectId == "ZTF01def"
 
     def test__pop_with_alt_id(sef, target_lookup_two_targets: TargetLookup):
         tlookup = target_lookup_two_targets
@@ -187,7 +233,9 @@ class Test__AddTarget:
     def test__add_target(self):
 
         alt_ids = {"datasrc": "02xyz", "othersrc": "AT_001"}
-        new_targ = Target("ZTF02ijk", 45.0, -45.0, alternative_ids=alt_ids)
+        new_targ = Target(
+            "ZTF02ijk", 45.0, -45.0, data_source="blah", alternative_ids=alt_ids
+        )
 
         tlookup = TargetLookup()
 
@@ -200,3 +248,113 @@ class Test__AddTarget:
 
         assert "datasrc" not in tlookup
         assert "othersrc" not in tlookup
+
+
+class Test__ConsolidateTargets:
+
+    def test__simple(self):
+
+        tl = TargetLookup()
+        t1 = Target("T101", 45.0, 0.0, data_source="src01")
+        t2 = Target("AAAA", 45.0, 0.0, data_source="src02")
+
+        tl.add_target(t1)
+        tl.add_target(t2)
+
+        assert tl.id_mapping["T101"] == "T101"
+        assert tl.id_mapping["AAAA"] == "AAAA"
+
+        tl.consolidate_targets()
+
+        assert len(tl) == 1
+        assert len(tl.id_mapping) == 2
+        assert tl["AAAA"].objectId == "T101"
+
+        assert "AAAA" not in tl.lookup
+
+        assert tl.id_mapping["T101"] == "T101"
+        assert tl.id_mapping["AAAA"] == "T101"
+
+    def test__not_close_not_grouped(self):
+
+        tl = TargetLookup()
+
+        t1 = Target("T101", 45.0, 0.0)
+        t2 = Target("T102", 45.0, 2.0)
+
+        tl.add_target(t1)
+        tl.add_target(t2)
+
+        tl.consolidate_targets(seplimit=1 * u.deg)
+
+        assert len(tl) == 2
+
+    def test__incomplete_graph_still_merge(self):
+        """T1-T2-T3 : if T1 and T2 are 'close', and T2 and T3 are 'close',
+        all three should merge even if T1 and T3 are not 'close'"""
+
+        tl = TargetLookup()
+
+        t1 = Target("T101", 44.3, 0.0, data_source="A")
+        t2 = Target("T102", 45.0, 0.0, data_source="B")
+        t3 = Target("T103", 45.7, 0.0, data_source="C")
+
+        tl.add_target(t1)
+        tl.add_target(t2)
+        tl.add_target(t3)
+
+        assert t1.coord.separation(t3.coord) > 1 * u.deg
+        assert len(tl) == 3
+
+        tl.consolidate_targets(seplimit=1 * u.deg)
+
+        assert len(tl) == 1
+
+        assert set(tl["T101"].alternative_ids.values()) == set("T101 T102 T103".split())
+
+    def test__complex_merge(self):
+
+        tl = TargetLookup()
+
+        # group 1
+        t1 = Target("T101", 45.0, 60.0, data_source="src01")
+        t2 = Target("SN001", 45.1, 60.1, data_source="src02")  # mod ra/dec
+        t3 = Target("OBJ_001", 44.9, 59.9, data_source="src03")
+
+        # add some data to check that it's overwritten
+        t1_data = t1.get_target_data("ztf")
+        t1_data.meta["parameter"] = 100
+        t3_data = t3.get_target_data("ztf")
+        t3_data.meta["parameter"] = 10
+
+        # group 2
+        t4 = Target("T102", 90.0, 15.0, data_source="src01")
+        t5 = Target("OBJ_002", 90.1, 15.1, data_source="src03")
+
+        # group 3
+        t6 = Target("T103", 180.0, 30.0, data_source="src01")
+
+        for target in [t1, t2, t3, t4, t5, t6]:
+            tl.add_target(target)
+
+        tl.consolidate_targets(seplimit=1 * u.deg, warn_overwrite=False)
+
+        assert len(tl) == 3
+        assert set(tl.keys()) == set("T101 T102 T103".split())
+        assert len(tl.id_mapping) == 6
+        assert set(tl.id_mapping.keys()) == set(
+            "T101 SN001 OBJ_001 T102 OBJ_002 T103".split()
+        )
+
+        assert set(tl["T101"].alternative_ids.keys()) == set(
+            "src01 src02 src03".split()
+        )
+        assert tl["SN001"].objectId == "T101"
+        assert tl["OBJ_001"].objectId == "T101"
+        assert tl.id_mapping["T101"] == "T101"
+        assert tl.id_mapping["SN001"] == "T101"
+        assert tl.id_mapping["OBJ_001"] == "T101"
+
+        assert tl["T101"].target_data["ztf"].meta["parameter"] == 10  # overwritten!
+
+        assert set(tl["T102"].alternative_ids.keys()) == set("src01 src03".split())

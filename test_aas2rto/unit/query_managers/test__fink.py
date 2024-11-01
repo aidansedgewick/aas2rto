@@ -124,7 +124,7 @@ def fink_updated_query_results(fink_updated_query_rows):
 def kafka_config():
     return {
         "username": "test_user",
-        "group_id": "test_group",
+        "group.id": "test_group",
         "bootstrap.servers": "123.456.789.01",
         "topics": ["test_alert_stream"],
     }
@@ -238,9 +238,9 @@ def create_mock_consumer(alerts):
 @pytest.fixture
 def target_list():
     return [
-        Target("ZTF00abc", ra=30.0, dec=45.0),
-        Target("ZTF01ijk", ra=45.0, dec=45.0),
-        Target("ZTF02xyz", ra=60.0, dec=45.0),
+        Target("ZTF00abc", ra=30.0, dec=45.0, data_source="fink"),
+        Target("ZTF01ijk", ra=45.0, dec=45.0, data_source="fink"),
+        Target("ZTF02xyz", ra=60.0, dec=45.0, data_source="fink"),
     ]
 
 
@@ -298,7 +298,12 @@ class Test__TargetFromFinkAlert:
         result = target_from_fink_alert(fink_alert)
         assert isinstance(result, Target)
         assert result.objectId == "ZTF00abc"
+
+        assert set(result.alternative_ids.keys()) == set(["fink"])
+        assert result.alternative_ids["fink"] == "ZTF00abc"
+
         assert isinstance(result.coord, SkyCoord)
+
         assert np.isclose(result.ra, 30.0)
         assert np.isclose(result.dec, 45.0)
 
@@ -331,6 +336,9 @@ class Test__TargetFromFinkLightcurve:
         assert result.objectId == "ZTF00abc"
         assert np.isclose(result.ra, 30.0)
         assert np.isclose(result.dec, 45.0)
+
+        assert set(result.alternative_ids.keys()) == set(["fink"])
+        assert result.alternative_ids["fink"] == "ZTF00abc"
 
         assert isinstance(result.coord, SkyCoord)
 
@@ -463,6 +471,9 @@ class Test__TargetFromFinkQueryRow:
         assert np.isclose(result.ra, 30.0)
         assert np.isclose(result.dec, 45.0)
 
+        assert set(result.alternative_ids.keys()) == set(["fink"])
+        assert result.alternative_ids["fink"] == "ZTF00abc"
+
     def test__missing_coordinate_error(self, fink_query_results):
         processed_results = process_fink_query_results(fink_query_results)
         processed_results.drop("ra", axis=1, inplace=True)
@@ -484,7 +495,7 @@ class Test__FinkQueryManagerInit:
         assert isinstance(qm.kafka_config, dict)
         expected_kws = [
             "username",
-            "group_id",
+            "group.id",
             "bootstrap.servers",
             "topics",
             "n_alerts",
@@ -526,7 +537,7 @@ class Test__FinkQueryManagerInit:
         bad_kafka_config = copy.deepcopy(kafka_config)
         _ = bad_kafka_config.pop("username")
         assert set(bad_kafka_config.keys()) == set(
-            ["group_id", "bootstrap.servers", "topics"]
+            ["group.id", "bootstrap.servers", "topics"]
         )
         config = {"kafka_config": bad_kafka_config}
         with pytest.warns(MissingKeysWarning):
@@ -536,7 +547,7 @@ class Test__FinkQueryManagerInit:
                 )
 
         bad_kafka_config = copy.deepcopy(kafka_config)
-        _ = bad_kafka_config.pop("group_id")
+        _ = bad_kafka_config.pop("group.id")
         assert set(bad_kafka_config.keys()) == set(
             ["username", "bootstrap.servers", "topics"]
         )
@@ -549,7 +560,7 @@ class Test__FinkQueryManagerInit:
 
         bad_kafka_config = copy.deepcopy(kafka_config)
         _ = bad_kafka_config.pop("bootstrap.servers")
-        assert set(bad_kafka_config.keys()) == set(["username", "group_id", "topics"])
+        assert set(bad_kafka_config.keys()) == set(["username", "group.id", "topics"])
         config = {"kafka_config": bad_kafka_config}
         with pytest.warns(MissingKeysWarning):
             with pytest.raises(BadKafkaConfigError):
@@ -560,7 +571,7 @@ class Test__FinkQueryManagerInit:
         bad_kafka_config = copy.deepcopy(kafka_config)
         _ = bad_kafka_config.pop("topics")
         assert set(bad_kafka_config.keys()) == set(
-            ["username", "group_id", "bootstrap.servers"]
+            ["username", "group.id", "bootstrap.servers"]
         )
         config = {"kafka_config": bad_kafka_config}
         with pytest.warns(MissingKeysWarning):

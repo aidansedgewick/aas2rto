@@ -23,6 +23,7 @@ from aas2rto.exc import (
 )
 from aas2rto.target import Target, TargetData, UnknownObservatoryWarning
 from aas2rto.target_selector import TargetSelector
+from aas2rto.target_lookup import TargetLookup
 
 
 @pytest.fixture
@@ -95,12 +96,12 @@ def selector(selector_config):
 @pytest.fixture
 def target_list() -> List[Target]:
     return [
-        Target("T101", ra=15.0, dec=30.0),
-        Target("T102", ra=30.0, dec=30.0),
-        Target("T103", ra=45.0, dec=30.0),
-        Target("T104", ra=60.0, dec=30.0),
-        Target("T105", ra=75.0, dec=30.0),
-        Target("T106", ra=90.0, dec=30.0),
+        Target("T101", ra=15.0, dec=30.0, data_source="blah"),
+        Target("T102", ra=30.0, dec=30.0, data_source="blah"),
+        Target("T103", ra=45.0, dec=30.0, data_source="blah"),
+        Target("T104", ra=60.0, dec=30.0, data_source="blah"),
+        Target("T105", ra=75.0, dec=30.0, data_source="blah"),
+        Target("T106", ra=90.0, dec=30.0, data_source="blah"),
     ]
 
 
@@ -145,10 +146,10 @@ def selector_with_targets(selector_config, observatories_config, target_list, mo
 @pytest.fixture
 def extra_targets(mock_lc):
     target_list = [
-        Target("T107", ra=105.0, dec=45.0),
-        Target("T108", ra=120.0, dec=45.0),
-        Target("T109", ra=135.0, dec=45.0),
-        Target("T110", ra=150.0, dec=45.0),
+        Target("T107", ra=105.0, dec=45.0, data_source="blah"),
+        Target("T108", ra=120.0, dec=45.0, data_source="blah"),
+        Target("T109", ra=135.0, dec=45.0, data_source="blah"),
+        Target("T110", ra=150.0, dec=45.0, data_source="blah"),
     ]
     for ii, target in enumerate(target_list):
         lc = mock_lc.copy()
@@ -216,8 +217,8 @@ class Test__SelectorInit:
         assert isinstance(selector.messengers_config, dict)
         assert isinstance(selector.paths_config, dict)
 
-        assert isinstance(selector.target_lookup, dict)
-        assert set(selector.target_lookup) == set()
+        assert isinstance(selector.target_lookup, TargetLookup)
+        assert set(selector.target_lookup.keys()) == set()
 
         assert isinstance(selector.paths, dict)
         expected_path_keys = [
@@ -454,7 +455,7 @@ class Test__TargetsOfOpportunity:
     def test__skip_existing_targets(self, selector: TargetSelector):
         t_ref = Time(60000.0, format="mjd")
 
-        T101_in = Target("T101", ra=45.0, dec=30.0)
+        T101_in = Target("T101", ra=45.0, dec=30.0, data_source="blah")
         assert T101_in.target_of_opportunity is False
         assert np.isclose(T101_in.base_score, 1.0)
         selector.add_target(T101_in)
@@ -700,7 +701,7 @@ class Test__EvaluateTargets:
         T101 = selector.target_lookup["T101"]
 
         with pytest.raises(ValueError):
-            tt = Target("tt", ra=180.0, dec=0.0)
+            tt = Target("tt", ra=180.0, dec=0.0, data_source="blah")
             scoring_will_raise_error(tt, t_ref=t_ref)
 
         selector._evaluate_target_science_score(
@@ -1295,7 +1296,7 @@ class Test__ResettingTasks:
         assert selector.target_lookup["T101"].send_updates is False
         assert len(selector.target_lookup["T101"].update_messages) == 0
 
-    def test__clear_output_plots(self, selector_with_targets):
+    def test__clear_output_plots(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
 
         no_obs_figs_path = selector.get_output_plots_path("no_observatory")

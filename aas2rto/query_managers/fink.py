@@ -129,7 +129,7 @@ def target_from_fink_alert(alert: dict, t_ref: Time = None) -> Target:
     dec = alert.get("dec", None)
     if (ra is None) or (dec is None):
         raise MissingCoordinatesError(f"one of (ra, dec)=({ra}, {dec}) is None")
-    return Target(objectId, ra=ra, dec=dec, t_ref=t_ref)
+    return Target(objectId, ra=ra, dec=dec, t_ref=t_ref, data_source="fink")
 
 
 def target_from_fink_lightcurve(lightcurve: pd.DataFrame, t_ref: Time = None) -> Target:
@@ -155,7 +155,7 @@ def target_from_fink_lightcurve(lightcurve: pd.DataFrame, t_ref: Time = None) ->
         raise MissingCoordinatesError(f"missing ra/dec from {lightcurve.columns}")
 
     fink_data = TargetData(lightcurve=lightcurve)
-    target = Target(objectId, ra=ra, dec=dec)
+    target = Target(objectId, ra=ra, dec=dec, data_source="fink")
     target.target_data["fink"] = fink_data
     target.updated = True
     return target
@@ -241,7 +241,7 @@ def target_from_fink_query_row(data: pd.Series, t_ref: Time = None):
     dec = data.get("dec", None)
     if (ra is None) or (dec is None):
         raise MissingCoordinatesError(f"one of (ra, dec)=({ra}, {dec}) is None")
-    return Target(objectId, ra=ra, dec=dec, t_ref=t_ref)
+    return Target(objectId, ra=ra, dec=dec, data_source="fink", t_ref=t_ref)
 
 
 class FinkQueryManager(BaseQueryManager):
@@ -354,7 +354,10 @@ class FinkQueryManager(BaseQueryManager):
             return None
 
         new_alerts = []
-        for topic in self.kafka_config["topics"]:
+        kafka_topics = self.kafka_config["topics"]
+        if kafka_topics is None:
+            return new_alerts
+        for topic in kafka_topics:
             with AlertConsumer([topic], self.kafka_config) as consumer:
                 # TODO: change from `poll` to `consume`?
                 for ii in range(self.kafka_config["n_alerts"]):
@@ -567,6 +570,8 @@ class FinkQueryManager(BaseQueryManager):
 
         to_update = []
         for objectId, target in self.target_lookup.items():
+            fink_id = target.alternative_ids.get("fink", objectId)
+
             lightcurve_filepath = self.get_lightcurve_file(objectId)
             lightcurve_file_age = calc_file_age(
                 lightcurve_filepath, t_ref, allow_missing=True

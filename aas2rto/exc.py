@@ -24,6 +24,10 @@ class NotATargetError(Exception):
 # Warnings
 
 
+class DuplicateDataWarning(UserWarning):
+    pass
+
+
 class MissingKeysWarning(UserWarning):
     pass
 

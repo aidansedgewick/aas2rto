@@ -105,17 +105,17 @@ def mock_query_response_01(mock_query_results_01):
 @pytest.fixture
 def target_list():
     return [
-        Target(f"T101", ra=10.0, dec=30.0),
-        Target(f"T102", ra=20.0, dec=30.0),
-        Target(f"T103", ra=30.0, dec=30.0),
-        Target(f"T104", ra=40.0, dec=30.0),
-        Target(f"T105", ra=50.0, dec=30.0),
-        Target(f"T106", ra=60.0, dec=30.0),
-        Target(f"T107", ra=70.0, dec=30.0),
-        Target(f"T108", ra=80.0, dec=30.0),
-        Target(f"T109", ra=90.0, dec=30.0),
-        Target(f"T110", ra=100.0, dec=30.0),
-        Target(f"T111", ra=110.0, dec=30.0),
+        Target(f"T101", ra=10.0, dec=30.0, data_source="blah"),
+        Target(f"T102", ra=20.0, dec=30.0, data_source="blah"),
+        Target(f"T103", ra=30.0, dec=30.0, data_source="blah"),
+        Target(f"T104", ra=40.0, dec=30.0, data_source="blah"),
+        Target(f"T105", ra=50.0, dec=30.0, data_source="blah"),
+        Target(f"T106", ra=60.0, dec=30.0, data_source="blah"),
+        Target(f"T107", ra=70.0, dec=30.0, data_source="blah"),
+        Target(f"T108", ra=80.0, dec=30.0, data_source="blah"),
+        Target(f"T109", ra=90.0, dec=30.0, data_source="blah"),
+        Target(f"T110", ra=100.0, dec=30.0, data_source="blah"),
+        Target(f"T111", ra=110.0, dec=30.0, data_source="blah"),
     ]
 
 
