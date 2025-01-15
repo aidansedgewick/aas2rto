@@ -72,9 +72,9 @@ def new_qm(config, target_lookup):
 @pytest.fixture
 def target_list():
     return [
-        Target("T001", ra=45.0, dec=60.0, data_source="blah"),
-        Target("T002", ra=60.0, dec=60.0, data_source="blah"),
-        Target("T003", ra=75.0, dec=60.0, data_source="blah"),
+        Target("T001", ra=45.0, dec=60.0),
+        Target("T002", ra=60.0, dec=60.0),
+        Target("T003", ra=75.0, dec=60.0),
     ]
 
 

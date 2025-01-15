@@ -92,7 +92,10 @@ def target_from_lasair_lightcurve(
         raise MissingCoordinatesError(f"missing ra/dec from {lightcurve.columns}")
 
     lasair_data = TargetData(lightcurve=lightcurve)
-    target = Target(objectId, ra=ra, dec=dec)
+    alt_ids = {"ztf": objectId}
+    target = Target(
+        objectId, ra=ra, dec=dec, source="lasair", alt_ids=alt_ids, t_ref=t_ref
+    )
     target.target_data["lasair"] = lasair_data
     return target
 
@@ -116,7 +119,10 @@ def target_from_lasair_alert(alert: Dict, t_ref: Time = None):
             f"    alert has keys {alert.keys()}.\n"
             f"    Can you updated the LASAIR filter?"
         )
-    return Target(objectId, ra=ra, dec=dec, t_ref=t_ref)
+    alt_ids = {"ztf": objectId}
+    return Target(
+        objectId, ra=ra, dec=dec, source="lasair", alt_ids=alt_ids, t_ref=t_ref
+    )
 
 
 def _get_alert_timestamp(alert: dict, t_ref: Time = None):

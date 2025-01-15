@@ -73,7 +73,6 @@ class DefaultObservatoryScoring:
 
         # to keep track
         scoring_comments = []
-        reject_comments = []
         factors = {}
         # reject = False  # Observatory factors should NOT reject targets.
         exclude = False  # If true, don't reject, but not interesting right now.
@@ -171,4 +170,4 @@ class DefaultObservatoryScoring:
 
         if exclude:
             score = -1.0
-        return score, scoring_comments, reject_comments
+        return score, scoring_comments

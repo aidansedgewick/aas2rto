@@ -96,12 +96,12 @@ def selector(selector_config):
 @pytest.fixture
 def target_list() -> List[Target]:
     return [
-        Target("T101", ra=15.0, dec=30.0, data_source="blah"),
-        Target("T102", ra=30.0, dec=30.0, data_source="blah"),
-        Target("T103", ra=45.0, dec=30.0, data_source="blah"),
-        Target("T104", ra=60.0, dec=30.0, data_source="blah"),
-        Target("T105", ra=75.0, dec=30.0, data_source="blah"),
-        Target("T106", ra=90.0, dec=30.0, data_source="blah"),
+        Target("T101", ra=15.0, dec=30.0),
+        Target("T102", ra=30.0, dec=30.0),
+        Target("T103", ra=45.0, dec=30.0),
+        Target("T104", ra=60.0, dec=30.0),
+        Target("T105", ra=75.0, dec=30.0),
+        Target("T106", ra=90.0, dec=30.0),
     ]
 
 
@@ -146,10 +146,10 @@ def selector_with_targets(selector_config, observatories_config, target_list, mo
 @pytest.fixture
 def extra_targets(mock_lc):
     target_list = [
-        Target("T107", ra=105.0, dec=45.0, data_source="blah"),
-        Target("T108", ra=120.0, dec=45.0, data_source="blah"),
-        Target("T109", ra=135.0, dec=45.0, data_source="blah"),
-        Target("T110", ra=150.0, dec=45.0, data_source="blah"),
+        Target("T107", ra=105.0, dec=45.0),
+        Target("T108", ra=120.0, dec=45.0),
+        Target("T109", ra=135.0, dec=45.0),
+        Target("T110", ra=150.0, dec=45.0),
     ]
     for ii, target in enumerate(target_list):
         lc = mock_lc.copy()
@@ -455,7 +455,7 @@ class Test__TargetsOfOpportunity:
     def test__skip_existing_targets(self, selector: TargetSelector):
         t_ref = Time(60000.0, format="mjd")
 
-        T101_in = Target("T101", ra=45.0, dec=30.0, data_source="blah")
+        T101_in = Target("T101", ra=45.0, dec=30.0)
         assert T101_in.target_of_opportunity is False
         assert np.isclose(T101_in.base_score, 1.0)
         selector.add_target(T101_in)
@@ -547,10 +547,10 @@ def basic_scoring(target: Target, t_ref: Time):
     exclude = False
 
     detections = target.target_data["ztf"].detections
-    # Last row be:  T101  T102  T103  T104  T105  T106  T107  T108  T109  T110
-    #         mag:  18.0  18.2  18.4  18.6  18.8  19.0  19.2  19.4  19.6  19.8
-    #         mjd: 60003 60005 60007 60009 60011 60013
-    # and  factor:   2.0   1.8   1.6   1.4   1.2   1.0   0.8   0.6   0.4   0.2
+    # for each T:  T101  T102  T103  T104  T105  T106  T107  T108  T109  T110
+    #   last mag:  18.0  18.2  18.4  18.6  18.8  19.0  19.2  19.4  19.6  19.8
+    #   last mjd: 60003 60005 60007 60009 60011 60013
+    # and factor:   2.0   1.8   1.6   1.4   1.2   1.0   0.8   0.6   0.4   0.2
 
     last_mag = detections["mag"].iloc[-1]
     mag_factor = 20 - last_mag
@@ -558,15 +558,12 @@ def basic_scoring(target: Target, t_ref: Time):
     comms.append(f"mag_factor={mag_factor:.1f}")
 
     if last_mag > 19.5:
-        exclude = True
+        exclude = True  # excludes T109 T110
 
     delta_t = t_ref.mjd - detections["mjd"].iloc[-1]
     if delta_t > 20.0:
-        print(target.objectId, delta_t)
-        rej_comms.append(f"target {target.objectId} is old")
-        reject = True
-
-    print(comms, rej_comms)
+        rej_comms.append(f"REJECT: target {target.objectId} is old")
+        reject = True  # @mjd=600
 
     score = target.base_score * np.prod(factors)
     if exclude:
@@ -574,22 +571,28 @@ def basic_scoring(target: Target, t_ref: Time):
     if reject:
         score = -np.inf
 
-    return score, comms, rej_comms
+    comms.extend(rej_comms)
+
+    return score, comms
 
 
 def basic_scoring_no_comms(target: Target, t_ref: Time):
-    score, _, _ = basic_scoring(target, t_ref=t_ref)
+    score, _ = basic_scoring(target, t_ref=t_ref)
     return score
 
 
 def basic_obs_scoring(target, observatory, t_ref):
     obs_name = observatory.name
     comms = [f"obs_factor=0.5 fixed ({obs_name})"]
-    return 0.5, comms, []
+    return 0.5, comms
 
 
 def scoring_will_raise_error(target: Target, t_ref: Time):
     raise ValueError()
+
+
+def scoring_bad_return(target: Target, t_ref: Time):
+    return 10.0, ["some_comments"], "extra_junk"
 
 
 class ScoringClass:
@@ -599,8 +602,8 @@ class ScoringClass:
         self.multiplier = multiplier
 
     def __call__(self, target: Target, t_ref: Time):
-        score, comms, rej_comms = basic_scoring(target, t_ref)
-        return score * self.multiplier, comms, rej_comms
+        score, comms = basic_scoring(target, t_ref)
+        return score * self.multiplier, comms
 
 
 class ScoringClassNoName:
@@ -620,12 +623,11 @@ class Test__EvaluateTargets:
         assert set(T101.score_history.keys()) == set(["no_observatory"])
         assert len(T101.score_history["no_observatory"]) == 0  # There are no scores
 
-        score, comms, rej_comms = selector._evaluate_target_science_score(
+        score, comms = selector._evaluate_target_science_score(
             basic_scoring, T101, t_ref=t_ref
         )
         assert np.isclose(score, 2.00)
         assert set(comms) == set(["mag_factor=2.0"])
-        assert set(rej_comms) == set()
 
         assert (
             len(T101.score_history["no_observatory"]) == 0
@@ -641,12 +643,13 @@ class Test__EvaluateTargets:
         assert set(T101.score_history.keys()) == set(["no_observatory"])
         assert len(T101.score_history["no_observatory"]) == 0  # There are no scores
 
-        score, comms, rej_comms = selector._evaluate_target_science_score(
+        score, comms = selector._evaluate_target_science_score(
             basic_scoring_no_comms, T101, t_ref=t_ref
         )
         assert np.isclose(score, 2.00)  # The same as before...
-        assert set(comms) == set(["no score_comments provided"])
-        assert set(rej_comms) == set(["no reject_comments provided"])
+        assert len(comms) == 1
+        assert "no score_comments provided" in comms[0]
+        # assert set(rej_comms) == set(["no reject_comments provided"])
         assert len(T101.score_history["no_observatory"]) == 0
 
     def test__wrapper_eval_obs_score(self, selector_with_targets: TargetSelector):
@@ -701,7 +704,7 @@ class Test__EvaluateTargets:
         T101 = selector.target_lookup["T101"]
 
         with pytest.raises(ValueError):
-            tt = Target("tt", ra=180.0, dec=0.0, data_source="blah")
+            tt = Target("tt", ra=180.0, dec=0.0)
             scoring_will_raise_error(tt, t_ref=t_ref)
 
         selector._evaluate_target_science_score(
@@ -824,8 +827,8 @@ class Test__EvaluateTargets:
         )
 
     def test__remove_rejected_targets(self, selector_with_targets: TargetSelector):
-        selector = selector_with_targets
-        t_lookup = selector.target_lookup
+        selector = selector_with_targets  # rename for ease
+        t_lookup = selector.target_lookup  # rename for ease
 
         t1 = Time(60026.0, format="mjd")  # should remove T101, T102
         selector.evaluate_targets(basic_scoring, t_ref=t1)

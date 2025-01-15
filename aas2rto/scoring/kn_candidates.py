@@ -34,7 +34,6 @@ class KilonovaDiscReject:
         exclude = False
         factors = []
         scoring_comments = []
-        reject_comments = []
 
         gal_target = target.coord.galactic
 
@@ -42,15 +41,15 @@ class KilonovaDiscReject:
         if bulge_sep.deg < self.min_bulge_sep:
             reject = True
             coord_string = f"(l,b)=({gal_target.l.deg:.1f},{gal_target.b.deg:.2f})"
-            reject_comments.append(
-                f"{coord_string} < {self.min_bulge_sep:.1f} from MW center"
+            scoring_comments.append(
+                f"REJECT: {coord_string} < {self.min_bulge_sep:.1f} from MW center"
             )
 
         if abs(gal_target.b.deg) < self.min_b:
             reject = True
             coord_ineq = f"abs(b)={gal_target.b.deg:.2f}"
-            reject_comments.append(
-                f"{coord_ineq} < {self.min_b:.2f}, too close to MW disc"
+            scoring_comments.append(
+                f"REJECT: {coord_ineq} < {self.min_b:.2f}, too close to MW disc"
             )
 
         ztf_data = None
@@ -78,10 +77,10 @@ class KilonovaDiscReject:
             scoring_comments.append(flux_comment)
 
             timespan = t_ref.jd - ztf_data.detections["jd"].min()
-            timespan_comment = f"{timespan:.1f}d since first detection"
+            tspan_comm = f"{timespan:.1f}d since first detection"
             if timespan > self.max_timespan:
                 reject = True
-                reject_comments.append(f"{timespan_comment} > {self.max_timespan}")
+                scoring_comments.append(f"REJECT: {tspan_comm} > {self.max_timespan}")
 
         score = target.base_score * np.prod(factors)
         if exclude:
@@ -89,4 +88,4 @@ class KilonovaDiscReject:
         if reject:
             score = -np.inf
 
-        return score, scoring_comments, reject_comments
+        return score, scoring_comments

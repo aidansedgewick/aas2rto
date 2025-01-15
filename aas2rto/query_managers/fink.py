@@ -129,7 +129,8 @@ def target_from_fink_alert(alert: dict, t_ref: Time = None) -> Target:
     dec = alert.get("dec", None)
     if (ra is None) or (dec is None):
         raise MissingCoordinatesError(f"one of (ra, dec)=({ra}, {dec}) is None")
-    return Target(objectId, ra=ra, dec=dec, t_ref=t_ref, data_source="fink")
+    alt_ids = {"ztf": objectId}
+    return Target(objectId, ra=ra, dec=dec, source="fink", alt_ids=alt_ids, t_ref=t_ref)
 
 
 def target_from_fink_lightcurve(lightcurve: pd.DataFrame, t_ref: Time = None) -> Target:
@@ -155,7 +156,10 @@ def target_from_fink_lightcurve(lightcurve: pd.DataFrame, t_ref: Time = None) ->
         raise MissingCoordinatesError(f"missing ra/dec from {lightcurve.columns}")
 
     fink_data = TargetData(lightcurve=lightcurve)
-    target = Target(objectId, ra=ra, dec=dec, data_source="fink")
+    alt_ids = {"ztf": objectId}
+    target = Target(
+        objectId, ra=ra, dec=dec, source="fink", alt_ids=alt_ids, t_ref=t_ref
+    )
     target.target_data["fink"] = fink_data
     target.updated = True
     return target
@@ -241,7 +245,8 @@ def target_from_fink_query_row(data: pd.Series, t_ref: Time = None):
     dec = data.get("dec", None)
     if (ra is None) or (dec is None):
         raise MissingCoordinatesError(f"one of (ra, dec)=({ra}, {dec}) is None")
-    return Target(objectId, ra=ra, dec=dec, data_source="fink", t_ref=t_ref)
+    alt_ids = {"ztf": objectId}
+    return Target(objectId, ra=ra, dec=dec, source="fink", alt_ids=alt_ids, t_ref=t_ref)
 
 
 class FinkQueryManager(BaseQueryManager):
@@ -407,6 +412,7 @@ class FinkQueryManager(BaseQueryManager):
                 with open(alert_filepath, "w") as f:
                     json.dump(candidate, f, indent=2)
             if save_cutouts:
+                cutouts_filepath = self.get_cutouts_file(objectId, candidate["candid"])
                 cutouts = {}
                 for imtype in FinkQuery.imtypes:
                     data = alert.get("cutout" + imtype, {}).get("stampData", None)
@@ -415,9 +421,6 @@ class FinkQueryManager(BaseQueryManager):
                     cutout = readstamp(data, return_type="array")
                     cutouts[imtype.lower()] = cutout
                 if len(cutouts) > 0:
-                    cutouts_filepath = self.get_cutouts_file(
-                        objectId, candidate["candid"]
-                    )
                     with open(cutouts_filepath, "wb+") as f:
                         pickle.dump(cutouts, f)
         return processed_alerts
@@ -570,7 +573,12 @@ class FinkQueryManager(BaseQueryManager):
 
         to_update = []
         for objectId, target in self.target_lookup.items():
-            fink_id = target.alternative_ids.get("fink", objectId)
+            if objectId.startswith("ZTF") or objectId.startswith("LSST"):
+                fink_id = objectId
+
+            fink_id = target.alt_ids.get("ztf", objectId)
+
+            # if no fink, try generic "ztf"
 
             lightcurve_filepath = self.get_lightcurve_file(objectId)
             lightcurve_file_age = calc_file_age(

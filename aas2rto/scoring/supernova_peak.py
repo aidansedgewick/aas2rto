@@ -125,7 +125,8 @@ class SupernovaPeakScore:
                 msg = f"{objectId}: none of {self.broker_priority} available"
                 scoring_comments.append(msg)
                 logger.warning(msg)
-                return -1.0, scoring_comments, reject_comments
+                scoring_comments.extend(reject_comments)
+                return -1.0, scoring_comments
             ztf_detections = ztf_source.detections
 
         ###===== Make a quick check on the MJD data... ===###
@@ -222,13 +223,13 @@ class SupernovaPeakScore:
 
             factors["interest_factor"] = interest_factor
             interest_comment = (
-                f"interest {interest_factor:.2f} from peak_dt={peak_dt:.2f}d"
+                f"interest {interest_factor:.2f} from peak_dt={peak_dt:+.2f}d"
             )
             scoring_comments.append(interest_comment)
 
             if peak_dt > self.max_timespan:
                 reject = True
-                reject_comments.append(f"too far past peak {peak_dt:.1f}")
+                reject_comments.append(f"REJECT: too far past peak ({peak_dt:+.1f}d)")
 
             ###===== Blue colour?
 
@@ -264,7 +265,7 @@ class SupernovaPeakScore:
 
         scoring_factors = np.array(list(factors.values()))
         if not all(scoring_factors > 0):
-            neg_factors = "\n".join(
+            neg_factors = "REJECT:\n" + "\n".join(
                 f"    {k}={v}" for k, v in factors.items() if not v > 0
             )
             reject_comments.append(neg_factors)
@@ -284,4 +285,7 @@ class SupernovaPeakScore:
             reject_str = "\n".join(f"    {comm}" for comm in reject_comments)
             logger.debug(f"{objectId}:\n{reject_str}")
             final_score = -np.inf
-        return final_score, scoring_comments, reject_comments
+
+        scoring_comments.extend(reject_comments)
+
+        return final_score, scoring_comments

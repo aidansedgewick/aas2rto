@@ -200,14 +200,14 @@ class TnsQueryManager(BaseQueryManager):
 
         return query_parameters
 
-    def update_matched_tns_names(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
+    # def update_matched_tns_names(self, t_ref: Time = None):
+    #     t_ref = t_ref or Time.now()
 
-        matched_tns_names = []
-        for objectId, target in self.target_lookup.items():
-            tns_name = target.tns_data.parameters.get("Name", None)
-            if tns_name is not None:
-                matched_tns_names[tns_name] = objectId
+    #     matched_tns_names = []
+    #     for objectId, target in self.target_lookup.items():
+    #         tns_name = target.tns_data.parameters.get("Name", None)
+    #         if tns_name is not None:
+    #             matched_tns_names[tns_name] = objectId
 
     def match_tns_on_names(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -221,6 +221,7 @@ class TnsQueryManager(BaseQueryManager):
                 target = self.target_lookup[disc_name]
                 tns_data = target.get_target_data("tns")
                 tns_data.parameters = tns_row.to_dict()
+                target.alt_ids["tns"] = tns_data.parameters["Name"]
                 matched = matched + 1
             else:
                 unmatched_rows.append(tns_row)
@@ -279,6 +280,7 @@ class TnsQueryManager(BaseQueryManager):
                 raise ValueError(e)
             tns_data = target.get_target_data("tns")
             tns_data.parameters = tns_parameters
+            target.alt_ids["tns"] = tns_parameters["Name"]
 
         self.recent_coordinate_searches.update(target_candidate_objectIds)
         # This set is emptied every time TNS-results is read in.

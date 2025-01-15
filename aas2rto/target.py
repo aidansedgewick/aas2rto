@@ -51,15 +51,17 @@ class Target:
     target_data: Dict[str, aas2rto.target_data.TargetData]
         A lookup of data from various sources.
         An entry for `fink` data, one for `atlas` data, one for `tns` data, etc...
-    alternative_ids: Dict [str, str]
+    source:
+        which data created this target? will be added into alt_ids. eg.
+        >>> t = Target("T101", 30.0, 30.0, source="src01")
+        >>> "src01" in t.alt_ids # True
+    alt_ids: Dict [str, str]
         Lookup to keep track of other names for this target.
         eg. ZTF24abcdef might also be called SN 24abc.
-        So alternative_ids might be: `{'fink': 'ZTF24abcdef', 'tns': 'SN 24abc'}`
+        So alt_ids might be: `{'tns': 'SN 24abc'}`
         It's useful to keep track of these to keep updating data from other surveys.
     base_score: float, default=1.0
         The 'unmodified score'.
-    data_source: str, default="unknown"
-        Which data are creating this target? eg. `Target(..., data_source='fink')`
     target_of_opportunity: bool, default=False
         If target_of_opportunity, this target will never be rejected/removed from set of
         unranked targets.
@@ -74,9 +76,9 @@ class Target:
         ra: float,
         dec: float,
         target_data: Dict[str, TargetData] = None,
-        alternative_ids: Dict[str, str] = None,
+        source: str = None,
+        alt_ids: Dict[str, str] = None,
         base_score: float = 1.0,
-        data_source: str = None,
         target_of_opportunity: bool = False,
         t_ref: Time = None,
     ):
@@ -101,24 +103,12 @@ class Target:
         # Scoring data
         self.score_history = {"no_observatory": []}
         self.score_comments = {"no_observatory": []}
-        self.reject_comments = {"no_observatory": []}
         self.rank_history = {"no_observatory": []}
 
         # Is this source known by any other names?
-        self.alternative_ids = alternative_ids or {}
-        if data_source is None:
-            msg = "Target() should ideally provide string data_source=<src>"
-            logger.warning(msg)
-
-            ii = 1
-            data_source = f"unknown_{ii:03d}"
-            while data_source in self.alternative_ids:
-                ii = ii + 1
-                data_source = f"unknown_{ii:03d}"
-
-        if data_source in self.alternative_ids:
-            msg = f"{objectId}: data_source='{data_source}' already in alternative_ids"
-        self.alternative_ids[data_source] = objectId
+        self.alt_ids = alt_ids or {}
+        if source is not None and source not in self.alt_ids:
+            self.alt_ids[source] = objectId
 
         # Keep track of what's going on
         self.creation_time = t_ref
@@ -132,7 +122,7 @@ class Target:
     def __str__(self):
         if self.ra is None or self.dec is None:
             return f"{self.objectId}: NO COORDINATES FOUND!"
-        return f"{self.objectId}: ra={self.ra:.5f} dec={self.dec:+.5f}"
+        return f"{self.objectId}: (ra, dec)=({self.ra:.5f}, {self.dec:+.5f})"
 
     def update_coordinates(self, ra: float, dec: float):
         self.ra = ra
@@ -200,6 +190,10 @@ class Target:
         return
 
     def get_score_history(self, t_ref: Time = None):
+        """
+        Returns df with three columns: 'observatory', 'mjd', 'score'
+            (avoid column name 'rank' as clash with pd keywords...)
+        """
 
         row_list = []
         for obs, obs_score_history in self.score_history.items():
@@ -232,6 +226,10 @@ class Target:
         return
 
     def get_rank_history(self, t_ref: Time = None):
+        """
+        Returns df with three columns: 'observatory', 'mjd', 'ranking'
+            (avoid column name 'rank' as clash with pd keywords...)
+        """
         row_list = []
         for obs, obs_rank_history in self.rank_history.items():
             for data_tuple in obs_rank_history:
@@ -285,13 +283,13 @@ class Target:
         t_ref = t_ref or Time.now()
         t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
 
-        lines = [f"Target {self.objectId} at {t_ref_str}, see:"]
+        info_lines = [f"Target {self.objectId} at {t_ref_str}, see:"]
         broker_lines = (
             f"    FINK: fink-portal.org/{self.objectId}\n"
             f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.objectId}\n"
             f"    ALeRCE: alerce.online/object/{self.objectId}"
         )
-        lines.append(broker_lines)
+        info_lines.append(broker_lines)
 
         tns_data = self.target_data.get("tns", None)
         if tns_data:
@@ -299,16 +297,16 @@ class Target:
             if name is not None:
                 tns_name = tns_data.parameters["Name"]
                 tns_code = tns_name.split()[1]
-                lines.append(f"    TNS: wis-tns.org/object/{tns_code}")
+                info_lines.append(f"    TNS: wis-tns.org/object/{tns_code}")
 
-        lines.append("coordinates:")
+        info_lines.append("coordinates:")
         if self.ra is not None and self.dec is not None:
             eq_line = f"    equatorial (ra, dec) = ({self.ra:.4f},{self.dec:+.5f})"
-            lines.append(eq_line)
+            info_lines.append(eq_line)
         if self.coord is not None:
             gal = self.coord.galactic
             gal_line = f"    galactic (l, b) = ({gal.l.deg:.4f},{gal.b.deg:+.5f})"
-            lines.append(gal_line)
+            info_lines.append(gal_line)
         if self.compiled_lightcurve is not None:
             ndet = {}
             last_mag = {}
@@ -323,17 +321,17 @@ class Target:
                         last_mag[band] = detections["mag"].iloc[-1]
             if len(last_mag) > 0:
                 magvals_str = ", ".join(f"{k}={v:.2f}" for k, v in last_mag.items())
-                comm_line = "    last " + magvals_str
-                lines.append(comm_line)
+                mag_line = "    last " + magvals_str
+                info_lines.append(mag_line)
             if len(ndet) > 0:
                 l = (
                     "    "
                     + ", ".join(f"{v} {k}" for k, v in ndet.items())
                     + " detections"
                 )
-                lines.append(l)
+                info_lines.append(l)
 
-        return "\n".join(lines)
+        return "\n".join(info_lines)
 
     def write_comments(self, outdir: Path, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -344,7 +342,6 @@ class Target:
         outdir.mkdir(exist_ok=True, parents=True)
 
         missing_score_comments = ["no score_comments provided"]
-        missing_reject_comments = ["no reject_comments provided"]
 
         lines = self.get_info_string(t_ref=t_ref).split("\n")
         last_score = self.get_last_score()
@@ -377,10 +374,6 @@ class Target:
         if last_score is not None:
             if self.to_reject or not np.isfinite(last_score):
                 lines.append(f"{self.objectId} rejected at {t_ref.iso}")
-                reject_comments = self.reject_comments.get("no_observatory", None)
-                reject_comments = reject_comments or missing_reject_comments
-                for comm in reject_comments:
-                    lines.append(f"    {comm}")
 
         comments_file = outdir / f"{self.objectId}_comments.txt"
         with open(comments_file, "w+") as f:

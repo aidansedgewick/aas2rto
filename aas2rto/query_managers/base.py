@@ -2,6 +2,8 @@ import abc
 
 from pathlib import Path
 
+from astropy.time import Time
+
 from aas2rto.target import TargetData
 from aas2rto import paths
 
@@ -122,3 +124,45 @@ class BaseQueryManager(abc.ABC):
 
     def get_parameters_file(self, objectId, fmt="pkl") -> Path:
         return self.parameters_path / f"{objectId}.{fmt}"
+
+    def clear_stale_files(self, stale_time=60.0, dry_run=False, t_ref: Time = None):
+        """
+        Clear files/directories older than eg. 60 days.
+
+        stale_time
+
+        """
+
+        raise NotImplementedError
+
+        t_ref = t_ref or Time.now()
+
+        for dir in [
+            self.lightcurves_path,
+            self.alerts_path,
+            self.probabilities_path,
+            self.parameters_path,
+            self.magstats_path,
+            self.query_results_path,
+            self.cutouts_path,
+        ]:
+            for filepath in dir.glob("*"):
+                filepath = Path(filepath)
+                file_age = utils.calc_file_age(filepath, t_ref)
+
+                if file_age < stale_time:
+                    continue
+
+                if filepath.is_dir():
+                    for filepath_ii in filepath.iterdir():
+                        if filepath_ii.is_file():
+                            filepath_ii.unlink()
+                            print(f"del {filepath_ii}")
+                    print(f"del dir {filepath}")
+                    try:
+                        filepath.rmdir()
+                    except Exception as e:
+                        pass
+                else:
+
+                    print(f"del {filepath}")

@@ -15,6 +15,7 @@ from astropy.time import Time
 import pytest
 
 from aas2rto.target import Target, TargetData
+from aas2rto.target_lookup import TargetLookup
 from aas2rto.exc import (
     BadKafkaConfigError,
     MissingObjectIdError,
@@ -146,7 +147,7 @@ def fink_config(kafka_config, query_parameters):
 
 @pytest.fixture
 def target_lookup():
-    return {}
+    return TargetLookup()
 
 
 @pytest.fixture
@@ -210,8 +211,14 @@ def gen_mock_cutouts(filepath):
 
 
 def create_mock_consumer(alerts):
+
+    """choose to do this as function which creates classes rather than simpler python closure, 
+    as the Consumer needs to have poll() method...
+    is it better to 
+    """
+
     class MockConsumer:
-        alert_list = alerts  # TODO: how to get alert_list into class definition?!
+        alert_list = alerts 
 
         def __init__(self, topics, config):
             self.index = 0
@@ -238,9 +245,9 @@ def create_mock_consumer(alerts):
 @pytest.fixture
 def target_list():
     return [
-        Target("ZTF00abc", ra=30.0, dec=45.0, data_source="fink"),
-        Target("ZTF01ijk", ra=45.0, dec=45.0, data_source="fink"),
-        Target("ZTF02xyz", ra=60.0, dec=45.0, data_source="fink"),
+        Target("ZTF00abc", ra=30.0, dec=45.0),
+        Target("ZTF01ijk", ra=45.0, dec=45.0),
+        Target("ZTF02xyz", ra=60.0, dec=45.0),
     ]
 
 
@@ -299,8 +306,8 @@ class Test__TargetFromFinkAlert:
         assert isinstance(result, Target)
         assert result.objectId == "ZTF00abc"
 
-        assert set(result.alternative_ids.keys()) == set(["fink"])
-        assert result.alternative_ids["fink"] == "ZTF00abc"
+        assert set(result.alt_ids.keys()) == set(["fink", "ztf"])
+        assert result.alt_ids["fink"] == "ZTF00abc"
 
         assert isinstance(result.coord, SkyCoord)
 
@@ -337,8 +344,9 @@ class Test__TargetFromFinkLightcurve:
         assert np.isclose(result.ra, 30.0)
         assert np.isclose(result.dec, 45.0)
 
-        assert set(result.alternative_ids.keys()) == set(["fink"])
-        assert result.alternative_ids["fink"] == "ZTF00abc"
+        assert set(result.alt_ids.keys()) == set(["fink", "ztf"])
+        assert result.alt_ids["fink"] == "ZTF00abc"
+        assert result.alt_ids["ztf"] == "ZTF00abc"
 
         assert isinstance(result.coord, SkyCoord)
 
@@ -471,8 +479,8 @@ class Test__TargetFromFinkQueryRow:
         assert np.isclose(result.ra, 30.0)
         assert np.isclose(result.dec, 45.0)
 
-        assert set(result.alternative_ids.keys()) == set(["fink"])
-        assert result.alternative_ids["fink"] == "ZTF00abc"
+        assert set(result.alt_ids.keys()) == set(["fink", "ztf"])
+        assert result.alt_ids["fink"] == "ZTF00abc"
 
     def test__missing_coordinate_error(self, fink_query_results):
         processed_results = process_fink_query_results(fink_query_results)
@@ -490,7 +498,7 @@ class Test__FinkQueryManagerInit:
         assert "query_parameters" in qm.fink_config
         assert "kafka_config" in qm.fink_config
 
-        assert isinstance(qm.target_lookup, dict)
+        assert isinstance(qm.target_lookup, TargetLookup)
 
         assert isinstance(qm.kafka_config, dict)
         expected_kws = [
@@ -617,10 +625,10 @@ class Test__FinkAlertStreams:
 
     def test__fink_listen_for_alerts(self, fink_qm, alert_list, monkeypatch):
         MockConsumer = create_mock_consumer(alert_list)
+        # MockConsumer should be class rather than func, as needs .poll() method.
+
         assert hasattr(fink.AlertConsumer, "consume")  # Before patch
         with monkeypatch.context() as m:
-            # Patch the alert list onto the MockConsumer
-
             # Patch the MockConsumer into the fink module
             m.setattr("aas2rto.query_managers.fink.AlertConsumer", MockConsumer)
             assert not hasattr(fink.AlertConsumer, "consume")  # is patched!

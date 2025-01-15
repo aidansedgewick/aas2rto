@@ -29,6 +29,13 @@ class TargetLookup:
             raise KeyError(f"No target with name {key}")
         return self.lookup[base_id]
 
+    def update_id_mapping_single_target(self, target: Target):
+
+        target_id = target.objectId
+        for alt_key, alt_id in target.alt_ids.items():
+            self.id_mapping[alt_id] = target_id
+        self.id_mapping[target_id] = target_id  # name should also refer to itself!
+
     def __setitem__(self, key: str, target: Target) -> None:
         if not isinstance(key, str):
             logger.warning(f"type of key '{key}' should be 'str', not type={type(key)}")
@@ -42,11 +49,7 @@ class TargetLookup:
             warnings.warn(UserWarning(msg))
         self.lookup[key] = target
 
-        self.id_mapping[target_id] = target_id
-        for alt_key, alt_id in target.alternative_ids.items():
-            if alt_key == "target_id":
-                continue
-            self.id_mapping[alt_id] = target_id
+        self.update_id_mapping_single_target(target)
 
     def __contains__(self, target_id: str):
         return target_id in self.id_mapping
@@ -71,7 +74,11 @@ class TargetLookup:
         if base_id is None:
             return default
         target = self.lookup.pop(base_id)
-        for source_key, alt_id in target.alternative_ids.items():
+
+        self.id_mapping.pop(base_id)  # also remove the base id.
+        for source_key, alt_id in target.alt_ids.items():
+            if alt_id == base_id:
+                continue  # we have already removed it.
             base_id_from_alt = self.id_mapping.pop(alt_id, None)
             if base_id_from_alt is None:
                 msg = f"alt_id '{alt_id}' for base_id={base_id} not in id_mapping"
@@ -89,19 +96,24 @@ class TargetLookup:
 
     def add_target(self, target: Target):
 
-        for alt_id in target.alternative_ids:
+        for alt_id in target.alt_ids:
             if target.objectId in self.id_mapping:
                 existing = self[alt_id]
                 msg = (
                     f"target already exists with objectId={target.objectId}\n"
-                    f"with alternative_ids={existing.alternative_ids}"
+                    f"with alt_ids={existing.alt_ids}"
                 )
                 raise ValueError(msg)
         self[target.objectId] = target
 
+    def update_target_id_mappings(self):
+        for target_id, target in self.lookup.items():
+            self.update_id_mapping_single_target(target)
+
     def consolidate_targets(
         self, seplimit=5 * u.arcsec, sort=False, warn_overwrite=True
     ):
+        logger.info("merge duplicated targets")
 
         target_ids = []
         coord_list = []
@@ -117,7 +129,6 @@ class TargetLookup:
         target_groups = [[target_ids[ii] for ii in group] for group in grouped_indices]
 
         N_matches = sum(len(g) > 1 for g in target_groups)
-        print(target_groups)
 
         logger.info(f"merge {N_matches} groups of targets")
 
@@ -138,7 +149,8 @@ def group_nearby_targets(coords: SkyCoord, seplimit=5 * u.arcsec):
     """Given a SkyCoord object (array-like), return lists of target groups that
     are "connected" (within seplim).
 
-    Not suitable for large groups >~100, as it uses recursive search.
+    Not suitable for large groups >~100, as it uses recursive search, can possibly
+    return RecursionDepth
 
 
     eg.
@@ -207,7 +219,6 @@ def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
 
     output = targets[0]
     for target in targets[1:]:
-        print(target.target_data.keys())
         for key, target_data in target.target_data.items():
             if key in output.target_data:
                 msg = (
@@ -217,18 +228,18 @@ def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
                 if warn_overwrite:
                     warnings.warn(DuplicateDataWarning(msg))
             output.target_data[key] = target_data
-        for alt_key, alt_id in target.alternative_ids.items():
+        for alt_key, alt_id in target.alt_ids.items():
             if alt_key == "target_id":
                 key = alt_id
             else:
                 key = alt_key
 
-            existing_alt_id = output.alternative_ids.get(key, None)
+            existing_alt_id = output.alt_ids.get(key, None)
             if existing_alt_id is not None and alt_id != existing_alt_id:
                 msg = (
                     f"In {output.objectId}/{target.objectId} merge: "
                     f"overwrite alt_id={existing_alt_id} with key={key}"
                 )
                 warnings.warn(DuplicateDataWarning(msg))
-            output.alternative_ids[alt_key] = alt_id
+            output.alt_ids[alt_key] = alt_id
     return output

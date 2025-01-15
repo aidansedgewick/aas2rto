@@ -113,10 +113,7 @@ class Test__TargetInit:
         assert len(t.score_history["no_observatory"]) == 0
         assert isinstance(t.score_comments, dict)
         assert set(t.score_comments.keys()) == set(["no_observatory"])
-        assert isinstance(t.reject_comments, dict)
         assert set(t.score_comments["no_observatory"]) == set()
-        assert set(t.reject_comments.keys()) == set(["no_observatory"])
-        assert set(t.reject_comments["no_observatory"]) == set()
         assert isinstance(t.rank_history, dict)
         assert set(t.rank_history.keys()) == set(["no_observatory"])
         assert isinstance(t.rank_history["no_observatory"], list)

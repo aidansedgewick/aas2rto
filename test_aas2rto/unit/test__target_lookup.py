@@ -18,10 +18,9 @@ def mock_target():
 
 @pytest.fixture
 def mock_target_alt_ids():
-    alt_names = {"tns": "SN2001A"}
-    return Target(
-        "ZTF01def", 60.0, -30.0, alternative_ids=alt_names, data_source="src01"
-    )
+    ztf_name = "ZTF01def"
+    alt_names = {"ztf": ztf_name, "tns": "SN2001A"}
+    return Target(ztf_name, 60.0, -30.0, alt_ids=alt_names)
 
 
 @pytest.fixture
@@ -50,20 +49,10 @@ class Test__MergeTargets:
         t2_alt_ids = {"alt02": "TR_AAA"}
 
         t1 = Target(
-            "T001",
-            ra=45.0,
-            dec=30.0,
-            alternative_ids=t1_alt_ids,
-            data_source="src01",
-            t_ref=t_ref01,
+            "T001", ra=45.0, dec=30.0, source="src01", alt_ids=t1_alt_ids, t_ref=t_ref01
         )
         t2 = Target(
-            "T002",
-            ra=30.0,
-            dec=16.0,
-            alternative_ids=t2_alt_ids,
-            data_source="src02",
-            t_ref=t_ref02,
+            "T002", ra=30.0, dec=16.0, source="src02", alt_ids=t2_alt_ids, t_ref=t_ref02
         )
 
         output = merge_targets([t2, t1], sort=True)
@@ -73,8 +62,8 @@ class Test__MergeTargets:
 
         assert output.objectId == "T001"
 
-        assert output.alternative_ids["src01"] == "T001"
-        assert output.alternative_ids["src02"] == "T002"
+        assert output.alt_ids["src01"] == "T001"
+        assert output.alt_ids["src02"] == "T002"
 
 
 class Test__TargetLookupInit:
@@ -233,9 +222,7 @@ class Test__AddTarget:
     def test__add_target(self):
 
         alt_ids = {"datasrc": "02xyz", "othersrc": "AT_001"}
-        new_targ = Target(
-            "ZTF02ijk", 45.0, -45.0, data_source="blah", alternative_ids=alt_ids
-        )
+        new_targ = Target("ZTF02ijk", 45.0, -45.0, alt_ids=alt_ids)
 
         tlookup = TargetLookup()
 
@@ -250,13 +237,50 @@ class Test__AddTarget:
         assert "othersrc" not in tlookup
 
 
+class Test__UpdateIdMappings:
+    def test__update_target_id_mappings(self, mock_target_alt_ids):
+
+        tl = TargetLookup()
+
+        # this is a bad way to update targets!
+        tl.lookup["ZTF01def"] = mock_target_alt_ids
+        assert "ZTF01def" not in tl.id_mapping
+        assert "SN2001A" not in tl.id_mapping
+
+        tl.update_id_mapping_single_target(mock_target_alt_ids)
+        assert set(tl.id_mapping.keys()) == set(["ZTF01def", "SN2001A"])
+        assert tl.id_mapping["ZTF01def"] == "ZTF01def"
+        assert tl.id_mapping["SN2001A"] == "ZTF01def"
+
+    def update_all_target_id_mappings(self, mock_target_alt_ids):
+        tl = TargetLookup()
+        tl.add_target(mock_target_alt_ids)
+
+        assert set(tl.id_mapping.keys()) == set(["ZTF01def", "SN2001A"])
+        assert tl.id_mapping["ZTF01def"] == "ZTF01def"
+        assert tl.id_mapping["SN2001A"] == "ZTF01def"
+
+        mock_target_alt_ids.alt_ids["survey_X"] = "X_001"
+
+        assert tl["ZTF01def"].alt_ids["survey_X"] == "X_001"  # it's there...
+        assert "X_001" not in tl.id_mapping  # but tl doesn't know about it yet!
+        assert "X_001" not in tl  # use __contains__
+
+        tl.update_target_id_mappings()
+
+        # Now TL should know about it!
+        assert "X_001" in tl.id_mapping
+        assert "X_001" in tl
+        assert tl["X_001"].objectId == "ZTF01def"
+
+
 class Test__ConsolidateTargets:
 
     def test__simple(self):
 
         tl = TargetLookup()
-        t1 = Target("T101", 45.0, 0.0, data_source="src01")
-        t2 = Target("AAAA", 45.0, 0.0, data_source="src02")
+        t1 = Target("T101", 45.0, 0.0, alt_ids={"src01": "T101"})
+        t2 = Target("AAAA", 45.0, 0.0, alt_ids={"src02": "AAAA"})
 
         tl.add_target(t1)
         tl.add_target(t2)
@@ -295,9 +319,9 @@ class Test__ConsolidateTargets:
 
         tl = TargetLookup()
 
-        t1 = Target("T101", 44.3, 0.0, data_source="A")
-        t2 = Target("T102", 45.0, 0.0, data_source="B")
-        t3 = Target("T103", 45.7, 0.0, data_source="C")
+        t1 = Target("T101", 44.3, 0.0, alt_ids={"src01": "T101"})
+        t2 = Target("T102", 45.0, 0.0, alt_ids={"src02": "T102"})
+        t3 = Target("T103", 45.7, 0.0, alt_ids={"src03": "T103"})
 
         tl.add_target(t1)
         tl.add_target(t2)
@@ -310,16 +334,16 @@ class Test__ConsolidateTargets:
 
         assert len(tl) == 1
 
-        assert set(tl["T101"].alternative_ids.values()) == set("T101 T102 T103".split())
+        assert set(tl["T101"].alt_ids.values()) == set("T101 T102 T103".split())
 
-    def test__complex_merge(self):
+    def test__more_complex_merge(self):
 
         tl = TargetLookup()
 
         # group 1
-        t1 = Target("T101", 45.0, 60.0, data_source="src01")
-        t2 = Target("SN001", 45.1, 60.1, data_source="src02")  # mod ra/dec
-        t3 = Target("OBJ_001", 44.9, 59.9, data_source="src03")
+        t1 = Target("T101", 45.0, 60.0, alt_ids={"src01": "T101"})
+        t2 = Target("SN001", 45.1, 60.1, alt_ids={"src02": "SN001"})  # mod ra/dec
+        t3 = Target("OBJ_001", 44.9, 59.9, alt_ids={"src03": "OBJ_001"})
 
         # add some data to check that it's overwritten
         t1_data = t1.get_target_data("ztf")
@@ -328,11 +352,11 @@ class Test__ConsolidateTargets:
         t3_data.meta["parameter"] = 10
 
         # group 2
-        t4 = Target("T102", 90.0, 15.0, data_source="src01")
-        t5 = Target("OBJ_002", 90.1, 15.1, data_source="src03")
+        t4 = Target("T102", 90.0, 15.0, alt_ids={"src01": "T102"})
+        t5 = Target("OBJ_002", 90.1, 15.1, alt_ids={"src03": "OBJ_002"})
 
         # group 3
-        t6 = Target("T103", 180.0, 30.0, data_source="src01")
+        t6 = Target("T103", 180.0, 30.0, alt_ids={"src01": "T103"})
 
         for target in [t1, t2, t3, t4, t5, t6]:
             tl.add_target(target)
@@ -346,9 +370,7 @@ class Test__ConsolidateTargets:
             "T101 SN001 OBJ_001 T102 OBJ_002 T103".split()
         )
 
-        assert set(tl["T101"].alternative_ids.keys()) == set(
-            "src01 src02 src03".split()
-        )
+        assert set(tl["T101"].alt_ids.keys()) == set("src01 src02 src03".split())
         assert tl["SN001"].objectId == "T101"
         assert tl["OBJ_001"].objectId == "T101"
         assert tl.id_mapping["T101"] == "T101"
@@ -357,4 +379,4 @@ class Test__ConsolidateTargets:
 
         assert tl["T101"].target_data["ztf"].meta["parameter"] == 10  # overwritten!
 
-        assert set(tl["T102"].alternative_ids.keys()) == set("src01 src03".split())
+        assert set(tl["T102"].alt_ids.keys()) == set("src01 src03".split())

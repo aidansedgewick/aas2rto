@@ -23,6 +23,10 @@ def chunk_list(l, chunk_size=100):
 
 
 def calc_file_age(filepath, t_ref, allow_missing=True):
+    """
+    return the age of a filepath in days.
+    """
+
     filepath = Path(filepath)
     if not filepath.exists():
         if allow_missing:

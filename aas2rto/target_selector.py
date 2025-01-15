@@ -85,6 +85,7 @@ class TargetSelector:
         "lazy_compile": False,
         "lazy_plotting": True,
         "plotting_interval": 0.25,
+        "consolidate_seplim": 5 * u.arcsec,
         "write_comments": True,
     }
     default_base_path = paths.wkdir
@@ -551,16 +552,13 @@ class TargetSelector:
         minimum_score = self.selector_parameters["minimum_score"]
 
         # ===== Compute score according to
-        science_score, score_comments, reject_comments = (
-            self._evaluate_target_science_score(
-                science_scoring_function, target, t_ref=t_ref
-            )
+        science_score, score_comments = self._evaluate_target_science_score(
+            science_scoring_function, target, t_ref=t_ref
         )
 
         obs_name = "no_observatory"
         target.update_score_history(science_score, obs_name, t_ref=t_ref)
         target.score_comments[obs_name] = score_comments
-        target.reject_comments[obs_name] = reject_comments
 
         if observatory_scoring_function is None:
             return
@@ -573,21 +571,17 @@ class TargetSelector:
 
             if science_score > minimum_score and np.isfinite(science_score):
                 # ===== Modify score for each observatory
-                obs_factors, score_comments, reject_comments = (
-                    self._evaluate_target_observatory_score(
-                        observatory_scoring_function, target, observatory, t_ref
-                    )
+                obs_factors, score_comments = self._evaluate_target_observatory_score(
+                    observatory_scoring_function, target, observatory, t_ref
                 )
                 observatory_score = science_score * obs_factors
             else:
                 obs_factors = 1.0
                 observatory_score = science_score
-                score_comments = ["excluded by no_observatory score"]
-                reject_comments = []
+                score_comments = ["excluded by no_observatory (science) score"]
 
             target.update_score_history(observatory_score, obs_name, t_ref=t_ref)
             target.score_comments[obs_name] = score_comments
-            target.reject_comments[obs_name] = reject_comments
         return
 
     def _evaluate_target_science_score(
@@ -610,24 +604,14 @@ class TargetSelector:
                 f"    scoring with {science_scoring_function.__name__} failed.\n"
                 f"    Set score to -1.0, to exclude.\n"
             )
-            scoring_res = (-1.0, details, [])
+            scoring_res = (-1.0, [details])
             self.send_crash_reports(text=details)
 
-        if isinstance(scoring_res, tuple):
-            if len(scoring_res) == 3:
-                science_score, score_comments, reject_comments = scoring_res
-            else:
-                msg = f"your scoring_function {science_scoring_function.__name__} should return\n    "
-                f"score [float], score_comments [List[str]], reject_comments [List[str]]"
-                raise ValueError(msg)
-        elif isinstance(scoring_res, float) or isinstance(scoring_res, int):
-            science_score = scoring_res
-            score_comments = ["no score_comments provided"]
-            reject_comments = ["no reject_comments provided"]
-        else:
-            raise ValueError
-
-        return science_score, score_comments, reject_comments
+        func_name = science_scoring_function.__name__
+        science_score, score_comments = self._parse_scoring_result(
+            scoring_res, func_name=func_name
+        )
+        return science_score, score_comments
 
     def _evaluate_target_observatory_score(
         self,
@@ -646,31 +630,38 @@ class TargetSelector:
                 f"    scoring with {observatory_scoring_function.__name__} failed.\n"
                 f"    Set score to -1.0, to exclude.\n"
             )
-            scoring_res = (-1.0, details, [])
+            scoring_res = (-1.0, [details])
             self.send_crash_reports(text=details)
 
-        if isinstance(scoring_res, tuple):
-            if len(scoring_res) == 3:
-                obs_factors, score_comments, reject_comments = scoring_res
-            else:
-                raise ValueError(
-                    "your scoring_function should return float, or tuple len 3:\n"
-                    "score [float], or (score [float], score_comms [list], reject_comms [list])"
-                )
-        elif isinstance(scoring_res, float) or isinstance(scoring_res, int):
-            obs_factors = scoring_res
-            score_comments = ["no score_comments provided"]
-            reject_comments = ["no reject_comments provided"]
-        else:
-            raise ValueError
+        func_name = observatory_scoring_function.__name__
+        obs_factors, obs_comments = self._parse_scoring_result(scoring_res)
         if not np.isfinite(obs_factors):
             msg = (
-                f"observatory_score not finite ={obs_factors} "
+                f"observatory_score not finite (={obs_factors}) "
                 f"for {target.objectId} at {obs_name}."
             )
             logger.warning(msg)
 
-        return obs_factors, score_comments, reject_comments
+        return obs_factors, obs_comments
+
+    def _parse_scoring_result(self, scoring_res, func_name=""):
+        err_msg = (
+            f"scoring function {func_name} should return\n"
+            "score [float] or tuple of (score [float], comments [list[str]]"
+        )
+
+        if isinstance(scoring_res, tuple):
+            if len(scoring_res) == 2:
+                score, score_comments = scoring_res
+            else:
+                raise ValueError(err_msg)
+        elif isinstance(scoring_res, float) or isinstance(scoring_res, int):
+            score = scoring_res
+            score_comments = [f"function {func_name}: no score_comments provided"]
+        else:
+            raise ValueError(err_msg)
+
+        return score, score_comments
 
     def new_target_initial_check(
         self, scoring_function: Callable, t_ref: Time = None
@@ -1308,6 +1299,7 @@ class TargetSelector:
         lazy_modeling = self.selector_parameters.get("lazy_modeling", True)
         lazy_compile = self.selector_parameters.get("lazy_compile", False)
         lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
+        seplimit = self.selector_parameters.get("consolidate_seplimit", 5*u.arcsec)
         # self.clear_scratch_plots() # NO - lazy plotting re-uses existing plots.
 
         # =============== Are there any tasks we should skip? =============== #
@@ -1330,6 +1322,12 @@ class TargetSelector:
             self.perform_query_manager_tasks(t_ref=t_ref)
         else:
             logger.info("skip query manager tasks")
+
+        # ===================== Merge duplicated targets ===================== #
+
+        if isinstance(self.target_lookup, TargetLookup):
+            self.target_lookup.consolidate_targets(seplimit=seplimit)
+            self.target_lookup.update_target_id_mappings()
 
         # ================= Prep before modeling and scoring ================= #
         t1 = time.perf_counter()
