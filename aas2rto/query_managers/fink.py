@@ -907,7 +907,7 @@ class FinkQuery:
     >>> lc = FinkQuery.query_objects("ZTF23example")
     """
 
-    api_url = "https://fink-portal.org/api/v1"
+    api_url = "https://api.fink-portal.org/api/v1"
     imtypes = ("Science", "Template", "Difference")
     longint_cols = ("candid",)
 
