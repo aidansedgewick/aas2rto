@@ -163,7 +163,7 @@ class Test__TargetFromAlerceQueryRow:
         target = target_from_alerce_query_row(row["oid"], row)
 
         assert isinstance(target, Target)
-        assert target.objectId == "ZTF00abc"
+        assert target.target_id == "ZTF00abc"
         assert np.isclose(target.ra, 15.0)
         assert np.isclose(target.dec, 30.0)
         assert "alerce" in target.alt_ids
@@ -177,7 +177,7 @@ class Test__TargetFromAlerceQueryRow:
         target = target_from_alerce_query_row(data["oid"], data)
 
         assert isinstance(target, Target)
-        assert target.objectId == "ZTF00abc"
+        assert target.target_id == "ZTF00abc"
         assert np.isclose(target.ra, 15.0)
         assert np.isclose(target.dec, 30.0)
         assert "alerce" in target.alt_ids
@@ -365,6 +365,9 @@ class Test__QueryForObjectUpdates:
     def test__merge_existing_queries(
         self, alerce_qm: AlerceQueryManager, query_results: pd.DataFrame, monkeypatch
     ):
+        """
+        Test that new rows from query are correcly added to set of existing queries.
+        """
 
         alerce_qm.create_paths()
 

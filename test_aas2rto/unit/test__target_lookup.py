@@ -26,7 +26,7 @@ def mock_target_alt_ids():
 @pytest.fixture
 def target_lookup_one_target(mock_target):
     tl = TargetLookup()
-    tl[mock_target.objectId] = mock_target
+    tl[mock_target.target_id] = mock_target
     return tl
 
 
@@ -36,8 +36,8 @@ def target_lookup_two_targets(mock_target, mock_target_alt_ids):
     t2 = mock_target_alt_ids
 
     tl = TargetLookup()
-    tl[t1.objectId] = t1
-    tl[t2.objectId] = t2
+    tl[t1.target_id] = t1
+    tl[t2.target_id] = t2
     return tl
 
 
@@ -60,7 +60,7 @@ class Test__MergeTargets:
         assert np.isclose(output.ra, 45.0)  # ie, keep coords from the first one.
         assert np.isclose(output.dec, 30.0)
 
-        assert output.objectId == "T001"
+        assert output.target_id == "T001"
 
         assert output.alt_ids["src01"] == "T001"
         assert output.alt_ids["src02"] == "T002"
@@ -104,14 +104,14 @@ class Test__DunderGetSet:
         t1 = mock_target
         t2 = mock_target_alt_ids
 
-        tlookup[t1.objectId] = mock_target
-        tlookup[t2.objectId] = mock_target_alt_ids
+        tlookup[t1.target_id] = mock_target
+        tlookup[t2.target_id] = mock_target_alt_ids
 
         assert set(tlookup.lookup.keys()) == set(["ZTF00abc", "ZTF01def"])
         assert isinstance(tlookup.lookup["ZTF00abc"], Target)
         assert isinstance(tlookup.lookup["ZTF01def"], Target)
-        assert tlookup.lookup["ZTF00abc"].objectId == "ZTF00abc"
-        assert tlookup.lookup["ZTF01def"].objectId == "ZTF01def"
+        assert tlookup.lookup["ZTF00abc"].target_id == "ZTF00abc"
+        assert tlookup.lookup["ZTF01def"].target_id == "ZTF01def"
 
         assert set(tlookup.id_mapping.keys()) == set(
             ["ZTF00abc", "ZTF01def", "SN2001A"]
@@ -131,12 +131,12 @@ class Test__DunderGetSet:
 
         t1 = tlookup["ZTF00abc"]
         assert isinstance(t1, Target)
-        assert t1.objectId == "ZTF00abc"
+        assert t1.target_id == "ZTF00abc"
 
         t2a = tlookup["ZTF01def"]
-        assert t2a.objectId == "ZTF01def"
+        assert t2a.target_id == "ZTF01def"
         t2b = tlookup["SN2001A"]
-        assert t2b.objectId == "ZTF01def"
+        assert t2b.target_id == "ZTF01def"
         assert t2a is t2b
 
 
@@ -175,10 +175,10 @@ class Test__GetMethod:
 
         t1a = tlookup.get("ZTF01def")
         assert isinstance(t1a, Target)
-        assert t1a.objectId == "ZTF01def"
+        assert t1a.target_id == "ZTF01def"
         t1b = tlookup.get("SN2001A")
         assert isinstance(t1b, Target)
-        assert t1b.objectId == "ZTF01def"  # it should be the same target...
+        assert t1b.target_id == "ZTF01def"  # it should be the same target...
         assert t1a is t1b  # it IS the same target!
 
     def test__get_method_missing_target(self):
@@ -199,7 +199,7 @@ class Test__PopMethod:
         assert "SN2001A" in tlookup
 
         removed = tlookup.pop("ZTF01def")
-        assert removed.objectId == "ZTF01def"
+        assert removed.target_id == "ZTF01def"
 
         assert len(tlookup) == 1
         assert "ZTF01def" not in tlookup.lookup
@@ -214,7 +214,7 @@ class Test__PopMethod:
         assert "ZTF01def" not in tlookup
         assert "SN2001A" not in tlookup
 
-        assert removed.objectId == "ZTF01def"
+        assert removed.target_id == "ZTF01def"
 
 
 class Test__AddTarget:
@@ -271,7 +271,7 @@ class Test__UpdateIdMappings:
         # Now TL should know about it!
         assert "X_001" in tl.id_mapping
         assert "X_001" in tl
-        assert tl["X_001"].objectId == "ZTF01def"
+        assert tl["X_001"].target_id == "ZTF01def"
 
 
 class Test__ConsolidateTargets:
@@ -292,7 +292,7 @@ class Test__ConsolidateTargets:
 
         assert len(tl) == 1
         assert len(tl.id_mapping) == 2
-        assert tl["AAAA"].objectId == "T101"
+        assert tl["AAAA"].target_id == "T101"
 
         assert "AAAA" not in tl.lookup
 
@@ -371,8 +371,8 @@ class Test__ConsolidateTargets:
         )
 
         assert set(tl["T101"].alt_ids.keys()) == set("src01 src02 src03".split())
-        assert tl["SN001"].objectId == "T101"
-        assert tl["OBJ_001"].objectId == "T101"
+        assert tl["SN001"].target_id == "T101"
+        assert tl["OBJ_001"].target_id == "T101"
         assert tl.id_mapping["T101"] == "T101"
         assert tl.id_mapping["SN001"] == "T101"
         assert tl.id_mapping["OBJ_001"] == "T101"

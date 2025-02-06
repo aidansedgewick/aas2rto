@@ -89,7 +89,7 @@ class Test__TargetInit:
         t_create = Time(60000.0, format="mjd")
         t = Target("T101", ra=45.0, dec=60.0, t_ref=t_create)
 
-        assert t.objectId == "T101"
+        assert t.target_id == "T101"
         assert np.isclose(t.ra, 45.0)
         assert np.isclose(t.dec, 60.0)
         assert isinstance(t.coord, SkyCoord)

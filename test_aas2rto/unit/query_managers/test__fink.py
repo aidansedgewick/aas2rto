@@ -18,7 +18,7 @@ from aas2rto.target import Target, TargetData
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.exc import (
     BadKafkaConfigError,
-    MissingObjectIdError,
+    MissingTargetIdError,
     MissingCoordinatesError,
     MissingKeysWarning,
     UnexpectedKeysWarning,
@@ -211,14 +211,13 @@ def gen_mock_cutouts(filepath):
 
 
 def create_mock_consumer(alerts):
-
-    """choose to do this as function which creates classes rather than simpler python closure, 
+    """choose to do this as function which creates classes rather than simpler python closure,
     as the Consumer needs to have poll() method...
-    is it better to 
+    is it better to
     """
 
     class MockConsumer:
-        alert_list = alerts 
+        alert_list = alerts
 
         def __init__(self, topics, config):
             self.index = 0
@@ -304,7 +303,7 @@ class Test__TargetFromFinkAlert:
     def test__normal_behaviour(self, fink_alert):
         result = target_from_fink_alert(fink_alert)
         assert isinstance(result, Target)
-        assert result.objectId == "ZTF00abc"
+        assert result.target_id == "ZTF00abc"
 
         assert set(result.alt_ids.keys()) == set(["fink", "ztf"])
         assert result.alt_ids["fink"] == "ZTF00abc"
@@ -314,11 +313,11 @@ class Test__TargetFromFinkAlert:
         assert np.isclose(result.ra, 30.0)
         assert np.isclose(result.dec, 45.0)
 
-    def test__missing_objectId_error(self, fink_alert):
+    def test__alert_missing_objectId_error(self, fink_alert):
         _ = fink_alert.pop("objectId")
         assert "objectId" not in fink_alert
 
-        with pytest.raises(MissingObjectIdError):
+        with pytest.raises(MissingTargetIdError):
             result = target_from_fink_alert(fink_alert)
 
     def test__missing_coordinates_error(self, fink_alert):
@@ -340,7 +339,7 @@ class Test__TargetFromFinkLightcurve:
     def test__normal_behaviour(self, fink_lc):
         result = target_from_fink_lightcurve(fink_lc)
         assert isinstance(result, Target)
-        assert result.objectId == "ZTF00abc"
+        assert result.target_id == "ZTF00abc"
         assert np.isclose(result.ra, 30.0)
         assert np.isclose(result.dec, 45.0)
 
@@ -361,7 +360,7 @@ class Test__TargetFromFinkLightcurve:
         fink_lc.drop("objectId", axis=1, inplace=True)
         assert "objectId" not in fink_lc.columns
 
-        with pytest.raises(MissingObjectIdError):
+        with pytest.raises(MissingTargetIdError):
             result = target_from_fink_lightcurve(fink_lc)
 
     def test__ambiguous_objectId(self, fink_lc):
@@ -369,7 +368,7 @@ class Test__TargetFromFinkLightcurve:
         assert set(fink_lc["objectId"].unique()) == set(["ZTF00abc", "ZTF99xyz"])
 
         result = target_from_fink_lightcurve(fink_lc)
-        assert result.objectId == "ZTF00abc"
+        assert result.target_id == "ZTF00abc"
 
     def test__missing_coordinates_error(self, fink_lc):
         fink_lc.drop("ra", axis=1, inplace=True)
@@ -475,7 +474,7 @@ class Test__TargetFromFinkQueryRow:
 
         result = target_from_fink_query_row(row)
         assert isinstance(result, Target)
-        assert result.objectId == "ZTF00abc"
+        assert result.target_id == "ZTF00abc"
         assert np.isclose(result.ra, 30.0)
         assert np.isclose(result.dec, 45.0)
 
@@ -908,18 +907,19 @@ class Test__FinkLightcurveQueries:
         fink_qm.create_paths()
 
         def mock_query(objectId, **kwargs):
+            # objectId because this mocks FINK's internals
             objectId_list = objectId.split(",")
             if "ZTF00abc" in objectId_list:
                 return fink_lc.copy()
             else:
                 return pd.DataFrame()
 
-        objectId_list = [t.objectId for t in target_list]
+        fink_id_list = [t.target_id for t in target_list]
 
         with monkeypatch.context() as m:
             m.setattr("aas2rto.query_managers.fink.FinkQuery.query_objects", mock_query)
             success, failed = fink_qm.perform_lightcurve_queries(
-                objectId_list, chunk_size=2
+                fink_id_list, chunk_size=2
             )
 
         assert set(success) == set(["ZTF00abc", "ZTF01ijk", "ZTF02xyz"])
@@ -946,7 +946,7 @@ class Test__FinkLightcurveQueries:
         fink_qm.create_paths()
 
         def mock_query(objectId, **kwargs):
-            print("in mock query")
+            # objectId because this mocks FINK server's internals.
             objectId_list = objectId.split(",")
             if all([oId.startswith("ZTF") for oId in objectId_list]):
                 if "ZTF00abc" in objectId_list:
@@ -955,12 +955,12 @@ class Test__FinkLightcurveQueries:
                     return pd.DataFrame()
             raise ValueError
 
-        objectId_list = [t.objectId for t in target_list] + ["CAND_01", "CAND_02"]
+        fink_id_list = [t.target_id for t in target_list] + ["CAND_01", "CAND_02"]
 
         with monkeypatch.context() as m:
             m.setattr("aas2rto.query_managers.fink.FinkQuery.query_objects", mock_query)
             success, failed = fink_qm.perform_lightcurve_queries(
-                objectId_list, chunk_size=2
+                fink_id_list, chunk_size=2
             )
             # will have chunks (ZTF00, ZTF01), (ZTF02, CAND_01), (CAND_02)
 
@@ -999,7 +999,9 @@ class Test__FinkLightcurveQueries:
         lc = fink_qm.load_single_lightcurve("ZTF01ijk")
         assert lc is None
 
-    def test__load_target_lightcurves(self, fink_qm, target_list, fink_lc):
+    def test__load_target_lightcurves(
+        self, fink_qm: FinkQueryManager, target_list, fink_lc
+    ):
         fink_qm.create_paths()
 
         for target in target_list:
@@ -1165,7 +1167,12 @@ class Test__Cutouts:
 class Test__PerformAllTasks:
 
     def test__perform_all_tasks(
-        self, fink_qm, alert_list, fink_lc, fink_query_results, monkeypatch
+        self,
+        fink_qm: FinkQueryManager,
+        alert_list,
+        fink_lc,
+        fink_query_results,
+        monkeypatch,
     ):
         t_ref = Time(60050.0, format="mjd")
 
@@ -1177,6 +1184,7 @@ class Test__PerformAllTasks:
         MockConsumer = create_mock_consumer(alert_list)
 
         def mock_lc_query(objectId, **kwargs):
+            # objectId as arg name because this mocks FINK server's internals.
             objectId_list = objectId.split(",")
             if "ZTF00abc" in objectId_list:
                 return fink_lc.copy()
