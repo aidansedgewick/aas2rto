@@ -42,7 +42,7 @@ class Target:
 
     Parameters
     ----------
-    objectId: str
+    target_id: str
         the main name your object should be called by.
     ra: float
         Right Ascension, in decimal degrees.
@@ -72,7 +72,7 @@ class Target:
 
     def __init__(
         self,
-        objectId: str,
+        target_id: str,
         ra: float,
         dec: float,
         target_data: Dict[str, TargetData] = None,
@@ -85,7 +85,7 @@ class Target:
         t_ref = t_ref or Time.now()
 
         # Basics
-        self.objectId = objectId
+        self.target_id = target_id
         self.update_coordinates(ra, dec)
         self.base_score = base_score
         self.compiled_lightcurve = None
@@ -108,7 +108,7 @@ class Target:
         # Is this source known by any other names?
         self.alt_ids = alt_ids or {}
         if source is not None and source not in self.alt_ids:
-            self.alt_ids[source] = objectId
+            self.alt_ids[source] = target_id
 
         # Keep track of what's going on
         self.creation_time = t_ref
@@ -121,8 +121,8 @@ class Target:
 
     def __str__(self):
         if self.ra is None or self.dec is None:
-            return f"{self.objectId}: NO COORDINATES FOUND!"
-        return f"{self.objectId}: (ra, dec)=({self.ra:.5f}, {self.dec:+.5f})"
+            return f"{self.target_id}: NO COORDINATES FOUND!"
+        return f"{self.target_id}: (ra, dec)=({self.ra:.5f}, {self.dec:+.5f})"
 
     def update_coordinates(self, ra: float, dec: float):
         self.ra = ra
@@ -131,9 +131,11 @@ class Target:
         self.astroplan_target = None
         if ra is not None and dec is not None:
             self.coord = SkyCoord(ra=ra, dec=dec, unit="deg")
-            self.astroplan_target = FixedTarget(self.coord, self.objectId)  # for plots?
+            self.astroplan_target = FixedTarget(
+                self.coord, self.target_id
+            )  # for plots?
         else:
-            logger.warning(f"{self.objectId}: ra={ra} or dec={dec} is None!")
+            logger.warning(f"{self.target_id}: ra={ra} or dec={dec} is None!")
 
     def get_target_data(self, source):
         """
@@ -283,11 +285,11 @@ class Target:
         t_ref = t_ref or Time.now()
         t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
 
-        info_lines = [f"Target {self.objectId} at {t_ref_str}, see:"]
+        info_lines = [f"Target {self.target_id} at {t_ref_str}, see:"]
         broker_lines = (
-            f"    FINK: fink-portal.org/{self.objectId}\n"
-            f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.objectId}\n"
-            f"    ALeRCE: alerce.online/object/{self.objectId}"
+            f"    FINK: fink-portal.org/{self.target_id}\n"
+            f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.target_id}\n"
+            f"    ALeRCE: alerce.online/object/{self.target_id}"
         )
         info_lines.append(broker_lines)
 
@@ -336,7 +338,7 @@ class Target:
     def write_comments(self, outdir: Path, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        logger.debug(f"{self.objectId}: writing comments")
+        logger.debug(f"{self.target_id}: writing comments")
 
         outdir = Path(outdir)
         outdir.mkdir(exist_ok=True, parents=True)
@@ -373,9 +375,9 @@ class Target:
 
         if last_score is not None:
             if self.to_reject or not np.isfinite(last_score):
-                lines.append(f"{self.objectId} rejected at {t_ref.iso}")
+                lines.append(f"{self.target_id} rejected at {t_ref.iso}")
 
-        comments_file = outdir / f"{self.objectId}_comments.txt"
+        comments_file = outdir / f"{self.target_id}_comments.txt"
         with open(comments_file, "w+") as f:
             f.writelines([l + "\n" for l in lines])
         return lines

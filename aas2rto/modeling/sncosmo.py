@@ -179,11 +179,11 @@ class SncosmoSaltModeler:
             )
             raise ModuleNotFoundError(msg)
 
-        objectId = target.objectId
+        target_id = target.target_id
         model_key = self.__name__
         target_has_model = model_key in target.models
         if self.existing_models_path is not None:
-            model_filepath = self.existing_models_path / f"{objectId}_{model_key}.pkl"
+            model_filepath = self.existing_models_path / f"{target_id}_{model_key}.pkl"
             if not target_has_model and model_filepath.exists():
                 model = read_salt_model(model_filepath, initializer=self.initializer)
                 if model is not None:
@@ -210,7 +210,7 @@ class SncosmoSaltModeler:
         # N_ztfr = N_detections.get("ztfr", 0)
         # enough_detections = (N_ztfg > 1 and N_ztfr > 1) or (N_ztfg + N_ztfr > 2)
         # if not enough_detections:
-        #     logger.debug(f"{target.objectId} too few detections:\n    {N_detections}")
+        #     logger.debug(f"{target.target_id} too few detections:\n    {N_detections}")
         #     return
         if len(detections) < self.min_detections:
             return
@@ -245,7 +245,7 @@ class SncosmoSaltModeler:
         if tns_data is not None:
             known_redshift = float(tns_data.parameters.get("Redshift", "nan"))
             if np.isfinite(known_redshift):
-                logger.debug(f"{target.objectId} use known TNS z={known_redshift:.3f}")
+                logger.debug(f"{target.target_id} use known TNS z={known_redshift:.3f}")
                 model.set(z=known_redshift)
                 fitting_params.remove("z")
                 bounds.pop("z")
@@ -268,7 +268,7 @@ class SncosmoSaltModeler:
                         )
                     except Exception as e:
                         errname = type(e).__name__
-                        msg = f"{target.objectId} mcmc: {errname}\n    {e}"
+                        msg = f"{target.target_id} mcmc: {errname}\n    {e}"
                         logger.warning(msg)
                         if self.show_traceback:
                             tr = traceback.format_exc()
@@ -279,11 +279,11 @@ class SncosmoSaltModeler:
                     fitted_model = lsq_fitted_model
                     result = lsq_result
             fitted_model.result = result
-            logger.debug(f"{target.objectId} fitted model!")
+            logger.debug(f"{target.target_id} fitted model!")
 
         except Exception as e:
             errname = type(e).__name__
-            msg = f"{target.objectId} lsq: {errname}\n    {e}"
+            msg = f"{target.target_id} lsq: {errname}\n    {e}"
             logger.warning(msg)
             if self.show_traceback:
                 tr = traceback.format_exc()

@@ -31,7 +31,7 @@ class TargetLookup:
 
     def update_id_mapping_single_target(self, target: Target):
 
-        target_id = target.objectId
+        target_id = target.target_id
         for alt_key, alt_id in target.alt_ids.items():
             self.id_mapping[alt_id] = target_id
         self.id_mapping[target_id] = target_id  # name should also refer to itself!
@@ -43,9 +43,9 @@ class TargetLookup:
             msg = f"new target {key} is type={type(target)}, not dk154_targets.target.Target"
             raise NotATargetError(msg)
 
-        target_id = target.objectId
+        target_id = target.target_id
         if key != target_id:
-            msg = f"__setitem__ key={key} should match target.objectId={target_id}"
+            msg = f"__setitem__ key={key} should match target.target_id={target_id}"
             warnings.warn(UserWarning(msg))
         self.lookup[key] = target
 
@@ -55,12 +55,12 @@ class TargetLookup:
         return target_id in self.id_mapping
 
     def add_target(self, target: Target):
-        self.__setitem__(target.objectId, target)
+        self.__setitem__(target.target_id, target)
 
     def get(self, target_id: str, default=None):
         """
         Behaves the same as get() method on dict.
-        Return the correct target if it's a known objectId/alt_id,
+        Return the correct target if it's a known target_id/alt_id,
         else return the default value, which default=None.
 
         """
@@ -97,14 +97,14 @@ class TargetLookup:
     def add_target(self, target: Target):
 
         for alt_id in target.alt_ids:
-            if target.objectId in self.id_mapping:
+            if target.target_id in self.id_mapping:
                 existing = self[alt_id]
                 msg = (
-                    f"target already exists with objectId={target.objectId}\n"
+                    f"target already exists with target_id={target.target_id}\n"
                     f"with alt_ids={existing.alt_ids}"
                 )
                 raise ValueError(msg)
-        self[target.objectId] = target
+        self[target.target_id] = target
 
     def update_target_id_mappings(self):
         for target_id, target in self.lookup.items():
@@ -197,7 +197,7 @@ def dfs_util(connected: list, vert: int, edges: dict, visited: dict, depth=0):
 def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
     """
     Merge all target data into a single target.
-    Choose the first target (ie, with coords, objectId, etc), and
+    Choose the first target (ie, with coords, target_id, etc), and
     add (overwrite) any target_data attributes sequentially
     for all the remaining targets in the list.
 
@@ -222,7 +222,7 @@ def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
         for key, target_data in target.target_data.items():
             if key in output.target_data:
                 msg = (
-                    f"In merge: {output.objectId}/{target.objectId}"
+                    f"In merge: {output.target_id}/{target.target_id}"
                     f"overwriting existing {key} target_data..."
                 )
                 if warn_overwrite:
@@ -237,7 +237,7 @@ def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
             existing_alt_id = output.alt_ids.get(key, None)
             if existing_alt_id is not None and alt_id != existing_alt_id:
                 msg = (
-                    f"In {output.objectId}/{target.objectId} merge: "
+                    f"In {output.target_id}/{target.target_id} merge: "
                     f"overwrite alt_id={existing_alt_id} with key={key}"
                 )
                 warnings.warn(DuplicateDataWarning(msg))

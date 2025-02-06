@@ -77,7 +77,7 @@ class DefaultObservatoryScoring:
         # reject = False  # Observatory factors should NOT reject targets.
         exclude = False  # If true, don't reject, but not interesting right now.
 
-        objectId = target.objectId
+        target_id = target.target_id
 
         timing_lookup = {}  # Internal use, tracking code performance.
 
@@ -90,7 +90,7 @@ class DefaultObservatoryScoring:
         # Get the observatory info
         obs_info = target.observatory_info.get(obs_name, None)
         if obs_info is None:
-            logger.warning(f"obs_info=None for {obs_name} {objectId}")
+            logger.warning(f"obs_info=None for {obs_name} {target_id}")
             target_altaz = None
             logger.warning("calc curr_sun_alt. this is slow!")
             scoring_comments.append("calculating alt is slow!")
@@ -157,14 +157,14 @@ class DefaultObservatoryScoring:
                 f"    {k}={v}" for k, v in factors.items() if not v > 0
             )
             scoring_comments.append(neg_factors)
-            logger.warning(f"{objectId} has negative factors:\n{neg_factors}")
+            logger.warning(f"{target_id} has negative factors:\n{neg_factors}")
             exclude = True
         if not all(np.isfinite(scoring_factors)):
             inf_factors = "\n".join(
                 f"    {k}={v}" for k, v in factors.items() if not np.isfinite(v)
             )
             scoring_comments.append(inf_factors)
-            logger.warning(f"{objectId} has inf factors:\n{inf_factors}")
+            logger.warning(f"{target_id} has inf factors:\n{inf_factors}")
 
         score = np.prod(scoring_factors)
 

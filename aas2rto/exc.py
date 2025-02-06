@@ -13,7 +13,7 @@ class MissingDateError(Exception):
     pass
 
 
-class MissingObjectIdError(Exception):
+class MissingTargetIdError(Exception):
     pass
 
 

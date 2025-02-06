@@ -21,7 +21,7 @@ except:
 
 from aas2rto import Target, TargetData
 from aas2rto import utils
-from aas2rto.exc import BadKafkaConfigError, MissingObjectIdError
+from aas2rto.exc import BadKafkaConfigError, MissingTargetIdError
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.utils import calc_file_age
 
@@ -177,6 +177,18 @@ def cutouts_from_fits(cutouts_file: Path) -> Dict[str, np.ndarray]:
                 logger.warning(f"{cutouts_file.stem} stamp HDU{ii} has type '{imtype}'")
             cutouts[imtype] = hdu.data
     return cutouts
+
+
+def alerce_id_from_target(target: Target, resolving_order=("alerce", "ztf", "lsst")):
+    for source_name in resolving_order:
+        alerce_id = target.alt_ids.get(source_name, None)
+        if alerce_id is not None:
+            return alerce_id
+    # last resort...
+    target_id = target.target_id
+    if target_id.lower().startswith("ztf") or target_id.lower().startswith("lsst"):
+        return alerce_id  # this must be the correct id for alerce.
+    return None
 
 
 class AlerceQueryManager(BaseQueryManager):

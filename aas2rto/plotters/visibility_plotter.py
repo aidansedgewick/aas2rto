@@ -151,7 +151,7 @@ class VisibilityPlotter:
         obs_name = get_observatory_name(self.observatory)
         if isinstance(target, Target):
             coord = target.coord
-            target_label = target.objectId
+            target_label = target.target_id
             obs_info = target.observatory_info.get(obs_name, None)
         elif isinstance(target, SkyCoord):
             coord = target

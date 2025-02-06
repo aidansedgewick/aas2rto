@@ -108,10 +108,10 @@ class DefaultLightcurvePlotter:
         self.ax = self.fig.add_subplot(self.lc_gs[:, :-1])
 
     def plot_photometry(self, target: Target, band_col=None):
-        objectId = target.objectId
+        target_id = target.target_id
 
         if target.compiled_lightcurve is None:
-            logger.warning(f"{objectId} has no compiled lightcurve for plotting.")
+            logger.warning(f"{target_id} has no compiled lightcurve for plotting.")
             return self.fig
         lightcurve = target.compiled_lightcurve.copy()
 
@@ -119,7 +119,7 @@ class DefaultLightcurvePlotter:
             if "jd" in lightcurve.columns:
                 time_dat = Time(lightcurve["jd"].values, format="jd")
             else:
-                msg = f"{objectId} missing date column to plot lightcurve: {lightcurve.columns}"
+                msg = f"{target_id} missing date column to plot lightcurve: {lightcurve.columns}"
                 logger.error(msg)
                 raise ValueError(msg)
             lightcurve.loc[:, "mjd"] = time_dat.mjd
@@ -127,7 +127,7 @@ class DefaultLightcurvePlotter:
         band_col = band_col or self.band_col
         if band_col not in lightcurve.columns:
             msg = (
-                f"{objectId} has no column '{band_col}' in compiled_lightcurve.columns"
+                f"{target_id} has no column '{band_col}' in compiled_lightcurve.columns"
             )
             print(list(lightcurve.columns))
             logger.error(msg)
@@ -163,7 +163,7 @@ class DefaultLightcurvePlotter:
                 N_ulim = len(ulimits)
                 if N_det + N_badqual + N_ulim != len(band_history):
                     msg = (
-                        f"{objectId}: N_det+N_badqual+N_ulim != len {band} lc "
+                        f"{target_id}: N_det+N_badqual+N_ulim != len {band} lc "
                         + f"({N_det}+{N_badqual}+{N_ulim} != {len(band_history)})"
                     )
                     logger.warning("\n    " + msg)
