@@ -106,7 +106,7 @@ class Test__CallScoringClass:
         func = SupernovaPeakScore()
         t_ref = Time(60005.0, format="mjd")
 
-        score, comms, reject_comms = func(mock_target, t_ref)
+        score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, 10.0)
 
@@ -114,7 +114,7 @@ class Test__CallScoringClass:
         func = SupernovaPeakScore()
         t_ref = Time(60005.0, format="mjd")
 
-        score, comms, reject_comms = func(mock_target_with_model, t_ref)
+        score, comms = func(mock_target_with_model, t_ref)
 
         # x_mag = 10, x_peak = 30.
         assert np.isclose(score, 300.0)
@@ -123,7 +123,7 @@ class Test__CallScoringClass:
         func = SupernovaPeakScore()
         t_ref = Time(60025.0, format="mjd")
 
-        score, comms, reject_comms = func(mock_target, t_ref)
+        score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, 5.0)
 
@@ -131,7 +131,7 @@ class Test__CallScoringClass:
         func = SupernovaPeakScore()
         t_ref = Time(60031.0, format="mjd")
 
-        score, comms, reject_comms = func(mock_target, t_ref)
+        score, comms = func(mock_target, t_ref)
 
         assert not np.isfinite(score)
 
@@ -142,12 +142,12 @@ class Test__CallScoringClass:
         mock_target.target_data["cool_source"] = td
 
         default_func = SupernovaPeakScore()
-        score, comms, rej_comms = default_func(mock_target, t_ref=t_ref)
+        score, comms = default_func(mock_target, t_ref=t_ref)
 
         assert np.isclose(score, 10.0)
 
         mod_func = SupernovaPeakScore(broker_priority=["cool_source", "fink"])
-        mod_score, comms, rej_comms = mod_func(mock_target, t_ref)
+        mod_score, comms = mod_func(mock_target, t_ref)
 
         assert np.isclose(mod_score, 10**0.5)
 
@@ -162,7 +162,7 @@ class Test__CallScoringClass:
 
         func = SupernovaPeakScore()
 
-        score, comms, reject_comms = func(mock_target, t_ref)
+        score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, 10**0.5)
 
@@ -175,7 +175,7 @@ class Test__CallScoringClass:
 
         func = SupernovaPeakScore()
 
-        score, comms, rej_comms = func(mock_target, t_ref)
+        score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, -1.0)
         assert comms[-1].startswith("ZTF00abc: none of")
@@ -189,7 +189,7 @@ class Test__CallScoringClass:
         mag_vals = mock_target.target_data["fink"].lightcurve["magpsf"].values
         assert all(mag_vals > faint_limit)
 
-        score, comms, reject_comms = func(mock_target, t_ref)
+        score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, -1.0)
 
@@ -210,7 +210,7 @@ class Test__CallScoringClass:
 
         assert t_ref.mjd - mjd_vals.min() < min_timespan
 
-        score, comms, reject_comms = func(mock_target, t_ref)
+        score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, -1.0)
 
@@ -229,7 +229,7 @@ class Test__CallScoringClass:
 
         assert len(mock_target.target_data["fink"].lightcurve) < min_obs
 
-        score, comms, reject_comms = func(mock_target, t_ref)
+        score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, -1.0)
 
@@ -249,9 +249,7 @@ class Test__CallScoringClass:
 
         func = SupernovaPeakScore()
 
-        score, comms, reject_comms = func(mock_target, t_ref)
-
-        print(comms)
+        score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, 10.0)
 
@@ -271,9 +269,7 @@ class Test__CallScoringClass:
 
         func = SupernovaPeakScore()
 
-        score, comms, reject_comms = func(mock_target, t_ref)
-
-        print(comms)
+        score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, 10.0)
 

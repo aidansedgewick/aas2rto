@@ -185,7 +185,7 @@ class DefaultLightcurveCompiler:
             "badqual_tag": self.badqual_tag,
         }
 
-        objectId = target.objectId
+        target_id = target.target_id
 
         # Select the best data from the ZTF brokers.
         broker_data = None
@@ -206,7 +206,7 @@ class DefaultLightcurveCompiler:
                 lightcurve_dfs.append(ztf_lc)
             except Exception as e:
                 print(e)
-                msg = f"can't process ztf_source {ztf_source}: {target.objectId}"
+                msg = f"can't process ztf_source {ztf_source}: {target.target_id}"
                 raise ValueError(msg)
 
         # Get ATLAS data

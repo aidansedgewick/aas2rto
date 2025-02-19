@@ -97,7 +97,7 @@ class SupernovaPeakScore:
         reject = False
         exclude = False  # If true, don't reject, but not interesting right now.
 
-        objectId = target.objectId
+        target_id = target.target_id
 
         ###===== Get the ZTF data (fink, lasair, etc.) =====###
 
@@ -114,7 +114,7 @@ class SupernovaPeakScore:
                     continue
                 if ztf_source.lightcurve is None:
                     # If eg. FINK has a fink "TargetData" obj, but no lightcurve...
-                    msg = f"{objectId} has `{source}` TargetData, but no lightcurve!"
+                    msg = f"{target_id} has `{source}` TargetData, but no lightcurve!"
                     logger.warning(msg)
                     ztf_source = None  # ...it's not useful, so skip anyway.
                     continue
@@ -122,17 +122,18 @@ class SupernovaPeakScore:
                 break
 
             if ztf_source is None:
-                msg = f"{objectId}: none of {self.broker_priority} available"
+                msg = f"{target_id}: none of {self.broker_priority} available"
                 scoring_comments.append(msg)
                 logger.warning(msg)
-                return -1.0, scoring_comments, reject_comments
+                scoring_comments.extend(reject_comments)
+                return -1.0, scoring_comments
             ztf_detections = ztf_source.detections
 
         ###===== Make a quick check on the MJD data... ===###
         if sum(ztf_detections["mjd"] > t_ref.mjd) > 0:
             mjd_max = ztf_detections["mjd"].max()
             mjd_warning = (
-                f"{objectId}:\n    highest date ({mjd_max:.3f}) "
+                f"{target_id}:\n    highest date ({mjd_max:.3f}) "
                 f"later than t_ref={t_ref.mjd:.3f} ?!"
             )
             logger.warning(mjd_warning)
@@ -211,7 +212,7 @@ class SupernovaPeakScore:
             if not np.isfinite(peak_dt):
                 interest_factor = 1.0
                 msg = (
-                    f"{objectId} interest_factor not finite:\n    "
+                    f"{target_id} interest_factor not finite:\n    "
                     f"dt={peak_dt:.2f}, mjd={t_ref.mjd:.2f}, t0={t0:.2f}"
                     f"{model.parameters}"
                 )
@@ -222,13 +223,13 @@ class SupernovaPeakScore:
 
             factors["interest_factor"] = interest_factor
             interest_comment = (
-                f"interest {interest_factor:.2f} from peak_dt={peak_dt:.2f}d"
+                f"interest {interest_factor:.2f} from peak_dt={peak_dt:+.2f}d"
             )
             scoring_comments.append(interest_comment)
 
             if peak_dt > self.max_timespan:
                 reject = True
-                reject_comments.append(f"too far past peak {peak_dt:.1f}")
+                reject_comments.append(f"REJECT: too far past peak ({peak_dt:+.1f}d)")
 
             ###===== Blue colour?
 
@@ -264,11 +265,11 @@ class SupernovaPeakScore:
 
         scoring_factors = np.array(list(factors.values()))
         if not all(scoring_factors > 0):
-            neg_factors = "\n".join(
+            neg_factors = "REJECT:\n" + "\n".join(
                 f"    {k}={v}" for k, v in factors.items() if not v > 0
             )
             reject_comments.append(neg_factors)
-            logger.warning(f"{objectId} has negative factors:\n{neg_factors}")
+            logger.warning(f"{target_id} has negative factors:\n{neg_factors}")
             exclude = True
 
         combined_factors = np.prod(scoring_factors)
@@ -276,12 +277,15 @@ class SupernovaPeakScore:
 
         # scoring_str = "\n".join(f"    {k}={v:.3f}" for k, v in factors.items())
         scoring_str = "\n".join(f"   {comm}" for comm in scoring_comments)
-        logger.debug(f"{objectId} has factors:\n {scoring_str}")
+        logger.debug(f"{target_id} has factors:\n {scoring_str}")
 
         if exclude:
             final_score = -1.0
         if reject:
             reject_str = "\n".join(f"    {comm}" for comm in reject_comments)
-            logger.debug(f"{objectId}:\n{reject_str}")
+            logger.debug(f"{target_id}:\n{reject_str}")
             final_score = -np.inf
-        return final_score, scoring_comments, reject_comments
+
+        scoring_comments.extend(reject_comments)
+
+        return final_score, scoring_comments

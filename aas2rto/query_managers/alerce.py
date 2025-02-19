@@ -21,7 +21,7 @@ except:
 
 from aas2rto import Target, TargetData
 from aas2rto import utils
-from aas2rto.exc import BadKafkaConfigError, MissingObjectIdError
+from aas2rto.exc import BadKafkaConfigError, MissingTargetIdError
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.utils import calc_file_age
 
@@ -39,12 +39,12 @@ QUERY_RESULTS_COLUMNS = (
 
 
 def combine_alerce_detections_non_detections(
-    detections: pd.DataFrame, non_detections: pd.DataFrame
+    detections: pd.DataFrame, non_detections: pd.DataFrame, dubious_flag="dubious"
 ) -> pd.DataFrame:
     detections["tag"] = "valid"
 
     dubious_mask = detections["dubious"]
-    detections.loc[dubious_mask, "tag"] = "badquality"
+    detections.loc[dubious_mask, "tag"] = dubious_flag
     if not detections["candid"].is_unique:
         raise ValueError("non-unique `candid` in detections.")
     if (non_detections is not None) and (not non_detections.empty):
@@ -52,7 +52,7 @@ def combine_alerce_detections_non_detections(
         if "parent_candid" in detections.columns:
             non_detections["parent_candid"] = -1
         non_detections["rfid"] = 0
-        non_detections.loc[:, "tag"] = "upperlim"
+        non_detections.loc[:, "tag"] = "nondet"
         lightcurve = pd.concat([detections, non_detections])
     else:
         lightcurve = detections
@@ -73,8 +73,11 @@ def process_alerce_query_results(raw_query_updates: pd.DataFrame, comparison="la
     return query_updates
 
 
-def empty_query_results(comparison="lastmjd"):
-    return pd.DataFrame(columns=["oid", comparison])
+def get_empty_query_results(extra_columns="lastmjd"):
+
+    if not isinstance(extra_columns, list):
+        extra_columns = list(extra_columns)
+    return pd.DataFrame(columns=["oid"] + extra_columns)
 
 
 def get_updates_from_query_results(
@@ -83,12 +86,12 @@ def get_updates_from_query_results(
     """
     Compare two dataframes of query_results. Get the rows which have been updated, or are new.
 
-    Index column should be objectId.
+    Index column should be oid
     """
 
     if updated_results is None or updated_results.empty:
         # Even if it's None, that's fine.
-        return empty_query_results(comparison=comparison)
+        return get_empty_query_results(extra_columns=comparison)
 
     updated_results = process_alerce_query_results(
         updated_results, comparison=comparison
@@ -100,31 +103,31 @@ def get_updates_from_query_results(
     existing_results = process_alerce_query_results(
         existing_results, comparison=comparison
     )  # Makes a COPY.
-    existing_results.set_index("objectId", verify_integrity=True)
+    existing_results.set_index("oid", verify_integrity=True)
 
     updates = []
-    for objectId, updated_row in updated_results.iterrows():
-        if objectId not in existing_results.index:
-            updates.append(updated_row)
+    for oid, updated_row in updated_results.iterrows():
+        if oid not in existing_results.index:
+            updates.append(updated_row)  # If we don't already know it, KEEP IT!
             continue
-        existing_row = existing_results.loc[objectId]
-        if updated_row[comparison] > updated_row[comparison]:
-            updates.append(updated_row)
+        existing_row = existing_results.loc[oid]
+        if updated_row[comparison] > existing_row[comparison]:
+            updates.append(updated_row)  # If it's been updated, KEEP IT!
 
     if len(updates) == 0:
-        return empty_query_results(comparison=comparison)
+        return get_empty_query_results(extra_columns=comparison)
     updates_df = pd.DataFrame(updates)
-    updates_df.sort_values("objectId", inplace=True)
+    updates_df.sort_values("oid", inplace=True)
     # updates_df.set_index("objectId", verify_integrity=True, inplace=True, drop=False)
     return updates_df
 
 
-def target_from_alerce_query_row(objectId: str, data: pd.Series):
+def target_from_alerce_query_row(target_id: str, data: pd.Series, t_ref: Time = None):
     if isinstance(data, dict):
         data = pd.Series(data)
     if "meanra" not in data or "meandec" not in data:
         msg = (
-            f"\033[33m{objectId} target_from_alerce_query_row\033[0m"
+            f"\033[33m{target_id} target_from_alerce_query_row\033[0m"
             f"\n     missing 'meanra'/'meandec' from row {data.index}"
         )
         logger.warning(msg)
@@ -135,20 +138,31 @@ def target_from_alerce_query_row(objectId: str, data: pd.Series):
                 logger.error(
                     f"\033[31mtarget_from_alerce_query_row\033[0m has data\n{data}"
                 )
-                raise ValueError("data passed has length greater than>1")
+                raise ValueError("your data has length greater than>1")
 
-    return Target(objectId, ra=data["meanra"], dec=data["meandec"])
+    ra = data["meanra"]
+    dec = data["meandec"]
+    alt_ids = {"ztf": target_id}
+    target = Target(
+        target_id, ra=ra, dec=dec, source="alerce", alt_ids=alt_ids, t_ref=t_ref
+    )
+    return target
 
 
 def target_from_alerce_lightcurve(
-    objectId, lightcurve: pd.DataFrame, t_ref: Time = None
+    target_id, lightcurve: pd.DataFrame, t_ref: Time = None
 ) -> Target:
     t_ref = t_ref or Time.now()
     lightcurve.sort_values("mjd", inplace=True)
     ra = lightcurve["ra"].iloc[-1]
     dec = lightcurve["dec"].iloc[-1]
+    alt_ids = {"ztf": target_id}
+    target = Target(
+        target_id, ra=ra, dec=dec, source="alerce", alt_ids=alt_ids, t_ref=t_ref
+    )
+
     alerce_data = TargetData(lightcurve=lightcurve)
-    target = Target(objectId, ra=ra, dec=dec, alerce_data=alerce_data)
+    target.target_data["alerce"] = alerce_data
     target.updated = True
     return target
 
@@ -163,6 +177,18 @@ def cutouts_from_fits(cutouts_file: Path) -> Dict[str, np.ndarray]:
                 logger.warning(f"{cutouts_file.stem} stamp HDU{ii} has type '{imtype}'")
             cutouts[imtype] = hdu.data
     return cutouts
+
+
+def alerce_id_from_target(target: Target, resolving_order=("alerce", "ztf", "lsst")):
+    for source_name in resolving_order:
+        alerce_id = target.alt_ids.get(source_name, None)
+        if alerce_id is not None:
+            return alerce_id
+    # last resort...
+    target_id = target.target_id
+    if target_id.lower().startswith("ztf") or target_id.lower().startswith("lsst"):
+        return alerce_id  # this must be the correct id for alerce.
+    return None
 
 
 class AlerceQueryManager(BaseQueryManager):
@@ -223,12 +249,13 @@ class AlerceQueryManager(BaseQueryManager):
     def query_and_collate_pages(
         self, query_pattern: dict, t_ref: Time = None, query_name="object_query"
     ):
+        t_ref = t_ref or Time.now()
+
         results_dfs = []
         page = 1
         n_results = self.query_parameters.get("n_objects", 25)
-        last_n_results = self.query_parameters.get("n_objects", 25)
+        last_n_results = n_results
         while last_n_results >= n_results:
-            print("try page", page)
             query_data = self.prepare_query_data(query_pattern, page, t_ref)
             name = f"alerce.query_objects.{query_name}"
             utils.check_unexpected_config_keys(
@@ -236,10 +263,10 @@ class AlerceQueryManager(BaseQueryManager):
             )
             try:
                 page_results = self.alerce_broker.query_objects(**query_data)
-            except:
-                logger.warning(f"alerce query failed page={page}")
+            except Exception as e:
+                msg = f"alerce query failed page={page}:\n    {type(e).__name__}: {e}"
+                logger.warning(msg)
                 break
-            print(page_results)
             results_dfs.append(page_results)
             page = page + 1
             last_n_results = len(page_results)
@@ -256,10 +283,33 @@ class AlerceQueryManager(BaseQueryManager):
         lastmjd_lookback = self.query_parameters["object_query_lastmjd_lookback"]
         if lastmjd_lookback is not None:
             query_data["lastmjd"] = t_ref.mjd - lastmjd_lookback
-        print("USE", query_data)
         return query_data
 
-    def query_for_object_updates(self, comparison="lastmjd", t_ref: Time = None):
+    def load_existing_query_results(self, t_ref: Time = None):
+        """
+        returns list of query names which are outdated of date query results
+        """
+        t_ref = t_ref or Time.now()
+
+        to_requery = []
+
+        for query_name in self.object_queries.keys():
+            query_results_file = self.get_query_results_file(query_name)
+            query_results_file_age = calc_file_age(query_results_file, t_ref)
+            if query_results_file_age > self.query_parameters["object_query_interval"]:
+                # we need to do this one again.
+                to_requery.append(query_name)
+
+            if self.query_results.get(query_name) is None:  # no query data to load...
+                if query_results_file.exists():
+                    query_results = pd.read_csv(query_results_file)
+                    query_results = process_alerce_query_results(query_results)
+                    self.query_results[query_name] = query_results
+        return to_requery
+
+    def query_for_object_updates(
+        self, to_requery=None, comparison="lastmjd", t_ref: Time = None
+    ):
         """
         Query for updates for each fink_class in fink_config["object_queries"]
         Compare with what we currently know about - if any are new, or updated,
@@ -269,52 +319,54 @@ class AlerceQueryManager(BaseQueryManager):
         ----------
         comparison [str]:
             column_name to compare to existing results to determine updates.
-            default="ndethist"
+            default="lastmjd"
         """
         t_ref = t_ref or Time.now()
 
-        update_dfs = []
-        for query_name, query_pattern in self.object_queries.items():
-            print(f"do query {query_name}")
-            query_results_file = self.get_query_results_file(query_name)
-            query_results_file_age = calc_file_age(query_results_file, t_ref)
+        if to_requery is None:
+            to_requery = list(self.object_queries.keys())
+            logger.info(f"re-run all {len(to_requery)} queries")
 
-            if self.query_results.get(query_name) is None:
-                if query_results_file.exists():
-                    query_results = pd.read_csv(query_results_file)
-                    query_results = process_alerce_query_results(query_results)
-                    self.query_results[query_name] = query_results
-            if query_results_file_age < self.query_parameters["object_query_interval"]:
-                continue  # Don't requery if the file is "recent"
+        update_dfs = []
+        for query_name in to_requery:
+            query_pattern = self.object_queries.get(query_name, None)
+            if query_pattern is None:
+                msg = f"unknown query_name '{query_pattern}':\n    known {list(self.object_queries.keys())}"
+                logger.warning(msg)
 
             query_updates = self.query_and_collate_pages(query_pattern, t_ref=t_ref)
             if query_updates is None or query_updates.empty:
-                updated_results = empty_query_results(comparison=comparison)
+                updated_results = get_empty_query_results(extra_columns=comparison)
             else:
                 updated_results = process_alerce_query_results(
                     query_updates, comparison=comparison
                 )
             existing_results = self.query_results.get(query_name, None)
             if existing_results is None:
-                existing_results = empty_query_results(comparison=comparison)
+                existing_results = get_empty_query_results(extra_columns=comparison)
             updates = get_updates_from_query_results(existing_results, updated_results)
+            logger.info(f"{len(updates)} from '{query_name}'")
 
             if not updates.empty:
                 update_dfs.append(updates)
 
-            query_results = pd.concat(
-                [existing_results, updated_results], ignore_index=True
-            )
+            if not existing_results.empty:
+                query_results = pd.concat(
+                    [existing_results, updated_results], ignore_index=True
+                )
+            else:
+                query_results = updates
             query_results = process_alerce_query_results(
                 query_results, comparison=comparison
             )
+            query_results_file = self.get_query_results_file(query_name)
             query_results.to_csv(
                 query_results_file, index=False
             )  # Save even if empty so don't re-query
             self.query_results[query_name] = query_results
 
         if len(update_dfs) == 0:
-            return empty_query_results(comparison=comparison)
+            return get_empty_query_results(extra_columns=comparison)
         updated_objects = pd.concat(update_dfs, ignore_index=True)
         updated_objects = process_alerce_query_results(updated_objects)
         return updated_objects
@@ -374,21 +426,19 @@ class AlerceQueryManager(BaseQueryManager):
                 break
             try:
                 logger.debug(f"query for {oid} lc")
-                detections = self.alerce_broker.query_detections(oid, format="pandas")
-                non_detections = self.alerce_broker.query_non_detections(
-                    oid, format="pandas"
-                )
+                lc_data = self.alerce_broker.query_lightcurve(oid)
+                det_df = pd.DataFrame(lc_data["detections"])
+                non_det_df = pd.DataFrame(lc_data["non_detections"])
             except Exception as e:
-                print(e)
+                logger.error(e)
                 logger.warning(f"{oid} lightcurve query failed")
                 failed.append(oid)
                 continue
 
-            lightcurve = combine_alerce_detections_non_detections(
-                detections, non_detections
-            )
+            lightcurve = combine_alerce_detections_non_detections(det_df, non_det_df)
             if lightcurve.empty:
                 logger.warning(f"\033[33m{oid} lightcurve empty!\033[0m")
+
             lightcurve.to_csv(lightcurve_file, index=False)
             success.append(oid)
 
@@ -627,7 +677,10 @@ class AlerceQueryManager(BaseQueryManager):
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        updated_objects = self.query_for_object_updates(t_ref=t_ref)
+        queries_to_run = self.load_existing_query_results(t_ref=t_ref)
+        updated_objects = self.query_for_object_updates(
+            to_requery=queries_to_run, t_ref=t_ref
+        )
         new_targets = self.new_targets_from_updates(updated_objects, t_ref=t_ref)
 
         # Lightcurves

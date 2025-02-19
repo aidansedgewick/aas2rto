@@ -23,6 +23,7 @@ from aas2rto.exc import (
 )
 from aas2rto.target import Target, TargetData, UnknownObservatoryWarning
 from aas2rto.target_selector import TargetSelector
+from aas2rto.target_lookup import TargetLookup
 
 
 @pytest.fixture
@@ -137,7 +138,7 @@ def selector_with_targets(selector_config, observatories_config, target_list, mo
         selector.add_target(target)
 
     assert len(selector.target_lookup) == 6
-    for objectId, target in selector.target_lookup.items():
+    for target_id, target in selector.target_lookup.items():
         assert len(target.target_data["ztf"].lightcurve) == 4
     return selector
 
@@ -216,8 +217,8 @@ class Test__SelectorInit:
         assert isinstance(selector.messengers_config, dict)
         assert isinstance(selector.paths_config, dict)
 
-        assert isinstance(selector.target_lookup, dict)
-        assert set(selector.target_lookup) == set()
+        assert isinstance(selector.target_lookup, TargetLookup)
+        assert set(selector.target_lookup.keys()) == set()
 
         assert isinstance(selector.paths, dict)
         expected_path_keys = [
@@ -422,7 +423,7 @@ class Test__TargetsOfOpportunity:
         t_opp_path = selector.opp_targets_path
         assert t_opp_path.exists()
 
-        T101_data = {"objectId": "T101", "ra": 45.0, "dec": 30.0, "base_score": 1000.0}
+        T101_data = {"target_id": "T101", "ra": 45.0, "dec": 30.0, "base_score": 1000.0}
         T101_file = t_opp_path / "target101.yaml"
         assert not T101_file.exists()
 
@@ -444,7 +445,7 @@ class Test__TargetsOfOpportunity:
         assert set(selector.target_lookup.keys()) == set(["T101"])
 
         target = selector.target_lookup["T101"]
-        assert target.objectId == "T101"
+        assert target.target_id == "T101"
         assert target.target_of_opportunity
         assert np.isclose(target.ra, 45.0)
         assert np.isclose(target.dec, 30.0)
@@ -462,14 +463,14 @@ class Test__TargetsOfOpportunity:
         t_opp_path = selector.opp_targets_path
         assert t_opp_path.exists()
 
-        T101_data = {"objectId": "T101", "ra": 45.0, "dec": 30.0, "base_score": 1000.0}
+        T101_data = {"target_id": "T101", "ra": 45.0, "dec": 30.0, "base_score": 1000.0}
         T101_file = t_opp_path / "target101.yaml"
         assert not T101_file.exists()
         with open(T101_file, "w+") as f:
             yaml.dump(T101_data, f)
         assert T101_file.exists()
 
-        T102_data = {"objectId": "T102", "ra": 90.0, "dec": 30.0, "base_score": 1000.0}
+        T102_data = {"target_id": "T102", "ra": 90.0, "dec": 30.0, "base_score": 1000.0}
         T102_file = t_opp_path / "target102.yaml"
         assert not T102_file.exists()
         with open(T102_file, "w+") as f:
@@ -506,7 +507,7 @@ def basic_lc_compiler(target: Target, t_ref: Time):
 class Test__CompileTargetLightcurves:
     def test__compiled_lightcurves(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
-        for objectId, target in selector.target_lookup.items():
+        for target_id, target in selector.target_lookup.items():
             assert target.compiled_lightcurve is None
 
         compiled, not_compiled = selector.compile_target_lightcurves(
@@ -515,7 +516,7 @@ class Test__CompileTargetLightcurves:
 
         assert set(compiled) == set(["T101", "T102", "T103", "T104", "T105", "T106"])
         assert set(not_compiled) == set()
-        for objectId, target in selector.target_lookup.items():
+        for target_id, target in selector.target_lookup.items():
             assert isinstance(target.compiled_lightcurve, pd.DataFrame)
             assert set(target.compiled_lightcurve.columns)
             assert len(target.compiled_lightcurve) == 3
@@ -546,10 +547,10 @@ def basic_scoring(target: Target, t_ref: Time):
     exclude = False
 
     detections = target.target_data["ztf"].detections
-    # Last row be:  T101  T102  T103  T104  T105  T106  T107  T108  T109  T110
-    #         mag:  18.0  18.2  18.4  18.6  18.8  19.0  19.2  19.4  19.6  19.8
-    #         mjd: 60003 60005 60007 60009 60011 60013
-    # and  factor:   2.0   1.8   1.6   1.4   1.2   1.0   0.8   0.6   0.4   0.2
+    # for each T:  T101  T102  T103  T104  T105  T106  T107  T108  T109  T110
+    #   last mag:  18.0  18.2  18.4  18.6  18.8  19.0  19.2  19.4  19.6  19.8
+    #   last mjd: 60003 60005 60007 60009 60011 60013
+    # and factor:   2.0   1.8   1.6   1.4   1.2   1.0   0.8   0.6   0.4   0.2
 
     last_mag = detections["mag"].iloc[-1]
     mag_factor = 20 - last_mag
@@ -557,15 +558,12 @@ def basic_scoring(target: Target, t_ref: Time):
     comms.append(f"mag_factor={mag_factor:.1f}")
 
     if last_mag > 19.5:
-        exclude = True
+        exclude = True  # excludes T109 T110
 
     delta_t = t_ref.mjd - detections["mjd"].iloc[-1]
     if delta_t > 20.0:
-        print(target.objectId, delta_t)
-        rej_comms.append(f"target {target.objectId} is old")
-        reject = True
-
-    print(comms, rej_comms)
+        rej_comms.append(f"REJECT: target {target.target_id} is old")
+        reject = True  # @mjd=600
 
     score = target.base_score * np.prod(factors)
     if exclude:
@@ -573,22 +571,28 @@ def basic_scoring(target: Target, t_ref: Time):
     if reject:
         score = -np.inf
 
-    return score, comms, rej_comms
+    comms.extend(rej_comms)
+
+    return score, comms
 
 
 def basic_scoring_no_comms(target: Target, t_ref: Time):
-    score, _, _ = basic_scoring(target, t_ref=t_ref)
+    score, _ = basic_scoring(target, t_ref=t_ref)
     return score
 
 
 def basic_obs_scoring(target, observatory, t_ref):
     obs_name = observatory.name
     comms = [f"obs_factor=0.5 fixed ({obs_name})"]
-    return 0.5, comms, []
+    return 0.5, comms
 
 
 def scoring_will_raise_error(target: Target, t_ref: Time):
     raise ValueError()
+
+
+def scoring_bad_return(target: Target, t_ref: Time):
+    return 10.0, ["some_comments"], "extra_junk"
 
 
 class ScoringClass:
@@ -598,8 +602,8 @@ class ScoringClass:
         self.multiplier = multiplier
 
     def __call__(self, target: Target, t_ref: Time):
-        score, comms, rej_comms = basic_scoring(target, t_ref)
-        return score * self.multiplier, comms, rej_comms
+        score, comms = basic_scoring(target, t_ref)
+        return score * self.multiplier, comms
 
 
 class ScoringClassNoName:
@@ -619,12 +623,11 @@ class Test__EvaluateTargets:
         assert set(T101.score_history.keys()) == set(["no_observatory"])
         assert len(T101.score_history["no_observatory"]) == 0  # There are no scores
 
-        score, comms, rej_comms = selector._evaluate_target_science_score(
+        score, comms = selector._evaluate_target_science_score(
             basic_scoring, T101, t_ref=t_ref
         )
         assert np.isclose(score, 2.00)
         assert set(comms) == set(["mag_factor=2.0"])
-        assert set(rej_comms) == set()
 
         assert (
             len(T101.score_history["no_observatory"]) == 0
@@ -640,12 +643,13 @@ class Test__EvaluateTargets:
         assert set(T101.score_history.keys()) == set(["no_observatory"])
         assert len(T101.score_history["no_observatory"]) == 0  # There are no scores
 
-        score, comms, rej_comms = selector._evaluate_target_science_score(
+        score, comms = selector._evaluate_target_science_score(
             basic_scoring_no_comms, T101, t_ref=t_ref
         )
         assert np.isclose(score, 2.00)  # The same as before...
-        assert set(comms) == set(["no score_comments provided"])
-        assert set(rej_comms) == set(["no reject_comments provided"])
+        assert len(comms) == 1
+        assert "no score_comments provided" in comms[0]
+        # assert set(rej_comms) == set(["no reject_comments provided"])
         assert len(T101.score_history["no_observatory"]) == 0
 
     def test__wrapper_eval_obs_score(self, selector_with_targets: TargetSelector):
@@ -823,8 +827,8 @@ class Test__EvaluateTargets:
         )
 
     def test__remove_rejected_targets(self, selector_with_targets: TargetSelector):
-        selector = selector_with_targets
-        t_lookup = selector.target_lookup
+        selector = selector_with_targets  # rename for ease
+        t_lookup = selector.target_lookup  # rename for ease
 
         t1 = Time(60026.0, format="mjd")  # should remove T101, T102
         selector.evaluate_targets(basic_scoring, t_ref=t1)
@@ -839,7 +843,7 @@ class Test__EvaluateTargets:
         # Not testing comms yet...
         removed = selector.remove_rejected_targets(t_ref=t1, write_comments=False)
 
-        assert set([t.objectId for t in removed]) == set(["T101", "T102"])
+        assert set([t.target_id for t in removed]) == set(["T101", "T102"])
         assert set(t_lookup.keys()) == set(["T103", "T104", "T105", "T106"])
 
         t2 = Time(60028.0, format="mjd")  # Remove T103
@@ -850,7 +854,7 @@ class Test__EvaluateTargets:
         # Don't test comms yet
         removed = selector.remove_rejected_targets(t_ref=t2, write_comments=False)
 
-        assert set([t.objectId for t in removed]) == set(["T103"])
+        assert set([t.target_id for t in removed]) == set(["T103"])
         assert set(t_lookup.keys()) == set(["T104", "T105", "T106"])
 
 
@@ -894,7 +898,7 @@ class Test__SelectorBuildModels:
 
         selector.build_target_models(basic_modeler, t_ref=t_ref)
 
-        for objectId, target in t_lookup.items():
+        for target_id, target in t_lookup.items():
             assert set(target.models.keys()) == set(["basic_modeler"])
             assert isinstance(target.models["basic_modeler"], BasicModel)
             assert np.isclose(target.models_t_ref["basic_modeler"].mjd, 60000.0)
@@ -921,7 +925,7 @@ class Test__SelectorBuildModels:
 
         selector.build_target_models(other_modeler)
 
-        for objectId, target in t_lookup.items():
+        for target_id, target in t_lookup.items():
             assert set(target.models.keys()) == set(["other_modeler"])
 
         assert isinstance(t_lookup["T101"].models["other_modeler"], AnotherModel)
@@ -969,7 +973,7 @@ class Test__WriteTargetComments:
         selector.evaluate_targets(basic_scoring, t_ref=t_ref)
         rejected = selector.remove_rejected_targets(t_ref=t_ref)
 
-        assert set([t.objectId for t in rejected]) == set(["T101", "T102"])
+        assert set([t.target_id for t in rejected]) == set(["T101", "T102"])
 
         expected_comms_names = ["T101_comments.txt", "T102_comments.txt"]
         rejected_comms_names = [
@@ -998,8 +1002,8 @@ class Test__Plotting:
         selector = selector_with_targets
         t_ref = Time(60015.0, format="mjd")
 
-        for objectId in ["T103", "T104", "T105", "T106"]:
-            selector.target_lookup.pop(objectId)
+        for target_id in ["T103", "T104", "T105", "T106"]:
+            selector.target_lookup.pop(target_id)
             # Don't make more plots than necessary.
 
         selector.plot_target_lightcurves()
@@ -1030,8 +1034,8 @@ class Test__Plotting:
 
         assert np.isclose(selector.selector_parameters["plotting_interval"], 0.25)
 
-        for objectId in ["T103", "T104", "T105", "T106"]:
-            t_lookup.pop(objectId)
+        for target_id in ["T103", "T104", "T105", "T106"]:
+            t_lookup.pop(target_id)
             # Don't make more plots than necessary.
 
         T101 = selector.target_lookup["T101"]
@@ -1130,20 +1134,20 @@ class Test__Ranking:
             None, plots=False, t_ref=t_ref
         )
 
-        assert set(ranked_list.columns) == set("objectId score ra dec ranking".split())
+        assert set(ranked_list.columns) == set("target_id score ra dec ranking".split())
         assert len(ranked_list) == 4
-        assert set(ranked_list["objectId"]) == set(["T102", "T103", "T104", "T105"])
+        assert set(ranked_list["target_id"]) == set(["T102", "T103", "T104", "T105"])
 
-        assert ranked_list.iloc[0].objectId == "T102"
+        assert ranked_list.iloc[0].target_id == "T102"
         assert ranked_list.iloc[0].ranking == 1
         assert np.isclose(ranked_list.iloc[0].score, 1.8)
-        assert ranked_list.iloc[1].objectId == "T103"
+        assert ranked_list.iloc[1].target_id == "T103"
         assert ranked_list.iloc[1].ranking == 2
         assert np.isclose(ranked_list.iloc[1].score, 1.6)
-        assert ranked_list.iloc[2].objectId == "T104"
+        assert ranked_list.iloc[2].target_id == "T104"
         assert ranked_list.iloc[2].ranking == 3
         assert np.isclose(ranked_list.iloc[2].score, 1.4)
-        assert ranked_list.iloc[3].objectId == "T105"
+        assert ranked_list.iloc[3].target_id == "T105"
         assert ranked_list.iloc[3].ranking == 4
         assert np.isclose(ranked_list.iloc[3].score, 1.2)
 
@@ -1171,7 +1175,7 @@ class Test__Ranking:
 
         result = pd.read_csv(exp_ranked_list_path)
         assert len(result) == 4
-        assert set(result.columns) == set("objectId score ra dec ranking".split())
+        assert set(result.columns) == set("target_id score ra dec ranking".split())
 
     def test__rank_all_obs(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
@@ -1214,8 +1218,8 @@ class Test__Ranking:
         assert T106.rank_history["lasilla"][0][0] == 9999
         assert T106.rank_history["ucph"][0][0] == 9999
 
-        for objectId in ["T101", "T102", "T103", "T104", "T105", "T106"]:
-            target = t_lookup[objectId]
+        for target_id in ["T101", "T102", "T103", "T104", "T105", "T106"]:
+            target = t_lookup[target_id]
             for obs in ["no_observatory", "lasilla", "ucph"]:
                 assert len(target.rank_history[obs]) == 1
                 assert np.isclose(target.rank_history[obs][0][1].mjd, 60015.0)
@@ -1295,7 +1299,7 @@ class Test__ResettingTasks:
         assert selector.target_lookup["T101"].send_updates is False
         assert len(selector.target_lookup["T101"].update_messages) == 0
 
-    def test__clear_output_plots(self, selector_with_targets):
+    def test__clear_output_plots(self, selector_with_targets: TargetSelector):
         selector = selector_with_targets
 
         no_obs_figs_path = selector.get_output_plots_path("no_observatory")
@@ -1370,13 +1374,13 @@ class Test__ExisitingTargets:
         assert exp_targets_path.exists()
 
         result = pd.read_csv(exp_targets_path)
-        assert set(result.columns) == set(["objectId", "ra", "dec", "base_score"])
+        assert set(result.columns) == set(["target_id", "ra", "dec", "base_score"])
 
-        assert set(result["objectId"]) == set(
+        assert set(result["target_id"]) == set(
             ["T101", "T102", "T103", "T104", "T105", "T106"]
         )
 
-        result.set_index("objectId", inplace=True)
+        result.set_index("target_id", inplace=True)
         assert np.isclose(result.loc["T101"].ra, 15.0)
         assert np.isclose(result.loc["T102"].ra, 30.0)
         assert np.isclose(result.loc["T103"].ra, 45.0)
@@ -1434,12 +1438,12 @@ class Test__ExisitingTargets:
             selector.existing_targets_path / "recover_230227_000000.csv"
         )
 
-        assert set(result.columns) == set(["objectId", "ra", "dec", "base_score"])
+        assert set(result.columns) == set(["target_id", "ra", "dec", "base_score"])
 
-        exp_objectIds = [f"T{n}" for n in range(101, 111)]
-        assert set(result["objectId"]) == set(exp_objectIds)
+        exp_target_ids = [f"T{n}" for n in range(101, 111)]
+        assert set(result["target_id"]) == set(exp_target_ids)
 
-        result.set_index("objectId", inplace=True)
+        result.set_index("target_id", inplace=True)
         assert np.isclose(result.loc["T106"].base_score, 1.0)
         assert np.isclose(result.loc["T107"].base_score, 1000.0)
         assert np.isclose(result.loc["T108"].base_score, 1000.0)
@@ -1451,11 +1455,11 @@ class Test__ExisitingTargets:
                 ("T202", 180.0, 45.0, 100.0),
                 ("T203", 270.0, 45.0, 200.0),
             ],
-            columns="objectId ra dec base_score".split(),
+            columns="target_id ra dec base_score".split(),
         )
 
         early_df = df.iloc[:-1]
-        assert set(early_df["objectId"]) == set(["T201", "T202"])
+        assert set(early_df["target_id"]) == set(["T201", "T202"])
         early_df.to_csv(
             selector.existing_targets_path / "recover_230225.csv", index=False
         )
@@ -1477,11 +1481,11 @@ class Test__ExisitingTargets:
                 ("T202", 180.0, 45.0, 100.0),
                 ("T203", 270.0, 45.0, 200.0),
             ],
-            columns="objectId ra dec base_score".split(),
+            columns="target_id ra dec base_score".split(),
         )
 
         early_df = df.iloc[:-1]
-        assert set(early_df["objectId"]) == set(["T201", "T202"])
+        assert set(early_df["target_id"]) == set(["T201", "T202"])
         early_df.to_csv(
             selector.existing_targets_path / "recover_230225.csv", index=False
         )
@@ -1647,7 +1651,7 @@ class Test__LoopingFunctions:
         T104.updated = False  # Same for T105, T106
         # Should have models
 
-        for objectId, target in selector.target_lookup.items():
+        for target_id, target in selector.target_lookup.items():
             assert target.compiled_lightcurve is None
 
         # ACTION
@@ -1660,7 +1664,7 @@ class Test__LoopingFunctions:
         )
         assert selector.query_managers["new_qm"].tasks_performed is True
 
-        for objectId, target in selector.target_lookup.items():
+        for target_id, target in selector.target_lookup.items():
             # Scored once by pre-check, and then once in evaluate
             assert len(target.score_history["no_observatory"]) == 2
             assert len(target.score_history["lasilla"]) == 1
@@ -1692,16 +1696,16 @@ class Test__LoopingFunctions:
         # score_hist_path = selector.existing_targets_path / "score_history"
         # assert score_hist_path.exists()
         # exp_score_hist = [
-        #     score_hist_path / f"{objectId}.csv"
-        #     for objectId in "T101 T102 T103 T104 T105 T106".split()
+        #     score_hist_path / f"{target_id}.csv"
+        #     for target_id in "T101 T102 T103 T104 T105 T106".split()
         # ]
         # assert set([f for f in score_hist_path.glob("*")]) == set(exp_score_hist)
 
         # rank_hist_path = selector.existing_targets_path / "rank_history"
         # assert rank_hist_path.exists()
         # exp_rank_hist = [
-        #     rank_hist_path / f"{objectId}.csv"
-        #     for objectId in "T101 T102 T103 T104 T105 T106".split()
+        #     rank_hist_path / f"{target_id}.csv"
+        #     for target_id in "T101 T102 T103 T104 T105 T106".split()
         # ]
         # assert set([f for f in rank_hist_path.glob("*")]) == set(exp_rank_hist)
 

@@ -13,9 +13,9 @@ import pandas as pd
 
 from astropy.time import Time
 
-from aas2rto import Target
+from aas2rto import utils
 from aas2rto.query_managers.base import BaseQueryManager
-from aas2rto.utils import calc_file_age
+from aas2rto.target import Target
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -25,7 +25,7 @@ def target_from_yse():
 
 
 def target_from_yse_query_row(
-    objectId, row: pd.Series, coordinate_columns: Tuple[str, str] = None
+    target_id, row: pd.Series, coordinate_columns: Tuple[str, str] = None
 ):
     if not isinstance(row, pd.Series):
         row = pd.Series(row)
@@ -43,9 +43,9 @@ def target_from_yse_query_row(
             dec = row[dec_col]
             break
     if ra is None or dec is None:
-        logger.debug(f"can't guess coordinate columns for {objectId}")
+        logger.debug(f"can't guess coordinate columns for {target_id}")
 
-    target = Target(objectId, ra=ra, dec=dec)
+    target = Target(target_id, ra=ra, dec=dec, source="yse")
     return target
 
 
@@ -66,7 +66,7 @@ def process_yse_lightcurve(input_lightcurve: pd.DataFrame, only_yse_data=True):
     jd_dat = Time(lightcurve["mjd"].values, format="mjd").jd
     lightcurve.insert(1, "jd", jd_dat)
     if only_yse_data:
-        lightcurve.query("instrument=='GPC1'", inplace=True)
+        # lightcurve.query("instrument=='GPC1'", inplace=True)
         lightcurve = lightcurve[lightcurve["instrument"].str.startswith("GPC")]
     lightcurve.query("(0<magerr) & (magerr < 1)", inplace=True)
     lightcurve.reset_index(drop=True)
@@ -96,14 +96,27 @@ def _get_indicator_column(query_config, query_updates: pd.DataFrame):
     return update_indicator
 
 
+def yse_id_from_target(target, resolving_order=("yse",)):
+
+    target_id = target.target_id
+    if target_id.lower().startswith("yse"):
+        yse_id = target_id
+        return yse_id
+    for source_name in resolving_order:
+        yse_id = target.alt_ids.get(source_name, None)
+        if yse_id is not None:
+            return yse_id
+    return None
+
+
 class YseQueryManager(BaseQueryManager):
     name = "yse"
     default_query_parameters = {
         "n_objects": 25,
-        "interval": 1.0,  # how often to query for new objects
-        "update": 2.0,  # how often to update each target
+        "object_query_interval": 1.0,  # how often to query for new objects
+        "lightcurve_update_interval": 2.0,  # how often to update each target
         "max_latest_lookback": 30.0,  # bad if latest data is older than 30 days
-        "max_earliest_lookback": 70.0,  # bad if the younest data is older than 70 days (AGN!)
+        "max_earliest_lookback": 70.0,  # bad if the youngest data is older than 70 days (AGN!)
         "max_failed_queries": 10,  # after X failed queries, stop trying
         "max_total_query_time": 600,  # total time to spend in each stage seconds
         "use_only_yse": True,
@@ -153,7 +166,7 @@ class YseQueryManager(BaseQueryManager):
         for query_id, column_data in self.yse_queries.items():
             query_name = f"yse_{query_id}"
             query_results_file = self.get_query_results_file(query_name)
-            results_file_age = calc_file_age(
+            results_file_age = utils.calc_file_age(
                 query_results_file, t_ref, allow_missing=True
             )
             if results_file_age < self.query_parameters["interval"]:
@@ -195,13 +208,12 @@ class YseQueryManager(BaseQueryManager):
             return new_targets
 
         logger.info(f"{len(updates)} updates to process")
-        for objectId, row in updates.iterrows():
-            target = self.target_lookup.get(objectId, None)
+        for yse_id, row in updates.iterrows():
+            target = self.target_lookup.get(yse_id, None)
             if target is not None:
                 continue
             if "query_id" in row.index:
                 query_id = row.query_id
-
                 coordinate_columns = self.yse_queries[query_id].get("coordinates", None)
                 if coordinate_columns is not None:
                     if len(coordinate_columns) != 2:
@@ -213,10 +225,10 @@ class YseQueryManager(BaseQueryManager):
             else:
                 coordinate_columns = None
             target = target_from_yse_query_row(
-                objectId, row, coordinate_columns=coordinate_columns
+                yse_id, row, coordinate_columns=coordinate_columns
             )
-            self.target_lookup[objectId] = target
-            new_targets.append(objectId)
+            self.target_lookup[yse_id] = target
+            new_targets.append(yse_id)
         return new_targets
 
     def target_updates_from_query_results(self, t_ref: Time = None):
@@ -237,16 +249,16 @@ class YseQueryManager(BaseQueryManager):
                 )
                 continue
             # existing_results.sort_values(["oid", "lastmjd"], inplace=True)
-            for objectId, updated_row in updated_results.iterrows():
-                if objectId in existing_results.index:
-                    existing_row = existing_results.loc[objectId]
+            for target_id, updated_row in updated_results.iterrows():
+                if target_id in existing_results.index:
+                    existing_row = existing_results.loc[target_id]
                     if update_indicator is None:
-                        updated_targets.append(objectId)
+                        updated_targets.append(target_id)
                         continue
                     if updated_row[update_indicator] > existing_row[update_indicator]:
-                        updated_targets.append(objectId)
+                        updated_targets.append(target_id)
                 else:
-                    updated_targets.append(objectId)
+                    updated_targets.append(target_id)
             self.query_results[query_id] = updated_results
             updated = updated_results.loc[updated_targets]
             update_dfs.append(updated)
@@ -260,52 +272,52 @@ class YseQueryManager(BaseQueryManager):
         return yse_updates
 
     def get_transient_parameters_to_query(
-        self, objectId_list: List[str] = None, t_ref: Time = None
+        self, target_id_list: List[str] = None, t_ref: Time = None
     ):
         t_ref = t_ref or Time.now()
 
-        if objectId_list is None:
-            objectId_list = list(self.target_lookup.keys())
+        if target_id_list is None:
+            target_id_list = list(self.target_lookup.keys())
 
         to_query = []
-        for objectId in objectId_list:
-            parameters_file = self.get_parameters_file(objectId, fmt="json")
-            parameters_file_age = calc_file_age(
+        for target_id in target_id_list:
+            parameters_file = self.get_parameters_file(target_id, fmt="json")
+            parameters_file_age = utils.calc_file_age(
                 parameters_file, t_ref, allow_missing=True
             )
             if parameters_file_age > self.query_parameters["interval"]:
-                to_query.append(objectId)
+                to_query.append(target_id)
         return to_query
 
-    def perform_transient_parameters_queries(self, objectId_list, t_ref: Time = None):
+    def perform_transient_parameters_queries(self, target_id_list, t_ref: Time = None):
         t_ref = t_ref or Time.now()
         success = []
         failed = []
 
-        logger.info(f"attempt {len(objectId_list)} transient parameter queries")
+        logger.info(f"attempt {len(target_id_list)} transient parameter queries")
         t_start = time.perf_counter()
-        for objectId in objectId_list:
+        for target_id in target_id_list:
             if len(failed) >= self.query_parameters["max_failed_queries"]:
                 msg = f"Too many failed transient parameters queries ({len(failed)}). Stop for now."
                 logger.info(msg)
                 break
-            logger.debug(f"transient query for {objectId}")
+            logger.debug(f"transient query for {target_id}")
             try:
                 transient_parameters = YseQuery.query_transient_parameters(
-                    objectId, auth=self.auth
+                    target_id, auth=self.auth
                 )
             except Exception as e:
-                failed.append(objectId)
+                failed.append(target_id)
                 print(f"failed", e)
                 continue
             if transient_parameters is None:
                 continue
             if len(transient_parameters) == 0:
                 continue
-            parameters_file = self.get_parameters_file(objectId, fmt="json")
+            parameters_file = self.get_parameters_file(target_id, fmt="json")
             with open(parameters_file, "w+") as f:
                 json.dump(transient_parameters, f)
-            success.append(objectId)
+            success.append(target_id)
 
         N_success = len(success)
         N_failed = len(failed)
@@ -316,25 +328,25 @@ class YseQueryManager(BaseQueryManager):
         return success, failed
 
     def load_transient_parameters(
-        self, objectId_list: List[str] = None, t_ref: Time = None
+        self, target_id_list: List[str] = None, t_ref: Time = None
     ):
         t_ref = t_ref or Time.now()
 
-        if objectId_list is None:
-            objectId_list = list(self.target_lookup.keys())
+        if target_id_list is None:
+            target_id_list = list(self.target_lookup.keys())
 
         loaded = []
         missing = []
         coords_updated = []
         t_start = time.perf_counter()
-        for objectId in objectId_list:
-            target = self.target_lookup.get(objectId, None)
+        for target_id in target_id_list:
+            target = self.target_lookup.get(target_id, None)
             if target is None:
-                logger.warning(f"\033[33mmissing target {objectId}\033[0m")
+                logger.warning(f"\033[33mmissing target {target_id}\033[0m")
                 continue
-            parameters_file = self.get_parameters_file(objectId, fmt="json")
+            parameters_file = self.get_parameters_file(target_id, fmt="json")
             if not parameters_file.exists():
-                missing.append(objectId)
+                missing.append(target_id)
             with open(parameters_file, "r") as f:
                 parameters = json.load(f)
             target.yse_data.parameters = parameters
@@ -343,7 +355,7 @@ class YseQueryManager(BaseQueryManager):
                 dec = parameters.get("dec", None)
                 if (ra is not None) and (dec is not None):
                     target.update_coordinates(ra, dec)
-                    coords_updated.append(objectId)
+                    coords_updated.append(target_id)
 
         t_end = time.perf_counter()
         N_loaded = len(loaded)
@@ -358,38 +370,40 @@ class YseQueryManager(BaseQueryManager):
 
     def check_coordinates(self):
         missing_coordinates = []
-        for objectId, target in self.target_lookup.items():
+        for target_id, target in self.target_lookup.items():
             if target.ra is None or target.dec is None:
-                missing_coordinates.append(objectId)
+                missing_coordinates.append(target_id)
         if len(missing_coordinates) > 0:
             logger.warning(f"\033[33m{len(missing_coordinates)} missing ra/dec!\033[0m")
 
-    def get_lightcurves_to_query(
-        self, objectId_list: List[str] = None, t_ref: Time = None
-    ):
+    def get_lightcurves_to_query(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        if objectId_list is None:
-            objectId_list = list(self.target_lookup.keys())
         to_query = []
-        for objectId in objectId_list:
-            lightcurve_file = self.get_lightcurve_file(objectId)
-            lightcurve_file_age = calc_file_age(
+        for target_id, target in self.target_lookup.items():
+            yse_id = yse_id_from_target(target)
+            if yse_id is None:
+                continue
+            lightcurve_file = self.get_lightcurve_file(yse_id)
+            lightcurve_file_age = utils.calc_file_age(
                 lightcurve_file, t_ref, allow_missing=True
             )
-            if lightcurve_file_age > self.query_parameters["update"]:
-                to_query.append(objectId)
+
+            interval = self.query_parameters["lightcurve_update_interval"]
+            if lightcurve_file_age > interval:
+                to_query.append(yse_id)
         return to_query
 
-    def perform_lightcurve_queries(self, objectId_list, t_ref: Time = None):
+    def perform_lightcurve_queries(self, yse_id_list=None, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
         success = []
         failed = []
-        logger.info(f"attempt {len(objectId_list)} lightcurve queries")
+
+        logger.info(f"attempt {len(yse_id_list)} lightcurve queries")
         t_start = time.perf_counter()
-        for objectId in objectId_list:
-            lightcurve_file = self.get_lightcurve_file(objectId)
+        for yse_id in yse_id_list:
+            lightcurve_file = self.get_lightcurve_file(yse_id)
             if len(failed) >= self.query_parameters["max_failed_queries"]:
                 msg = f"Too many failed queries ({len(failed)}), stop for now"
                 logger.info(msg)
@@ -398,13 +412,14 @@ class YseQueryManager(BaseQueryManager):
             if t_now - t_start > self.query_parameters["max_total_query_time"]:
                 logger.info(f"querying time ({t_now - t_start:.1f}s) exceeded max")
                 break
+
             try:
-                logger.debug(f"query for {objectId} lc")
-                lightcurve = YseQuery.query_lightcurve(objectId, auth=self.auth)
+                logger.debug(f"query for {yse_id} lc")
+                lightcurve = YseQuery.query_lightcurve(yse_id, auth=self.auth)
             except Exception as e:
                 print(e)
-                logger.warning(f"{objectId} lightcurve query failed")
-                failed.append(objectId)
+                logger.warning(f"{yse_id} lightcurve query failed")
+                failed.append(yse_id)
                 continue
             if lightcurve.empty:
                 lightcurve.to_csv(lightcurve_file, index=True)
@@ -412,10 +427,10 @@ class YseQueryManager(BaseQueryManager):
             try:
                 lightcurve = process_yse_lightcurve(lightcurve)
             except KeyError as e:
-                logger.error(f"{objectId}")
+                logger.error(f"{yse_id}")
                 raise ValueError
             lightcurve.to_csv(lightcurve_file, index=False)
-            success.append(objectId)
+            success.append(yse_id)
 
         N_success = len(success)
         N_failed = len(failed)
@@ -426,44 +441,16 @@ class YseQueryManager(BaseQueryManager):
 
         return success, failed
 
-    def load_lightcurves(self, objectId_list=None, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        if objectId_list is None:
-            objectId_list = list(self.target_lookup.keys())
-
-        loaded = []
-        missing = []
-        t_start = time.perf_counter()
-        for objectId in objectId_list:
-            lightcurve_file = self.get_lightcurve_file(objectId)
-            if not lightcurve_file.exists():
-                missing.append(objectId)
-                continue
-            target = self.target_lookup.get(objectId, None)
-            lightcurve = pd.read_csv(lightcurve_file)
-            # TODO: not optimum to read every time... but not a bottleneck for now.
-            if target is None:
-                logger.warning(f"target {objectId} missing")
-            else:
-                existing_lightcurve = target.yse_data.lightcurve
-                if existing_lightcurve is not None:
-                    if len(lightcurve) == len(existing_lightcurve):
-                        continue
-            # lightcurve.sort_values("jd", inplace=True)
-            loaded.append(objectId)
-            target.yse_data.add_lightcurve(lightcurve)
-            target.updated = True
-            # if target.yse_data.lightcurve.iloc[-1, "candid"]
-        t_end = time.perf_counter()
-
-        N_loaded = len(loaded)
-        N_missing = len(missing)
-        if N_loaded > 0:
-            logger.info(f"loaded {N_loaded} lightcurves in {t_end-t_start:.1f}s")
-        if N_missing > 0:
-            logger.warning(f"{N_missing} lightcurves missing...")
-        return loaded, missing
+    def load_single_lightcurve(self, yse_id, t_ref=None):
+        lightcurve_filepath = self.get_lightcurve_file(yse_id)
+        if not lightcurve_filepath.exists():
+            logger.warning(f"{yse_id} is missing lightcurve")
+            return None
+        try:
+            lightcurve = pd.read_csv(lightcurve_filepath)
+        except pd.errors.EmptyDataError as e:
+            logger.warning(f"bad (empty) lightcurve file for {fink_id}")
+            return None
 
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -496,17 +483,6 @@ class YseQueryManager(BaseQueryManager):
         self.check_coordinates()
         self.query_updates_available = False
 
-    # def apply_messenger_updates(self, alerts):
-    #     for alert in alerts:
-    #         objectId = alert["objectId"]
-    #         target = self.target_lookup.get(objectId, None)
-    #         if target is None:
-    #             continue
-    #         target.send_updates = True
-    #         topic_str = alert["topic"]
-    #         alert_text = f"updates from yse {objectId}"
-    #         target.update_messages.append(alert_text)
-
 
 class YseQuery:
     """See also https://github.com/berres2002/prep"""
@@ -518,14 +494,12 @@ class YseQuery:
     @classmethod
     def prepare_auth(cls, credential_config) -> HTTPBasicAuth:
         required = cls.required_credential_parameters
-        missing = [kw for kw in required if kw not in credential_config]
-        if len(missing) > 0:
+        missing_keys = utils.check_missing_config_keys(
+            credential_config, required, name="yse.auth_config"
+        )
+        if len(missing_keys) > 0:
             errormsg = (
-                f"`yse`: `credential_config` must contain "
-                + " ".join(required)
-                + ":\n    \033[31;1mmissing "
-                + " ".join(missing)
-                + "\033[0m"
+                f"yse: credential_config: provide {required} (missing {missing_keys})"
             )
             raise ValueError(errormsg)
 

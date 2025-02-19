@@ -47,7 +47,6 @@ def latest_flux(target: Target, observatory: Observer, t_ref: Time) -> float:
     ztf_data = None
 
     score_comments = []
-    reject_comments = []
 
     exclude = False
     reject = False
@@ -78,18 +77,20 @@ def latest_flux(target: Target, observatory: Observer, t_ref: Time) -> float:
     if exclude:
         score = -1.0
 
-    return score, score_comments, reject_comments
+    return score, score_comments
 
 
 def latest_flux_atlas_requirement(
     target: Target, observatory: Observer, t_ref: Time
 ) -> float:
 
+    score_comments = []
+    exclude = False
+
     ztf_priority = ("alerce", "fink", "lasair")
     ztf_data = None
     for broker in ztf_priority:
-        data_name = f"{broker}_data"
-        source_data = getattr(target, data_name, None)
+        source_data = target.target_data[broker]
         if source_data is None:
             continue
         if source_data.lightcurve is None:
@@ -97,11 +98,19 @@ def latest_flux_atlas_requirement(
         ztf_data = source_data
         break
     if ztf_data is None:
-        return -1
+        exclude = True
+        score_comments.append("EXCLUDE: no ztf data")
 
-    if target.atlas_data.lightcurve is None:
-        return -1
+    atlas_data = target.target_data.get("atlas")
+    if atlas_data.lightcurve is None:
+        exclude = True
+        score_comments.append("EXCLUDE: no atlas data")
 
     latest_mag = ztf_data.detections["magpsf"].iloc[-1]
     latest_flux = 3631 * 10 ** (-0.4 * latest_mag)  # in Jy
-    return latest_flux * 10**9  # in nJy
+
+    score = latest_flux * 10**9  # in nJy
+    if exclude:
+        score = -1.0
+
+    return score, score_comments

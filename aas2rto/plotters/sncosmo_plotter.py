@@ -26,7 +26,7 @@ def plot_sncosmo_lightcurve(target: Target, t_ref: Time = None, **kwargs) -> plt
     t_ref = t_ref or Time.now()
     plotter = SncosmoLightcurvePlotter.plot(target, t_ref=t_ref, **kwargs)
     if plotter.target_has_models and (not plotter.models_plotted):
-        logger.warning(f"{target.objectId} has models but none were plotted")
+        logger.warning(f"{target.target_id} has models but none were plotted")
     return plotter.fig
 
 
@@ -86,7 +86,7 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
             band_color = self.plot_colors.get(band, f"C{ii%8}")
             band_kwargs = dict(color=band_color)
 
-            logger.debug(f"models for {target.objectId}")
+            logger.debug(f"models for {target.target_id}")
 
             if self.tag_col in band_history.columns:
                 detections = band_history[band_history[self.tag_col] == self.valid_tag]
@@ -99,7 +99,7 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
             model_flux = model.bandflux(band, tgrid_main, zp=8.9, zpsys="ab")
             pos_mask = model_flux > 0.0
             if sum(pos_mask) == 0:
-                logger.warning(f"{target.objectId} no pos flux for model {band}")
+                logger.warning(f"{target.target_id} no pos flux for model {band}")
                 continue
             model_flux = model_flux[pos_mask]
             tgrid = tgrid_main[pos_mask]

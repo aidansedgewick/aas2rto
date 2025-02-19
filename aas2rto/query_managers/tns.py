@@ -200,18 +200,18 @@ class TnsQueryManager(BaseQueryManager):
 
         return query_parameters
 
-    def update_matched_tns_names(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
+    # def update_matched_tns_names(self, t_ref: Time = None):
+    #     t_ref = t_ref or Time.now()
 
-        matched_tns_names = []
-        for objectId, target in self.target_lookup.items():
-            tns_name = target.tns_data.parameters.get("Name", None)
-            if tns_name is not None:
-                matched_tns_names[tns_name] = objectId
+    #     matched_tns_names = []
+    #     for target_id, target in self.target_lookup.items():
+    #         tns_name = target.tns_data.parameters.get("Name", None)
+    #         if tns_name is not None:
+    #             matched_tns_names[tns_name] = target_id
 
     def match_tns_on_names(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
-        logger.info("match TNS data by objectId")
+        logger.info("match TNS data by target_id")
 
         unmatched_rows = []
         matched = 0
@@ -221,6 +221,7 @@ class TnsQueryManager(BaseQueryManager):
                 target = self.target_lookup[disc_name]
                 tns_data = target.get_target_data("tns")
                 tns_data.parameters = tns_row.to_dict()
+                target.alt_ids["tns"] = tns_data.parameters["Name"]
                 matched = matched + 1
             else:
                 unmatched_rows.append(tns_row)
@@ -237,16 +238,16 @@ class TnsQueryManager(BaseQueryManager):
         )
 
         target_candidate_coords = []
-        target_candidate_objectIds = []
-        for objectId, target in self.target_lookup.items():
-            if objectId in self.recent_coordinate_searches:
+        target_candidate_target_ids = []
+        for target_id, target in self.target_lookup.items():
+            if target_id in self.recent_coordinate_searches:
                 continue
             tns_data = target.target_data.get("tns", None)
             if tns_data:
                 if tns_data.parameters:
                     continue
             target_candidate_coords.append(target.coord)
-            target_candidate_objectIds.append(objectId)
+            target_candidate_target_ids.append(target_id)
 
         if len(target_candidate_coords) == 0:
             logger.info("no targets left to TNS match")
@@ -267,20 +268,21 @@ class TnsQueryManager(BaseQueryManager):
         for ii, (idx1, idx2, skysep) in enumerate(
             zip(target_match_idx, tns_match_idx, skysep)
         ):
-            objectId = target_candidate_objectIds[idx1]
-            target = self.target_lookup[objectId]
+            target_id = target_candidate_target_ids[idx1]
+            target = self.target_lookup[target_id]
 
             tns_row = self.tns_results.iloc[idx2]
             try:
                 tns_parameters = tns_row.to_dict()
             except Exception as e:
-                logger.warning(f"tns_row.to_dict() failed for {objectId}")
+                logger.warning(f"tns_row.to_dict() failed for {target_id}")
                 print(e)
                 raise ValueError(e)
             tns_data = target.get_target_data("tns")
             tns_data.parameters = tns_parameters
+            target.alt_ids["tns"] = tns_parameters["Name"]
 
-        self.recent_coordinate_searches.update(target_candidate_objectIds)
+        self.recent_coordinate_searches.update(target_candidate_target_ids)
         # This set is emptied every time TNS-results is read in.
 
     def perform_all_tasks(self, t_ref: Time = None):

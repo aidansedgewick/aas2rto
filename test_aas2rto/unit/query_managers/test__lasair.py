@@ -31,7 +31,7 @@ from aas2rto.exc import (
 @pytest.fixture
 def lasair_nondet_rows():
     """
-    candid, jd, objectId, mag, magerr, diffmaglim, ra, dec, tag
+    jd fid diffmaglim
     """
 
     data_rows = [
@@ -202,11 +202,11 @@ def create_mock_client(lc):
         def __init__(self, token):
             self.token = token
 
-        def lightcurves(self, objectId_list):
+        def lightcurves(self, lasair_id_list):
             query_return = []
-            for objectId in objectId_list:
+            for lasair_id in lasair_id_list:
                 lc = copy.deepcopy(self.lightcurve)
-                lc["objectId"] = objectId
+                lc["objectId"] = lasair_id
                 query_return.append(lc)
             return query_return
 
@@ -421,9 +421,7 @@ class Test__LasairAlertStreams:
             # Patch the alert list onto the MockConsumer
 
             # Patch the MockConsumer into the lasair module
-            m.setattr(
-                "aas2rto.query_managers.lasair.lasair_consumer", MockConsumer
-            )
+            m.setattr("aas2rto.query_managers.lasair.lasair_consumer", MockConsumer)
             assert hasattr(lasair.lasair_consumer, "test_attr")  # is patched!
 
             alerts = lasair_qm.listen_for_alerts()
@@ -451,9 +449,7 @@ class Test__LasairAlertStreams:
             assert len(MockConsumer.alert_list) == 5  # is patched!
 
             # Patch the MockConsumer into the lasair module
-            m.setattr(
-                "aas2rto.query_managers.lasair.lasair_consumer", MockConsumer
-            )
+            m.setattr("aas2rto.query_managers.lasair.lasair_consumer", MockConsumer)
             assert hasattr(lasair.lasair_consumer, "test_attr")  # is patched!
 
             alerts = lasair_qm.listen_for_alerts()
@@ -540,13 +536,13 @@ class Test__LasairLightcurveQueries:
 
         MockClient = create_mock_client(lasair_lc)
 
-        objectId_list = ["ZTF00abc", "ZTF01ijk"]
+        lasair_id_list = ["ZTF00abc", "ZTF01ijk"]
 
         with monkeypatch.context() as m:
             m.setattr("aas2rto.query_managers.lasair.lasair_client", MockClient)
-            success, failed = lasair_qm.perform_lightcurve_queries(objectId_list)
+            success, failed = lasair_qm.perform_lightcurve_queries(lasair_id_list)
 
-        assert set(success) == set(objectId_list)
+        assert set(success) == set(lasair_id_list)
 
         T1_exp_filepath = lasair_qm.get_lightcurve_file("ZTF00abc")
         assert T1_exp_filepath.exists()

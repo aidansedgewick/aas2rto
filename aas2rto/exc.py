@@ -1,8 +1,7 @@
+# Exceptions
+
+
 class BadKafkaConfigError(Exception):
-    pass
-
-
-class MissingObjectIdError(Exception):
     pass
 
 
@@ -14,11 +13,18 @@ class MissingDateError(Exception):
     pass
 
 
-class UnknownObservatoryWarning(UserWarning):
+class MissingTargetIdError(Exception):
     pass
 
 
-class UnexpectedKeysWarning(UserWarning):
+class NotATargetError(Exception):
+    pass
+
+
+# Warnings
+
+
+class DuplicateDataWarning(UserWarning):
     pass
 
 
@@ -27,4 +33,20 @@ class MissingKeysWarning(UserWarning):
 
 
 class MissingMediaWarning(UserWarning):
+    pass
+
+
+class SettingLightcurveDirectlyWarning(UserWarning):
+    pass
+
+
+class UnexpectedKeysWarning(UserWarning):
+    pass
+
+
+class UnknownObservatoryWarning(UserWarning):
+    pass
+
+
+class UnknownPhotometryTagWarning(UserWarning):
     pass

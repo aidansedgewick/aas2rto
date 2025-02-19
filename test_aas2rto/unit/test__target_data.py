@@ -12,14 +12,14 @@ from astropy.time import Time
 
 from astroplan import FixedTarget, Observer
 
-from dk154_targets.exc import (
+from aas2rto.exc import (
     MissingDateError,
     UnknownObservatoryWarning,
     SettingLightcurveDirectlyWarning,
 )
-from dk154_targets.obs_info import ObservatoryInfo
-from dk154_targets.target import Target
-from dk154_targets.target_data import TargetData
+from aas2rto.obs_info import ObservatoryInfo
+from aas2rto.target import Target
+from aas2rto.target_data import TargetData
 
 
 @pytest.fixture

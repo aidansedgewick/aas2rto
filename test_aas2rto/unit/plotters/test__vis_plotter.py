@@ -12,13 +12,18 @@ from astropy.time import Time
 
 from astroplan import FixedTarget, Observer
 
-from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
+from aas2rto.exc import (
+    MissingDateError,
+    SettingLightcurveDirectlyWarning,
+    UnknownObservatoryWarning,
+)
 from aas2rto.obs_info import ObservatoryInfo
 from aas2rto.plotters.visibility_plotter import (
     VisibilityPlotter,
     plot_visibility,
 )
-from aas2rto.target import SettingLightcurveDirectlyWarning, Target, TargetData
+from aas2rto.target import Target
+from aas2rto.target_data import TargetData
 
 
 @pytest.fixture

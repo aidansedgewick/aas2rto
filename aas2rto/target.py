@@ -24,6 +24,7 @@ from astroplan import FixedTarget, Observer
 from astroplan.plots import plot_altitude
 
 from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
+from aas2rto.target_data import TargetData
 from aas2rto.obs_info import ObservatoryInfo
 from aas2rto.utils import get_observatory_name
 
@@ -34,304 +35,49 @@ matplotlib.use("Agg")
 DEFAULT_ZTF_BROKER_PRIORITY = ("fink", "alerce", "lasair", "antares")
 
 
-class SettingLightcurveDirectlyWarning(UserWarning):
-    pass
-
-
-class UnknownPhotometryTagWarning(UserWarning):
-    pass
-
-
-class TargetData:
-    default_valid_tags = ("valid", "detection", "det")
-    default_badqual_tags = ("badquality", "badqual", "dubious")
-    default_nondet_tags = ("upperlim", "nondet")
-
-    date_columns = ("jd", "mjd", "JD", "MJD")
-
-    def __init__(
-        self,
-        lightcurve: pd.DataFrame = None,
-        include_badqual=False,
-        probabilities: pd.DataFrame = None,
-        parameters: dict = None,
-        cutouts: dict = None,
-        meta: dict = None,
-        valid_tags: tuple = default_valid_tags,
-        badqual_tags: tuple = default_badqual_tags,
-        nondet_tags: tuple = default_nondet_tags,
-    ):
-        self.meta = dict()
-        meta = meta or {}
-
-        self.valid_tags = tuple(valid_tags)
-        self.badqual_tags = tuple(badqual_tags)
-        self.nondet_tags = tuple(nondet_tags)
-
-        if lightcurve is not None:
-            self.add_lightcurve(lightcurve.copy(), include_badqual=include_badqual)
-        else:
-            self.remove_lightcurve()
-        self.probabilities = probabilities or {}
-        self.parameters = parameters or {}
-
-        self.cutouts = self.empty_cutouts()
-        cutouts = cutouts or {}
-        self.cutouts.update(cutouts)
-
-    def __setattr__(self, name, value):
-        if name == "lightcurve":
-            msg = (
-                "\nYou should use the `target_data.add_lightcurve(lc, tag_col=<tag>)` method."
-                "\nIf the column `tag` is avalable, this will correctly set the attributes:"
-                "    `target_data.detections`, `target_data.badqual` and `target_data.non_detections`"
-                "\nYou can choose to include badqual "
-            )
-            warnings.warn(SettingLightcurveDirectlyWarning(msg))
-        super().__setattr__(name, value)
-
-    def add_lightcurve(
-        self,
-        lightcurve: Union[pd.DataFrame, Table],
-        tag_col="tag",
-        include_badqual=False,
-    ):
-        lightcurve = lightcurve.copy()
-
-        date_col = self.get_date_column(lightcurve)
-        if isinstance(lightcurve, pd.DataFrame):
-            lightcurve.sort_values(date_col, inplace=True)
-        if isinstance(lightcurve, Table):
-            lightcurve.sort(date_col)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=SettingLightcurveDirectlyWarning)
-            # We don't need to be warned here - we are correctly setting the attributes!
-            self.lightcurve = lightcurve
-
-        if include_badqual:
-            detection_tags = self.valid_tags + self.badqual_tags
-            badqual_tags = ()
-        else:
-            detection_tags = self.valid_tags
-            badqual_tags = self.badqual_tags
-        nondet_tags = self.nondet_tags
-        all_tags = detection_tags + badqual_tags + nondet_tags
-        if tag_col in self.lightcurve.columns:
-            self.detections = self.lightcurve[
-                np.isin(self.lightcurve[tag_col], detection_tags)
-            ]
-            self.badqual = self.lightcurve[
-                np.isin(self.lightcurve[tag_col], badqual_tags)
-            ]
-            self.non_detections = self.lightcurve[
-                np.isin(self.lightcurve[tag_col], nondet_tags)
-            ]
-
-            known_tag_mask = np.isin(lightcurve[tag_col], all_tags)
-            if not all(known_tag_mask):
-                unknown_tags = self.lightcurve[tag_col][~known_tag_mask]
-                msg = (
-                    f"\nin {tag_col}: {unknown_tags}\nexpected:"
-                    f"    valid: {self.valid_tags}"
-                    f"    badqual: {self.badqual_tags}"
-                    f"    nondet: {self.nondet_tags}"
-                )
-                warnings.warn(UnknownPhotometryTagWarning(msg))
-        else:
-            self.detections = self.lightcurve.copy()
-            self.badqual = None
-            self.non_detections = None
-        return
-
-    def remove_lightcurve(self):
-        with warnings.catch_warnings():
-            warnings.simplefilter(
-                "ignore", category=SettingLightcurveDirectlyWarning
-            )  # TODO on 3.1
-            self.lightcurve = None
-        self.detections = None
-        self.badqual = None
-        self.non_detections = None
-
-    def get_date_column(self, lightcurve):
-        date_col = None
-        for col in self.date_columns:
-            if col in lightcurve.columns:
-                date_col = col
-                return date_col
-        msg = (
-            f"lightcurve columns {lightcurve.columns} should contain "
-            f"a date column: {self.date_columns}"
-        )
-        raise MissingDateError(msg)
-
-    def empty_cutouts(self) -> Dict[str, np.ndarray]:
-        return {}
-
-    # def integrate_lightcurve_updates(
-    #     self,
-    #     updates: pd.DataFrame,
-    #     column: str = "candid",
-    #     continuous=False,
-    #     keep_updates=True,
-    #     **kwargs,
-    # ):
-    #     """
-    #     combine updates into a lightcurve.
-
-    #     Parameters
-    #     ----------
-    #     updates : pd.DataFrame or astropy.table.Table
-    #         pd.DataFrame, the updates you want to include in your updated lightcurve.
-    #     column : str, default="candid"
-    #         the column to check for matches, and remove repeated rows
-    #     continuous : bool, default=False
-    #         If True, remove any rows in existing LC after the first value in updates
-    #             eg. if column="mjd", and existing LC has rows mjd=60000, 60010,
-    #             and updates has mjd rows = 60005, 60009, 60012:
-    #             if keep_updates is True:
-    #                 all existing LC rows with mjd>60005 will be discarded
-    #             if keep_updates is False:
-    #                 all updates rows mjd<60010 will be discarded.
-
-    #         If continuous=False, then rows with exact matching
-
-    #     **kwargs
-    #         keyword arguments are passed to add_lightcurve
-    #     """
-    #     if updates is None:
-    #         logger.warning("updates is None")
-    #         return None
-
-    #     print(updates)
-
-    #     if self.lightcurve is None:
-    #         self.add_lightcurve(updates, **kwargs)
-    #     if column not in self.lightcurve.columns:
-    #         raise ValueError(f"{column} not in both lightcurve columns")
-    #     if column not in updates.columns:
-    #         raise ValueError(f"{column} not in both updates columns")
-    #     if continuous:
-    #         updated_lightcurve = self.integrate_continuous(
-    #             updates, column, keep_updates=keep_updates
-    #         )
-    #     else:
-    #         updated_lightcurve = self.integrate_equality(
-    #             updates, column, keep_updates=keep_updates
-    #         )
-
-    #     print(updated_lightcurve)
-    #     self.add_lightcurve(updated_lightcurve, **kwargs)
-
-    def integrate_lightcurve_updates_continuous(
-        self, updates: pd.DataFrame, column="mjd", keep_updates=True, ignore_values=None
-    ):
-        """
-        Parameters
-        ----------
-        updates : pd.DataFrame or astropy.table.Table
-            the updates you want to include in your updated lightcurve.
-        column
-
-        """
-
-        if not (isinstance(updates, pd.DataFrame) or isinstance(updates, Table)):
-            raise TypeError(
-                f"updates should be `pd.DataFrame` or `astropy.table.Table, "
-                f"not {type(updates)}"
-            )
-
-        if keep_updates:
-            existing_mask = self.lightcurve[column] < updates[column].min()
-            existing = self.lightcurve[
-                existing_mask
-            ]  # Keep everything before updates start.
-            # updates = updates # Obvious!
-        else:
-            existing = self.lightcurve
-            updates_mask = updates[column] > self.lightcurve[column].max()
-            updates = updates[updates_mask]
-
-        updated_lightcurve = None
-        if isinstance(updates, pd.DataFrame):
-            return pd.concat([self.lightcurve, updates], ignore_index=True)
-        if isinstance(updates, Table):
-            return vstack([self.lightcurve, updates])
-        raise ValueError("should not have made it here!")
-
-    def integrate_lightcurve_updates_equality(
-        self,
-        updates: pd.DataFrame,
-        column="candid",
-        keep_updates=True,
-        ignore_values=None,
-        **kwargs,
-    ):
-        """
-        Concatenate existing lightcurve and updates, remove duplicated values.
-        Which duplicated values are removed depends on `keep_updates`.
-
-        Parameters
-        ----------
-        updates : `pd.DataFrame` or `astropy.table.Table`
-            the updates to include
-        column : str, default="candid"
-            Which column to look for duplicates
-        ignore_values : list or tuple, optional
-            If provided, do not discard duplicate rows with these values.
-
-
-        Example
-        -------
-        """
-
-        keep = "last" if keep_updates else "first"
-        updated_lightcurve = None
-
-        if self.lightcurve is not None and type(self.lightcurve) != type(updates):
-            msg = (
-                f"Both existing lightcurve (type={type(self.lightcurve)}) "
-                f"and updates (type={type(updates)}) should be the same type."
-            )
-            raise TypeError(msg)
-
-        if isinstance(updates, pd.DataFrame):
-            if updates is None:
-                updated_lightcurve = self.lightcurve
-            else:
-                updated_lightcurve = pd.concat(
-                    [self.lightcurve, updates], ignore_index=True
-                )
-
-            unique_rows_mask = ~updated_lightcurve.duplicated(column, keep=keep)
-            if ignore_values is not None:
-                relevant_mask = ~updated_lightcurve[column].isin(ignore_values)
-            else:
-                relevant_mask = np.full(len(updated_lightcurve), True)
-            updated_lightcurve = updated_lightcurve[unique_rows_mask | ~relevant_mask]
-
-        if isinstance(updates, Table):
-            concat_lightcurve = vstack([self.lightcurve, updates])
-            updated_lightcurve = unique_table(concat_lightcurve, keys=column, keep=keep)
-        if updated_lightcurve is None:
-            raise TypeError(
-                f"updates should be `pd.DataFrame` or `astropy.table.Table, not {type(updates)}"
-            )
-        self.add_lightcurve(updated_lightcurve, **kwargs)
-        return updated_lightcurve
-
-
 class Target:
     """
-    TODO: docstring here!
+    The main class which holds information about a single (transient)
+    target/object/candidate.
+
+    Parameters
+    ----------
+    target_id: str
+        the main name your object should be called by.
+    ra: float
+        Right Ascension, in decimal degrees.
+    dec: float
+        Declination, in decimal degrees.
+    target_data: Dict[str, aas2rto.target_data.TargetData]
+        A lookup of data from various sources.
+        An entry for `fink` data, one for `atlas` data, one for `tns` data, etc...
+    source:
+        which data created this target? will be added into alt_ids. eg.
+        >>> t = Target("T101", 30.0, 30.0, source="src01")
+        >>> "src01" in t.alt_ids # True
+    alt_ids: Dict [str, str]
+        Lookup to keep track of other names for this target.
+        eg. ZTF24abcdef might also be called SN 24abc.
+        So alt_ids might be: `{'tns': 'SN 24abc'}`
+        It's useful to keep track of these to keep updating data from other surveys.
+    base_score: float, default=1.0
+        The 'unmodified score'.
+    target_of_opportunity: bool, default=False
+        If target_of_opportunity, this target will never be rejected/removed from set of
+        unranked targets.
+        But - it might not appear in all ranked lists (due to eg. visibility criteria).
+    t_ref: astropy.time.Time, default=Time.now()
+        Recorded in target.creation_time.
     """
 
     def __init__(
         self,
-        objectId: str,
+        target_id: str,
         ra: float,
         dec: float,
         target_data: Dict[str, TargetData] = None,
+        source: str = None,
+        alt_ids: Dict[str, str] = None,
         base_score: float = 1.0,
         target_of_opportunity: bool = False,
         t_ref: Time = None,
@@ -339,7 +85,7 @@ class Target:
         t_ref = t_ref or Time.now()
 
         # Basics
-        self.objectId = objectId
+        self.target_id = target_id
         self.update_coordinates(ra, dec)
         self.base_score = base_score
         self.compiled_lightcurve = None
@@ -357,8 +103,15 @@ class Target:
         # Scoring data
         self.score_history = {"no_observatory": []}
         self.score_comments = {"no_observatory": []}
-        self.reject_comments = {"no_observatory": []}
         self.rank_history = {"no_observatory": []}
+
+        # Is this source known by any other names?
+        self.alt_ids = alt_ids or {}
+        if source is not None:
+            self.alt_ids[source] = target_id
+        else:
+            if target_id not in self.alt_ids.values():
+                self.alt_ids["<unknown>"] = target_id
 
         # Keep track of what's going on
         self.creation_time = t_ref
@@ -371,8 +124,8 @@ class Target:
 
     def __str__(self):
         if self.ra is None or self.dec is None:
-            return f"{self.objectId}: NO COORDINATES FOUND!"
-        return f"{self.objectId}: ra={self.ra:.5f} dec={self.dec:.5f}"
+            return f"{self.target_id}: NO COORDINATES FOUND!"
+        return f"{self.target_id}: (ra, dec)=({self.ra:.5f}, {self.dec:+.5f})"
 
     def update_coordinates(self, ra: float, dec: float):
         self.ra = ra
@@ -381,9 +134,11 @@ class Target:
         self.astroplan_target = None
         if ra is not None and dec is not None:
             self.coord = SkyCoord(ra=ra, dec=dec, unit="deg")
-            self.astroplan_target = FixedTarget(self.coord, self.objectId)  # for plots?
+            self.astroplan_target = FixedTarget(
+                self.coord, self.target_id
+            )  # for plots?
         else:
-            logger.warning(f"{self.objectId}: ra={ra} or dec={dec} is None!")
+            logger.warning(f"{self.target_id}: ra={ra} or dec={dec} is None!")
 
     def get_target_data(self, source):
         """
@@ -440,6 +195,10 @@ class Target:
         return
 
     def get_score_history(self, t_ref: Time = None):
+        """
+        Returns df with three columns: 'observatory', 'mjd', 'score'
+            (avoid column name 'rank' as clash with pd keywords...)
+        """
 
         row_list = []
         for obs, obs_score_history in self.score_history.items():
@@ -472,6 +231,10 @@ class Target:
         return
 
     def get_rank_history(self, t_ref: Time = None):
+        """
+        Returns df with three columns: 'observatory', 'mjd', 'ranking'
+            (avoid column name 'rank' as clash with pd keywords...)
+        """
         row_list = []
         for obs, obs_rank_history in self.rank_history.items():
             for data_tuple in obs_rank_history:
@@ -525,31 +288,46 @@ class Target:
         t_ref = t_ref or Time.now()
         t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
 
-        lines = [f"Target {self.objectId} at {t_ref_str}, see:"]
+        info_lines = [f"Target {self.target_id} at {t_ref_str}, see:"]
         broker_lines = (
-            f"    FINK: fink-portal.org/{self.objectId}\n"
-            f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.objectId}\n"
-            f"    ALeRCE: alerce.online/object/{self.objectId}"
+            f"    FINK: fink-portal.org/{self.target_id}\n"
+            f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.target_id}\n"
+            f"    ALeRCE: alerce.online/object/{self.target_id}"
         )
-        lines.append(broker_lines)
+        info_lines.append(broker_lines)
 
         tns_data = self.target_data.get("tns", None)
         if tns_data:
             name = tns_data.parameters.get("Name", None)
             if name is not None:
-                tns_name = tns_data.parameters["Name"]
-                tns_code = tns_name.split()[1]
-                lines.append(f"    TNS: wis-tns.org/object/{tns_code}")
+                tns_code = tns_data.parameters["Name"].split()[1]
+                tns_url = f"wis-tns.org/object/{tns_code}"
+                yse_url = f"ziggy.ucolick.org/yse/transient_detail/{tns_code}"
+                info_lines.extend([f"    TNS: {tns_url}", f"    YSE: {yse_url}"])
 
-        lines.append("coordinates:")
+        alt_rev = {}
+        for source, alt_name in self.alt_ids.items():
+            if alt_name not in alt_rev:
+                alt_rev[alt_name] = [source]
+            else:
+                alt_rev[alt_name].append(source)
+
+        info_lines.append("alt names")
+        for name, source_list in alt_rev.items():
+            l = f"    {name} (" + ",".join(source_list) + ")"
+            info_lines.append(l)
+
+        info_lines.append("coordinates:")
         if self.ra is not None and self.dec is not None:
             eq_line = f"    equatorial (ra, dec) = ({self.ra:.4f},{self.dec:+.5f})"
-            lines.append(eq_line)
+            info_lines.append(eq_line)
         if self.coord is not None:
             gal = self.coord.galactic
             gal_line = f"    galactic (l, b) = ({gal.l.deg:.4f},{gal.b.deg:+.5f})"
-            lines.append(gal_line)
+            info_lines.append(gal_line)
+
         if self.compiled_lightcurve is not None:
+            info_lines.append("photometry")
             ndet = {}
             last_mag = {}
             if "band" in self.compiled_lightcurve.columns:
@@ -563,28 +341,27 @@ class Target:
                         last_mag[band] = detections["mag"].iloc[-1]
             if len(last_mag) > 0:
                 magvals_str = ", ".join(f"{k}={v:.2f}" for k, v in last_mag.items())
-                comm_line = "    last " + magvals_str
-                lines.append(comm_line)
+                mag_line = "    last " + magvals_str
+                info_lines.append(mag_line)
             if len(ndet) > 0:
                 l = (
                     "    "
                     + ", ".join(f"{v} {k}" for k, v in ndet.items())
                     + " detections"
                 )
-                lines.append(l)
+                info_lines.append(l)
 
-        return "\n".join(lines)
+        return "\n".join(info_lines)
 
     def write_comments(self, outdir: Path, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        logger.debug(f"{self.objectId}: writing comments")
+        logger.debug(f"{self.target_id}: writing comments")
 
         outdir = Path(outdir)
         outdir.mkdir(exist_ok=True, parents=True)
 
         missing_score_comments = ["no score_comments provided"]
-        missing_reject_comments = ["no reject_comments provided"]
 
         lines = self.get_info_string(t_ref=t_ref).split("\n")
         last_score = self.get_last_score()
@@ -616,13 +393,9 @@ class Target:
 
         if last_score is not None:
             if self.to_reject or not np.isfinite(last_score):
-                lines.append(f"{self.objectId} rejected at {t_ref.iso}")
-                reject_comments = self.reject_comments.get("no_observatory", None)
-                reject_comments = reject_comments or missing_reject_comments
-                for comm in reject_comments:
-                    lines.append(f"    {comm}")
+                lines.append(f"{self.target_id} rejected at {t_ref.iso}")
 
-        comments_file = outdir / f"{self.objectId}_comments.txt"
+        comments_file = outdir / f"{self.target_id}_comments.txt"
         with open(comments_file, "w+") as f:
             f.writelines([l + "\n" for l in lines])
         return lines

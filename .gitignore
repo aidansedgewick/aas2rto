@@ -3,6 +3,7 @@ archive/
 lsst_archive/
 old/
 projects/
+slurm_*/
 safe/
 *.csv
 *.fits
