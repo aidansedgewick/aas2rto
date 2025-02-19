@@ -369,7 +369,7 @@ class AtlasQueryManager(BaseQueryManager):
     #     return loaded, missing
 
     def load_single_lightcurve(self, target_id: str, t_ref=None):
-        logger.info(f"loading {target_id}")
+        # logger.debug(f"loading {target_id}")
         lightcurve_filepath = self.get_lightcurve_file(target_id)
         if not lightcurve_filepath.exists():
             logger.info(f"{target_id} is missing lightcurve")
@@ -388,7 +388,10 @@ class AtlasQueryManager(BaseQueryManager):
         except requests.exceptions.JSONDecodeError as e:
             return e
 
-        self.retry_throttled_queries(t_ref=t_ref)
+        try:
+            self.retry_throttled_queries(t_ref=t_ref)
+        except ConnectionError as e:
+            return e
         query_candidates = self.select_query_candidates(t_ref=t_ref)
         self.submit_new_queries(query_candidates, t_ref=t_ref)
         # self.recover_finished_queries(t_ref=t_ref)

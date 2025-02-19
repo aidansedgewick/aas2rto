@@ -348,11 +348,14 @@ class FinkQueryManager(BaseQueryManager):
             tuple(self.default_kafka_parameters.keys()) + self.required_kafka_parameters
         )
 
-        missing_kafka_keys = utils.check_missing_config_keys(
-            kafka_parameters, self.required_kafka_parameters, name="fink.kafka_config"
+        kafka_req = self.required_kafka_parameters
+        missing_keys = utils.check_missing_config_keys(
+            kafka_parameters, kafka_req, name="fink.kafka_config"
         )
-        if len(missing_kafka_keys) > 0:
-            err_msg = f"kafka_config: provide {self.required_kafka_parameters}"
+        if len(missing_keys) > 0:
+            err_msg = (
+                f"fink: kafka_config: provide {kafka_req} (missing {missing_keys})"
+            )
             raise BadKafkaConfigError(err_msg)
 
         topics = kafka_parameters.get("topics", None)

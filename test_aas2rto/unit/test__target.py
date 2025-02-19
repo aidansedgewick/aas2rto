@@ -148,6 +148,24 @@ class Test__TargetInit:
 
         assert t.target_of_opportunity is True
 
+    def test__with_source(self):
+        t = Target("T101", ra=45.0, dec=60.0, source="cool_survey")
+        assert set(t.alt_ids.keys()) == set(["cool_survey"])
+
+    def test__with_alt_ids(self):
+        alt_ids = {"cool_src": "T101", "other_src": "AAA"}
+        t = Target("T101", ra=45.0, dec=60.0, alt_ids=alt_ids)
+        assert set(t.alt_ids) == set(["cool_src", "other_src"])
+
+    def test__no_source(self):
+        t = Target("T101", ra=45.0, dec=60.0)
+        assert set(t.alt_ids.keys()) == set(["<unknown>"])
+
+    def test__no_source_but_alts(self):
+        alt_ids = {"other_src": "AAA"}
+        t = Target("T101", ra=45.0, dec=60.0, alt_ids=alt_ids)
+        assert set(t.alt_ids.keys()) == set(["<unknown>", "other_src"])
+
 
 class Test__TargetConvenienceMethods:
     def test__update_coordinate(self, mock_target):
@@ -286,6 +304,16 @@ class Test__TargetStringMethods:
         info_str = mock_target.get_info_string()
         assert "detections" in info_str
         assert "3 ztf-w" in info_str
+
+    def test_get_alt_names(self):
+        alt_ids = {"ztf": "T101", "other_src": "AAA", "tns": "2025abc"}
+        t = Target("T101", 45.0, 30.0, source="fink", alt_ids=alt_ids)
+        info_str = t.get_info_string()
+
+        assert "alt names" in info_str
+        assert "T101 (ztf,fink)" in info_str or "T101 (fink,ztf)" in info_str
+        assert "AAA (other_src)" in info_str
+        assert "2025abc (tns)" in info_str
 
 
 class Test__WriteComments:

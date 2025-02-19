@@ -299,7 +299,7 @@ class Test__ConsolidateTargets:
         assert tl.id_mapping["T101"] == "T101"
         assert tl.id_mapping["AAAA"] == "T101"
 
-    def test__not_close_not_grouped(self):
+    def test__not_close_are_not_grouped(self):
 
         tl = TargetLookup()
 

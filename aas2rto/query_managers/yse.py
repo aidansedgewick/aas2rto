@@ -13,9 +13,9 @@ import pandas as pd
 
 from astropy.time import Time
 
-from aas2rto import Target
+from aas2rto import utils
 from aas2rto.query_managers.base import BaseQueryManager
-from aas2rto.utils import calc_file_age
+from aas2rto.target import Target
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -166,7 +166,7 @@ class YseQueryManager(BaseQueryManager):
         for query_id, column_data in self.yse_queries.items():
             query_name = f"yse_{query_id}"
             query_results_file = self.get_query_results_file(query_name)
-            results_file_age = calc_file_age(
+            results_file_age = utils.calc_file_age(
                 query_results_file, t_ref, allow_missing=True
             )
             if results_file_age < self.query_parameters["interval"]:
@@ -282,7 +282,7 @@ class YseQueryManager(BaseQueryManager):
         to_query = []
         for target_id in target_id_list:
             parameters_file = self.get_parameters_file(target_id, fmt="json")
-            parameters_file_age = calc_file_age(
+            parameters_file_age = utils.calc_file_age(
                 parameters_file, t_ref, allow_missing=True
             )
             if parameters_file_age > self.query_parameters["interval"]:
@@ -385,7 +385,7 @@ class YseQueryManager(BaseQueryManager):
             if yse_id is None:
                 continue
             lightcurve_file = self.get_lightcurve_file(yse_id)
-            lightcurve_file_age = calc_file_age(
+            lightcurve_file_age = utils.calc_file_age(
                 lightcurve_file, t_ref, allow_missing=True
             )
 
@@ -441,48 +441,16 @@ class YseQueryManager(BaseQueryManager):
 
         return success, failed
 
-    def load_lightcurves(self, yse_id_list=None, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        if yse_id_list is None:
-            yse_id_list = []
-            for target_id, target in self.target_lookup.items():
-                yse_id = yse_id_from_target(target)
-                if yse_id is not None:
-                    yse_id_list.append(yse_id)
-
-        loaded = []
-        missing = []
-        t_start = time.perf_counter()
-        for yse_id in yse_id_list:
-            lightcurve_file = self.get_lightcurve_file(yse_id)
-            if not lightcurve_file.exists():
-                missing.append(yse_id)
-                continue
-            target = self.target_lookup.get(yse_id, None)
-            lightcurve = pd.read_csv(lightcurve_file)
-            # TODO: not optimum to read every time... but not a bottleneck for now.
-            if target is None:
-                logger.warning(f"target {yse_id} missing")
-            else:
-                existing_lightcurve = target.yse_data.lightcurve
-                if existing_lightcurve is not None:
-                    if len(lightcurve) == len(existing_lightcurve):
-                        continue
-            # lightcurve.sort_values("jd", inplace=True)
-            loaded.append(yse_id)
-            target.yse_data.add_lightcurve(lightcurve)
-            target.updated = True
-            # if target.yse_data.lightcurve.iloc[-1, "candid"]
-        t_end = time.perf_counter()
-
-        N_loaded = len(loaded)
-        N_missing = len(missing)
-        if N_loaded > 0:
-            logger.info(f"loaded {N_loaded} lightcurves in {t_end-t_start:.1f}s")
-        if N_missing > 0:
-            logger.warning(f"{N_missing} lightcurves missing...")
-        return loaded, missing
+    def load_single_lightcurve(self, yse_id, t_ref=None):
+        lightcurve_filepath = self.get_lightcurve_file(yse_id)
+        if not lightcurve_filepath.exists():
+            logger.warning(f"{yse_id} is missing lightcurve")
+            return None
+        try:
+            lightcurve = pd.read_csv(lightcurve_filepath)
+        except pd.errors.EmptyDataError as e:
+            logger.warning(f"bad (empty) lightcurve file for {fink_id}")
+            return None
 
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -526,14 +494,12 @@ class YseQuery:
     @classmethod
     def prepare_auth(cls, credential_config) -> HTTPBasicAuth:
         required = cls.required_credential_parameters
-        missing = [kw for kw in required if kw not in credential_config]
-        if len(missing) > 0:
+        missing_keys = utils.check_missing_config_keys(
+            credential_config, required, name="yse.auth_config"
+        )
+        if len(missing_keys) > 0:
             errormsg = (
-                f"`yse`: `credential_config` must contain "
-                + " ".join(required)
-                + ":\n    \033[31;1mmissing "
-                + " ".join(missing)
-                + "\033[0m"
+                f"yse: credential_config: provide {required} (missing {missing_keys})"
             )
             raise ValueError(errormsg)
 
