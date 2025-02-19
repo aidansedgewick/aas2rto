@@ -289,7 +289,7 @@ class TargetSelector:
         if qm_name is None:
             qm_name = QueryManagerClass.__name__
             QueryManagerClass.name = qm_name  # Monkey patch!
-            msg = f"new query manager {qm_name} should name class attribute 'name'"
+            msg = f"new query manager {qm_name} should have class attribute 'name'"
             logger.warning(msg)
 
         has_tasks_method = hasattr(QueryManagerClass, "perform_all_tasks")
@@ -914,12 +914,12 @@ class TargetSelector:
         score_df = pd.DataFrame(data_list)
         score_df.sort_values("score", inplace=True, ascending=False, ignore_index=True)
         score_df["ranking"] = np.arange(1, len(score_df) + 1)
-        # should call is "ranking" not "rank", as rank is a df/series method
-        # so score_df.rank / row.rank fails!!
+        # use column name "ranking", not "rank", as rank is a df/series method.
+        # column/row lookup with dot syntax `score_df.rank` / `row.rank`` fails!
 
         minimum_score = self.selector_parameters.get("minimum_score")
         unranked_value = self.selector_parameters.get("unranked_value")
-        negative_score = score_df["score"] < minimum_score
+        negative_score = score_df["score"] < minimum_score  # bool mask.
         score_df.loc[negative_score, "ranking"] = unranked_value
 
         for ii, row in score_df.iterrows():
@@ -1233,62 +1233,23 @@ class TargetSelector:
         t_ref: Time = None,
     ):
         """
-        The actual prioritisation loop.
-
-        Most of the parameters are callable functions, which you can provide.
-        Only one is mandatory: scoring_function
-
-        All but one of the user provided functions should have signature:
-            func(target, t_ref) :
-                target : aas2rto.target.Target
-                t_ref : astropy.time.Time
-        The only exception is observatory_scoring_function, which should have signature
-            func(target, obs: astroplan.Observer, t_ref)
+        Perform a single iteration.
 
         Parameters
         ----------
-        scoring_function : Callable
-            The (science) scoring function to prioritise targets.
-            It should have the 'standard' signature defined above.
-            It should return:
-                score : float
-                comments : List of str, optional
+        scoring_function : Callable, optional
         observatory_scoring_function : Callable, optional
-            The scoring function to evaluate at observatories.
-                If not provided, defaults to aas2rto.scoring.DefaultObsScore
-                It should have signature func(target, obs, t_ref), where arguments:
-                    target : aas2rto.target.Target
-                    obs : astroplan.Observer
-                    t_ref : astropy.time.Time
-            It should return:
-                obs_factors : float
-                    The output of this will be multiplied by 'score'
-                    from scoring_function, to get the score for this observatory.
-                comms : list of str, optional
-        modeling_function : Callable or list of Callable
-            Functions which produce models based on target.
-            Exceptions in modeling_function are caught, and the model will be set to None.
-            It should have the 'standard' signature defined above.
-            It should return:
-                model : Any
-                    the model which describes your source. You can access it in
-                    (eg.) scoring functions with target.models[<your_func_name>]
-        lightcurve_compiler : Callable
-            Function which produces a convenient single lightcurve including all data
-            sources. Helpful in scoring, plotting.
-            It should have the 'standard' signature defined above.
-            It should return:
-                compiled_lc : pd.DataFrame or astropy.table.Table
-        lc_plotting_function : Callable
-            Generate a lightcurve figure for each target.
-            It should have the 'standard' signature defined above.
-            it should return:
-                figure : matplotlib.pyplot.Figure
-        skip_tasks : list of str, optional
-            Task(s) which should be skipped.
-            Must be one of
-                "qm_tasks", "obs_info", "pre_check", "modeling", "evaluate",
-                "ranking", "reject", "plotting", "write_targets", "messaging",
+        modeling_function : Callable, optional
+        lightcurve_compiler : Callable, optional
+        lc_plotting_function : Callable, optional
+        skip_tasks
+        t_ref : `astropy.time.Time`, default=Time.now()
+            the reference time at the start of the iteration.
+            useful for simulations.
+
+        See 'TargetSelector.start() documentation for details of user-provided
+        Callable functions.
+
         """
 
         t_ref = t_ref or Time.now()
@@ -1321,11 +1282,13 @@ class TargetSelector:
             raise ValueError(errmsg)
 
         # =========================== Get new data =========================== #
+        t1 = time.perf_counter()
         self.check_for_targets_of_opportunity()
         if not "qm_tasks" in skip_tasks:
             self.perform_query_manager_tasks(t_ref=t_ref)
         else:
             logger.info("skip query manager tasks")
+        perf_times["qm_tasks"] = time.perf_counter() - t1
 
         # ===================== Merge duplicated targets ===================== #
 
@@ -1369,6 +1332,9 @@ class TargetSelector:
         # ========================= Do the scoring, ========================== #
         t1 = time.perf_counter()
         if "evaluate" not in skip_tasks:
+            if scoring_function is None:
+                msg = "You must provide a scoring function."
+                raise ValueError(msg)
             self.evaluate_targets(
                 scoring_function,
                 observatory_scoring_function=observatory_scoring_function,
@@ -1461,20 +1427,63 @@ class TargetSelector:
         iterations=None,
     ):
         """
-        A convenience function to perform iterations
+        The actual prioritisation loop.
+
+        Most of the parameters are callable functions, which you can provide.
+        Only one is required: scoring_function
+
+        All but one of the Callable types (functions) should have signature:
+
+        The only exception is observatory_scoring_function, which should have signature
+            func(target, obs: astroplan.Observer, t_ref)
 
         Parameters
         ----------
-        scoring_function: Callable
-            the user-built scoring function
-        modeling_function: Callable or List[Callable]
-            function(s) to build models for targets
-        lightcurve_compiler: Callable [optional]
+        scoring_function : Callable
+            The (science) scoring function to prioritise targets.
+            It should have the 'standard' signature defined above.
+            It should return:\n
+                `score : float`
+                `comments : List of str, optional`
+        observatory_scoring_function : Callable, optional
+            The scoring function to evaluate at observatories.
+            If not provided, defaults to `aas2rto.scoring.DefaultObsScore`.
+            It should have signature func(target, obs, t_ref), where arguments:
+                `target` : `aas2rto.target.Target`
+                `obs` : `astroplan.Observer`
+                `t_ref` : `astropy.time.Time`
 
-        lc_plotting_function: Callable
+            The output of this will be multiplied by 'score'
+            It should return:
+                obs_factors : float
+                    from scoring_function, to get the score for this observatory.
+                comms : list of str, optional
+        modeling_function : Callable or list of Callable
+            Functions which produce models based on target.
+            Exceptions in modeling_function are caught, and the model will be set to None.
+            It should have the 'standard' signature defined above.
+            It should return:\n
+                `model` : `Any`\n
+                    the model which describes your source. You can access it in
+                    (eg.) scoring functions with target.models[<your_func_name>]
+        lightcurve_compiler : Callable
+            Function which produces a convenient single lightcurve including all data
+            sources. Helpful in scoring, plotting.
+            It should have the 'standard' signature defined above.
+            It should return:
+                `compiled_lc` : `pd.DataFrame` or `astropy.table.Table`
+        lc_plotting_function : Callable
+            Generate a lightcurve figure for each target.
+            It should have the 'standard' signature defined above.
+            it should return:
+                figure : matplotlib.pyplot.Figure
+        skip_tasks : list of str, optional
+            Task(s) which should be skipped.
+            Must be one of
+                "qm_tasks", "obs_info", "pre_check", "modeling", "evaluate",
+                "ranking", "reject", "plotting", "write_targets", "messaging",
+        iterations : int, optional
 
-        existing_targets_file: optional, default=False
-            path to an existing_targets_file, or "last"
 
 
         Examples
@@ -1493,6 +1502,13 @@ class TargetSelector:
         # ===================== Get and set some parameters ================== #
         N_iterations = 0
         sleep_time = self.selector_parameters.get("sleep_time")
+
+        if scoring_function is None:
+            msg = "You must provide scoring_function=<some-callable>."
+            raise ValueError(msg)
+
+        if observatory_scoring_function is None:
+            observatory_scoring_function = DefaultObservatoryScoring()
         if lightcurve_compiler is None:
             lightcurve_compiler = DefaultLightcurveCompiler()
 
@@ -1509,8 +1525,9 @@ class TargetSelector:
                 f"starting at {t_ref.isot} on {nodename} with:\n"
                 f"observatories:\n    {', '.join(k for k in self.observatories)}\n"
                 f"query_managers:\n    {', '.join(k for k in self.query_managers)}\n"
-                f"modeling_function: {modeling_function.__name__}\n"
-                f"scoring_function: {scoring_function.__name__}"
+                f"modeling_function:\n    {modeling_function.__name__}\n"
+                f"scoring_function:\n    {scoring_function.__name__}\n"
+                f"observatory_scoring_function:\n    {observatory_scoring_function.__name__}\n"
             )
             self.telegram_messenger.message_users(texts=msg, users="sudoers")
 
@@ -1520,6 +1537,8 @@ class TargetSelector:
 
             loop_skip_tasks = skip_tasks or []
             if N_iterations == 0:
+                # Don't send messages on the first loop.
+                # If many targets are recovered, 100s of messages could be sent...
                 loop_skip_tasks.append("messaging")
 
             try:

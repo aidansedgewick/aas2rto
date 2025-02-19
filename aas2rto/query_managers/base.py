@@ -220,7 +220,7 @@ class BaseQueryManager(abc.ABC):
                 target.updated = True
             if not flag_only_existing:
                 # lightcurve here cannot be None, and must be longer than existing.
-                logger.info(f"set {id_} updated")
+                logger.debug(f"set {id_} updated")
                 target.updated = True
             qm_data.add_lightcurve(lightcurve)
             loaded.append(id_)

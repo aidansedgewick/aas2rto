@@ -107,8 +107,11 @@ class Target:
 
         # Is this source known by any other names?
         self.alt_ids = alt_ids or {}
-        if source is not None and source not in self.alt_ids:
+        if source is not None:
             self.alt_ids[source] = target_id
+        else:
+            if target_id not in self.alt_ids.values():
+                self.alt_ids["<unknown>"] = target_id
 
         # Keep track of what's going on
         self.creation_time = t_ref
@@ -297,9 +300,22 @@ class Target:
         if tns_data:
             name = tns_data.parameters.get("Name", None)
             if name is not None:
-                tns_name = tns_data.parameters["Name"]
-                tns_code = tns_name.split()[1]
-                info_lines.append(f"    TNS: wis-tns.org/object/{tns_code}")
+                tns_code = tns_data.parameters["Name"].split()[1]
+                tns_url = f"wis-tns.org/object/{tns_code}"
+                yse_url = f"ziggy.ucolick.org/yse/transient_detail/{tns_code}"
+                info_lines.extend([f"    TNS: {tns_url}", f"    YSE: {yse_url}"])
+
+        alt_rev = {}
+        for source, alt_name in self.alt_ids.items():
+            if alt_name not in alt_rev:
+                alt_rev[alt_name] = [source]
+            else:
+                alt_rev[alt_name].append(source)
+
+        info_lines.append("alt names")
+        for name, source_list in alt_rev.items():
+            l = f"    {name} (" + ",".join(source_list) + ")"
+            info_lines.append(l)
 
         info_lines.append("coordinates:")
         if self.ra is not None and self.dec is not None:
@@ -309,7 +325,9 @@ class Target:
             gal = self.coord.galactic
             gal_line = f"    galactic (l, b) = ({gal.l.deg:.4f},{gal.b.deg:+.5f})"
             info_lines.append(gal_line)
+
         if self.compiled_lightcurve is not None:
+            info_lines.append("photometry")
             ndet = {}
             last_mag = {}
             if "band" in self.compiled_lightcurve.columns:
