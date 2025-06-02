@@ -102,7 +102,7 @@ def write_salt_model(model: sncosmo.Model, filepath: Path):
             pickle.dump(model_data, f)
     except Exception as e:
         print(e)
-        msg = "could not pickle data from {type(model)} into {filepath}"
+        msg = f"could not pickle data from {type(model)} into {filepath}"
         logger.error(msg)
     return
 
@@ -126,21 +126,19 @@ def read_salt_model(filepath: Path, initializer: Callable = None):
 
 class SncosmoSaltModeler:
 
-    default_nsamples = 1500
-    default_nwalkers = 12
-
     def __init__(
         self,
         faint_limit=99.0,
         use_badqual=True,
         min_detections=3,
-        initializer=None,
+        model_key=None,
         existing_models_path=None,
-        show_traceback=True,
+        initializer=None,
         use_emcee=True,
-        nsamples=None,
-        nwalkers=None,
+        nsamples=1500,
+        nwalkers=12,
         z_max=0.2,
+        show_traceback=True,
         **kwargs,
     ):
         self.__name__ = "sncosmo_salt"
@@ -150,16 +148,17 @@ class SncosmoSaltModeler:
 
         if existing_models_path is not None:
             existing_models_path = Path(existing_models_path)
-            existing_models_path.mkdir(exist_ok=True, parent=True)
+            existing_models_path.mkdir(exist_ok=True, parents=True)
         self.existing_models_path = existing_models_path
 
         self.show_traceback = show_traceback
         self.use_emcee = use_emcee
         self.initializer = initializer
-        self.nsamples = nsamples or self.default_nsamples
-        self.nwalkers = nwalkers or self.default_nwalkers
 
+        self.nsamples = nsamples
+        self.nwalkers = nwalkers
         self.z_max = z_max
+        self.model_key = model_key or self.__name__
 
         logger.info
         logger.info(f"set use_emcee: {self.use_emcee}")
@@ -180,10 +179,11 @@ class SncosmoSaltModeler:
             raise ModuleNotFoundError(msg)
 
         target_id = target.target_id
-        model_key = self.__name__
-        target_has_model = model_key in target.models
+        target_has_model = self.model_key in target.models
         if self.existing_models_path is not None:
-            model_filepath = self.existing_models_path / f"{target_id}_{model_key}.pkl"
+            model_filepath = (
+                self.existing_models_path / f"{target_id}_{self.model_key}.pkl"
+            )
             if not target_has_model and model_filepath.exists():
                 model = read_salt_model(model_filepath, initializer=self.initializer)
                 if model is not None:

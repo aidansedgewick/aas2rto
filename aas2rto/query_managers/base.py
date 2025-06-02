@@ -158,13 +158,11 @@ class BaseQueryManager(abc.ABC):
             if provided, use this function on each target to see if a suitable
             id can be found for searching for lightcurve.
         flag_only_existing : bool, default True
-            if True, only targets which already have an (eg.) fink lightcurve
-            are have target.updated flag set as True, if the latest lightcurve has
+            if True, only targets which already have an existing (eg.) fink lightcurve
+            will have `target.updated` flag set as True, if the latest lightcurve has
             more data than the existing.
-            if False, targets with missing (eg.) Fink lightcurves are flagged as
+            if False, targets with prev. missing (eg.) Fink lightcurves are flagged as
             updated if there is now a fink lightcurve available.
-
-
         """
 
         t_ref = t_ref or Time.now()

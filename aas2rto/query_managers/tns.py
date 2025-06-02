@@ -395,7 +395,7 @@ class TnsQuery:
             page = page + 1
 
         if not df_list:
-            return pd.DataFrame(columns="Name")  # empty dataframe.
+            return pd.DataFrame(columns=["Name"])  # empty dataframe.
 
         results_df = pd.concat(df_list, ignore_index=True)
         return results_df

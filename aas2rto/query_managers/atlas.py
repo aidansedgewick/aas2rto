@@ -335,39 +335,6 @@ class AtlasQueryManager(BaseQueryManager):
         object_series.sort_values(inplace=True, ascending=False)
         return object_series.index
 
-    # def load_target_lightcurves(self, t_ref: Time = None):
-    #     t_ref = t_ref or Time.now()
-
-    #     loaded = []
-    #     missing = []
-    #     t_start = time.perf_counter()
-    #     for target_id, target in self.target_lookup.items():
-    #         lightcurve_filepath = self.get_lightcurve_file(target_id)
-    #         if not lightcurve_filepath.exists():
-    #             missing.append(target_id)
-    #             continue
-    #         lightcurve = pd.read_csv(lightcurve_filepath)
-    #         if lightcurve.empty:
-    #             continue
-
-    #         atlas_data = target.get_target_data("atlas")
-    #         existing_lightcurve = atlas_data.lightcurve
-    #         if existing_lightcurve is None:
-    #             atlas_data.add_lightcurve(lightcurve)
-    #         else:
-    #             if len(lightcurve) > len(existing_lightcurve):
-    #                 atlas_data.add_lightcurve(lightcurve)
-    #             else:
-    #                 continue
-    #         loaded.append(target_id)
-    #         if len(atlas_data.detections) > 0:
-    #             target.updated = True
-    #             target.update_messages.append("Atlas data updated")
-    #     t_end = time.perf_counter()
-    #     if len(loaded) > 0:
-    #         logger.info(f"{len(loaded)} lightcurves loaded in {(t_end-t_start):.1f}s")
-    #     return loaded, missing
-
     def load_single_lightcurve(self, target_id: str, t_ref=None):
         # logger.debug(f"loading {target_id}")
         lightcurve_filepath = self.get_lightcurve_file(target_id)
@@ -395,7 +362,9 @@ class AtlasQueryManager(BaseQueryManager):
         query_candidates = self.select_query_candidates(t_ref=t_ref)
         self.submit_new_queries(query_candidates, t_ref=t_ref)
         # self.recover_finished_queries(t_ref=t_ref)
+
         self.load_target_lightcurves(t_ref=t_ref, flag_only_existing=False)
+        # flag_only_exisitng=False means new LCs make the target updated.
 
 
 class AtlasQuery:

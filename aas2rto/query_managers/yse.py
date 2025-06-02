@@ -59,21 +59,35 @@ def process_yse_query_results(
     return query_updates
 
 
-def process_yse_lightcurve(input_lightcurve: pd.DataFrame, only_yse_data=True):
+def process_yse_lightcurve(
+    input_lightcurve: pd.DataFrame, additional_sources=None, use_all_sources=False
+):
     lightcurve = input_lightcurve.copy()
     lightcurve.drop(["varlist:"], inplace=True, axis=1)
     lightcurve.sort_values("mjd")
     jd_dat = Time(lightcurve["mjd"].values, format="mjd").jd
     lightcurve.insert(1, "jd", jd_dat)
-    if only_yse_data:
+    # if only_yse_data:
+    if not use_all_sources:
         # lightcurve.query("instrument=='GPC1'", inplace=True)
-        lightcurve = lightcurve[lightcurve["instrument"].str.startswith("GPC")]
+
+        mask = lightcurve["telescope"].str.startswith("Pan-STARRS")
+        if additional_sources:
+            if isinstance(additional_sources, str):
+                additional_sources = [additional_sources]
+            for source in additional_sources:
+                source_mask = lightcurve["telescope"].str.lower() == source.lower()
+                mask = mask | source_mask
+
+        lightcurve = lightcurve[mask]
     lightcurve.query("(0<magerr) & (magerr < 1)", inplace=True)
     lightcurve.reset_index(drop=True)
 
     lightcurve["tag"] = "valid"
-    bad_qual_mask = 1.0 / lightcurve["magerr"] < 3
-    lightcurve.loc[bad_qual_mask, "tag"] = "badquality"
+    low_snr_mask = 1.0 / lightcurve["magerr"] < 3
+    bad_dq_mask = lightcurve["dq"].str.lower() == "bad"
+    badquality_mask = low_snr_mask | bad_dq_mask
+    lightcurve.loc[badquality_mask, "tag"] = "badquality"
     return lightcurve
 
 
@@ -169,7 +183,7 @@ class YseQueryManager(BaseQueryManager):
             results_file_age = utils.calc_file_age(
                 query_results_file, t_ref, allow_missing=True
             )
-            if results_file_age < self.query_parameters["interval"]:
+            if results_file_age < self.query_parameters["object_query_interval"]:
                 if query_results_file.stat().st_size > 1:
                     logger.debug("read")
                     logger.info(f"read existing yse id {query_id} results")

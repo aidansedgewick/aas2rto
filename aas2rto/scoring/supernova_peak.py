@@ -87,7 +87,7 @@ class SupernovaPeakScore:
         self.broker_priority = tuple(broker_priority)
         self.use_compiled_lightcurve = use_compiled_lightcurve
 
-    def __call__(self, target: Target, t_ref: Time) -> Tuple[float, List, List]:
+    def __call__(self, target: Target, t_ref: Time) -> Tuple[float, List]:
         # t_ref = t_ref or Time.now()
 
         # to keep track
@@ -198,7 +198,12 @@ class SupernovaPeakScore:
             # Get "result" if it exists, else empty dict. Then ask for "samples", else get None.
 
             ###===== Samples
-            samples = getattr(model, "result", {}).get("samples", None)
+            try:
+                samples = getattr(model, "result", {}).get("samples", None)
+            except Exception as e:
+                # TODO: fix this block...
+                samples = None
+
             if samples is not None:
                 vparam_names = model.result.get("vparam_names")
                 median_params = np.nanquantile(samples, q=0.5, axis=0)
@@ -253,15 +258,20 @@ class SupernovaPeakScore:
 
             ###===== chisq
 
-            model_result = getattr(model, "result", {})
-            chisq = model_result.get("chisq", np.nan)
-            ndof = model_result.get("ndof", np.nan)
-            if (not np.isfinite(chisq)) or (not np.isfinite(ndof)):
-                scoring_comments.append(f"chisq={chisq:.2f} and ndof={ndof}")
-            else:
-                chisq_nu = chisq / ndof
-                scoring_comments.append(f"model chisq={chisq:.3f} with ndof={ndof}")
-                # TODO how to use chisq_nu properly?
+            try:
+                model_result = getattr(model, "result", {})
+            except Exception as e:
+                model_result = None
+
+            if model_result is not None:
+                chisq = model_result.get("chisq", np.nan)
+                ndof = model_result.get("ndof", np.nan)
+                if (not np.isfinite(chisq)) or (not np.isfinite(ndof)):
+                    scoring_comments.append(f"chisq={chisq:.2f} and ndof={ndof}")
+                else:
+                    chisq_nu = chisq / ndof
+                    scoring_comments.append(f"model chisq={chisq:.3f} with ndof={ndof}")
+                    # TODO how to use chisq_nu properly?
 
         scoring_factors = np.array(list(factors.values()))
         if not all(scoring_factors > 0):

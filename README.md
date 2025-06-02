@@ -4,19 +4,19 @@ Tools to prioritize targets for follow up, based (currently!) on ZTF and ATLAS d
 The concept is to reduce a target down to a single "score" by which targets can be ranked.
 You can write your own `scoring_function`to prioritise them as you like, and `modeling_function` to use more than just the lightcurve data.
 
-aas2rto is written in python, using >=3.9 is recommended (3.8 is not guaranteed to work).
+aas2rto is written in python, using >=3.9 is recommended (<3.8 is not guaranteed to work).
   
 ## Installing
 To install
 - Clone this repo: `git clone https://github.com/aidansedgewick/aas2rto.git`
-- Preferably start a new virtualenv: `python3.8 -m virtualenv dk154_env`
-    - You may need to `python3.8 -m pip install virtualenv` 
-    - Then `source dk154_env/bin/activate` - do this every session!
-- Move to the cloned directory: `cd dk154-targets-py38`
+- Preferably start a new virtualenv: `python3 -m virtualenv env_aas2rto`
+    - You may need to `python3 -m pip install virtualenv` 
+    - Then `source env_aas2rto/bin/activate` - do this every session!
+- Move to the cloned directory: `cd aas2rto`
 - Install requirements `python3 -m pip install -r requirements.txt`
 - Install this package: `python3 -m pip install -e .` 
     - ideally install as developer -this is the `-e` flag
-- Optionally run the tests: `pytest --cov dk154_targets`
+- Optionally run the tests: `pytest test_aas2rto --cov aas2rto`
 
 ## Quickstart
 There are some example configs:
@@ -25,8 +25,8 @@ There are some example configs:
 - Modify this file with your FINK and ATLAS credentials
     - If you do not have ATLAS credentials, set `use: False` in the ATLAS config section.
 - use this configuration with:
-     `python3 scripts/main.py -c config/fink_supernovae.yaml --existing read`
-    - (the `--existing read` flag recovers existing targets if the program crashes...)
+     `python3 scripts/main.py -c config/fink_supernovae.yaml -x`
+    - (the `-x` flag recovers existing targets if the program crashes...)
 - watch the terminal output and watch the folder `fink_supernovae/outputs/plots` for new plots...
     
 #### `config/examples/fink_kn_bot.yaml`:
@@ -34,17 +34,17 @@ There are some example configs:
 - Add your credentials 
     - As earlier, modify the config and switch ATLAS `use: False` if you don't have the credentials yet.
 - If you do not already have a suitable telegram bot set up, there is a brief description below.
-- Run with `python3 scripts/main.py -c config/fink_kn_bot.yaml`
+- Run with `python3 scripts/main.py --config config/fink_kn_bot.yaml`
 
 #### `config/examples/alerce_supernovae.yaml`:
 Note that there are no credentials needed for Alerce!
 - Alerce doesn't have kafka alerts at the moment, so this script periodically queries for new targets.
 - Add Atlas credential, or switch off as earlier.
-- run with `python3 scripts/main.py -c config/alerce_supernovae.yaml`
+- run with `python3 scripts/main.py --config config/alerce_supernovae.yaml`
 
 #### `config/examples/yse_rising.yaml`:
 - Add credentials as before.
-NOTE: the YSE interface is still experimental...!
+NOTE: the YSE module is still experimental...!
 
 ## The main interface
 Once the quickstart isn't much use to you any more, you can write your own scoring functions and modeling functions.
@@ -268,12 +268,15 @@ The model is saved in the target in a dictionary `target.models`, with the key a
 
 NB: if the model fitting fails (an exception is raised by your function), then `None` will be stored in the models dictionary. Build this into your scoring function accordingly! (ie, you may want to reject the target if the model failed, or just not take this information into account.)
 
-#### Want to fit more than one model?
+### Want to fit more than one model?
 pass a list of functions,
 `selector.start(modeling_function=[some_model, another_model])`
 
 Then:
-`m1 = target.models["some_model"]` and `m2 = target.models["another_model"]`
+`m1 = target.models.get("some_model")` and `m2 = target.models.get("another_model")`
+
+## Telegram bot
+
 
 ## A few useful scripts...
 - `scripts/get_atlas_token.py`

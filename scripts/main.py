@@ -37,12 +37,19 @@ if __name__ == "__main__":
         logging.config.dictConfig(log_config)
 
     config_file = args.config or paths.config_path / "selector_config.yaml"
+    config_file = Path(config_file)
+
+    if not config_file.exists():
+        raise FileNotFoundError(f"no config file at {config_file}")
     config_file = Path(args.config)
+    selector = TargetSelector.from_config(config_file)
 
     lc_plotting_function = plot_default_lightcurve
     if "supernovae" in config_file.stem:
         scoring_function = SupernovaPeakScore()  # This is a class - initialise it!
-        modeling_function = SncosmoSaltModeler()
+
+        models_path = selector.project_path / "models"
+        modeling_function = SncosmoSaltModeler(existing_models_path=models_path)
         lc_plotting_function = plot_sncosmo_lightcurve
     elif "atlas_test" in config_file.stem:
         scoring_function = example_functions.latest_flux_atlas_requirement
@@ -60,7 +67,6 @@ if __name__ == "__main__":
     if not args.existing_targets_file:
         logger.info(f"NOT attempting to recover existing targets")
 
-    selector = TargetSelector.from_config(config_file)
     try:
         selector.start(
             scoring_function=scoring_function,
