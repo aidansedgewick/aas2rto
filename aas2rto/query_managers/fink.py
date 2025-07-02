@@ -384,6 +384,7 @@ class FinkQueryManager(BaseQueryManager):
         for topic in kafka_topics:
             with AlertConsumer([topic], self.kafka_config) as consumer:
                 # TODO: change from `poll` to `consume`?
+                logger.info(f"listen for {topic} alerts")
                 for ii in range(self.kafka_config["n_alerts"]):
                     try:
                         alert_data = consumer.poll(timeout=self.kafka_config["timeout"])
@@ -741,7 +742,7 @@ class FinkQueryManager(BaseQueryManager):
     def load_single_lightcurve(self, fink_id: str, t_ref=None):
         lightcurve_filepath = self.get_lightcurve_file(fink_id)
         if not lightcurve_filepath.exists():
-            logger.warning(f"{fink_id} is missing lightcurve")
+            # logger.warning(f"{fink_id} is missing lightcurve")
             return None
         try:
             lightcurve = pd.read_csv(lightcurve_filepath, dtype={"candid": "Int64"})
@@ -783,6 +784,8 @@ class FinkQueryManager(BaseQueryManager):
         integrated_alerts = []
         for target_id, target in self.target_lookup.items():
             fink_id = fink_id_from_target(target)
+            if fink_id is None:
+                continue
 
             # Loop through all targets - not a bottleneck for now.
             loaded_alerts = self.load_missing_alerts(fink_id)
@@ -862,17 +865,21 @@ class FinkQueryManager(BaseQueryManager):
             )
             target.update_messages.append(alert_text)
 
-    def perform_all_tasks(self, t_ref: Time = None):
+    def perform_all_tasks(self, startup=False, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        alerts = self.listen_for_alerts()
-        processed_alerts = self.process_alerts(alerts, t_ref=t_ref)
-        self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
+        if not startup:
+            alerts = self.listen_for_alerts()
+            processed_alerts = self.process_alerts(alerts, t_ref=t_ref)
+            self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
+
+            new_targets = list(set([alert["objectId"] for alert in processed_alerts]))
+            success, failed = self.perform_lightcurve_queries(new_targets)
+        else:
+            processed_alerts = None
+            logger.info("skip new alerts on startup step (iter 0)")
 
         self.update_target_alt_ids()  # try to make everything have a "fink" id...
-
-        new_targets = list(set([alert["objectId"] for alert in processed_alerts]))
-        success, failed = self.perform_lightcurve_queries(new_targets)
 
         updated_objects = self.query_for_object_updates(t_ref=t_ref)
         new_targets = self.new_targets_from_object_updates(updated_objects)
@@ -880,17 +887,23 @@ class FinkQueryManager(BaseQueryManager):
             updated_objects["objectId"].values
         )
 
-        lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
-        logger.info(f"update {len(lcs_to_query)} old lightcurves")
-        success, failed = self.perform_lightcurve_queries(lcs_to_query)
+        if startup:
+            logger.info("skip query lightcurves on startup")
+        else:
+            lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
+            logger.info(f"update {len(lcs_to_query)} old lightcurves")
+            success, failed = self.perform_lightcurve_queries(lcs_to_query)
 
-        loaded_lcs, missing_lcs = self.load_target_lightcurves(t_ref=t_ref)
+        loaded_lcs, missing_lcs = self.load_target_lightcurves(
+            id_from_target_function=fink_id_from_target, t_ref=t_ref
+        )
 
         self.integrate_alerts()
 
         self.load_cutouts()
 
-        self.apply_messenger_updates(processed_alerts)
+        if processed_alerts:
+            self.apply_messenger_updates(processed_alerts)
 
 
 class FinkQueryError(Exception):

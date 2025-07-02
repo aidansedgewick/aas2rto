@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import shutil
@@ -6,6 +7,8 @@ import time
 import traceback
 import warnings
 import yaml
+from functools import partial
+from multiprocessing import Pool
 from pathlib import Path
 from typing import Callable, Dict, List, Set
 
@@ -27,6 +30,7 @@ from aas2rto import messengers
 from aas2rto import query_managers
 from aas2rto import utils
 from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
+from aas2rto.modeling.utils import modeling_wrapper, pool_modeling_wrapper
 from aas2rto.obs_info import ObservatoryInfo
 from aas2rto.plotters import plot_default_lightcurve, plot_visibility
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
@@ -76,6 +80,7 @@ class TargetSelector:
     default_selector_parameters = {
         "project_name": None,
         "sleep_time": 600.0,
+        "ncpu": None,
         "unranked_value": 9999,
         "minimum_score": 0.0,
         "retained_recovery_files": 5,
@@ -270,7 +275,6 @@ class TargetSelector:
                 qm = query_managers.TnsQueryManager(*qm_args, **qm_kwargs)
                 self.tns_query_manager = qm
             elif qm_name == "yse":
-                raise NotImplementedError("yse not yet implemented")
                 qm = query_managers.YseQueryManager(*qm_args, **qm_kwargs)
                 self.yse_query_manager = qm
             else:
@@ -475,7 +479,7 @@ class TargetSelector:
             logger.warning(f"failed:{len(failed)} (no compiled lc!)")
         return compiled, failed
 
-    def perform_query_manager_tasks(self, t_ref: Time = None):
+    def perform_query_manager_tasks(self, startup=False, t_ref: Time = None):
         """
         for each of the query managers `qm` in target_selector.query_managers,
         call the method `qm.perform_all_tasks(t_ref=t_ref)`
@@ -492,7 +496,7 @@ class TargetSelector:
         for qm_name, qm in self.query_managers.items():
             t_start = time.perf_counter()
             logger.info(f"begin {qm_name} tasks")
-            query_result = qm.perform_all_tasks(t_ref=t_ref)
+            query_result = qm.perform_all_tasks(startup=startup, t_ref=t_ref)
             if isinstance(query_result, Exception):
                 text = [f"EXCEPTION IN {qm_name}"]
                 self.send_crash_reports(text=text)
@@ -647,7 +651,7 @@ class TargetSelector:
     def _parse_scoring_result(self, scoring_res, func_name=""):
         err_msg = (
             f"scoring function {func_name} should return\n"
-            "score [float] or tuple of (score [float], comments [list[str]]"
+            "score [float] or tuple of (score [float], comments [list[str]])"
         )
 
         if isinstance(scoring_res, tuple):
@@ -743,38 +747,75 @@ class TargetSelector:
 
         if not isinstance(modeling_functions, list):
             modeling_functions = [modeling_functions]
-        for func in modeling_functions:
+        for modeling_func in modeling_functions:
+
             try:
-                model_key = func.__name__
+                model_key = modeling_func.__name__
             except AttributeError as e:
-                model_key = type(func).__name__
+                model_key = type(modeling_func).__name__
                 msg = f"\n    Your modeling_function {model_key} should have attribute __name__."
                 logger.warning(msg)
 
-            logger.info(f"build {model_key} models")
-            built = []
-            failed = []
             skipped = []
+            targets_to_model = []
             for target_id, target in self.target_lookup.items():
                 model_exists = model_key in target.models
-                latest_model = target.models.get(model_key, None)
-                if (not target.updated) and lazy and (model_exists):
+                if (not target.updated) and lazy and model_exists:
                     skipped.append(target_id)
                     continue
-                try:
-                    model = func(target)
-                    built.append(target_id)
-                except Exception as e:
-                    print(traceback.format_exc())
-                    model = None
-                    failed.append(target_id)
-                    logger.warning(f"{model_key} failed for {target_id}")
-                target.models[model_key] = model
-                target.models_t_ref[model_key] = t_ref
+                targets_to_model.append(target)
 
-            logger.info(f"built:{len(built)} skipped (lazy):{len(skipped)}")
+            if lazy and len(skipped) > 0:
+                logger.info(
+                    f"skip {len(skipped)} non-updated targets (lazy_modeling=True)"
+                )
+
+            if len(targets_to_model) == 0:
+                logger.info("no targets to model - continue!")
+                continue  # NOT return - we are still in a loop...
+
+            logger.info(f"build {model_key} models for {len(targets_to_model)}")
+            ncpu = self.selector_parameters.get("ncpu", None)
+            if ncpu is not None:
+                logger.info("cannot currently multiprocess models")
+            serial = True
+            if serial:
+                logger.info("build in serial")
+                result_list = []
+                for target_id in targets_to_model:
+                    result = modeling_wrapper(modeling_func, target_id, t_ref=t_ref)
+                    result_list.append(result)
+            else:
+                if not isinstance(ncpu, int):
+                    raise ValueError(f"'ncpu' must be integer, not {type(ncpu)}")
+                logger.info(f"build with {ncpu} workers")
+                with Pool(ncpu) as p:
+                    args_kwargs = [
+                        ((modeling_func, target), dict(t_ref=t_ref))
+                        for target in targets_to_model
+                    ]
+                    result_list = p.map(pool_modeling_wrapper, args_kwargs)
+
+            built = []
+            failed = []
+            no_model = []
+            fail_str = ""
+            for result in result_list:
+                target_id = result.target_id
+                target = self.target_lookup.get(target_id)
+                target.models[model_key] = result.model
+                if result.success:
+                    if result.model is None:
+                        no_model.append(target_id)
+                    else:
+                        built.append(target_id)
+                else:
+                    failed.append(target_id)
+                    fail_str = fail_str + f"{target_id}: {result.reason}\n"
+
+            logger.info(f"{model_key} built:{len(built)}, {len(no_model)} 'None'")
             if len(failed) > 0:
-                logger.warning(f"failed:{len(failed)}")
+                logger.warning(f"failed: {len(failed)}, reasons:\n{fail_str}")
 
     def write_target_comments(
         self, target_list: List[Target] = None, outdir: Path = None, t_ref: Time = None
@@ -1010,34 +1051,41 @@ class TargetSelector:
             target.send_updates = False
             target.update_messages = []
 
-    def write_existing_target_list(self, t_ref: Time = None):
+    def write_existing_target_list(self, t_ref: Time = None, fmt="json"):
         t_ref = t_ref or Time.now()
 
-        rows = []
         if len(self.target_lookup) == 0:
             logger.info("no existing targets to write...")
             return
+
+        data = {}
+        # rows = []
         for target_id, target in self.target_lookup.items():
-            data = dict(
+            target_info = dict(
                 target_id=target_id,
                 ra=target.ra,
                 dec=target.dec,
                 base_score=target.base_score,
+                alt_ids=target.alt_ids,
             )
-            rows.append(data)
-        existing_targets_df = pd.DataFrame(rows)
+            # rows.append(target_info)
+            data[target_id] = target_info
+        # existing_targets_df = pd.DataFrame(rows)
 
         timestamp = t_ref.strftime("%y%m%d_%H%M%S")
         filename = f"recover_{timestamp}"
-        existing_targets_file = self.existing_targets_path / f"{filename}.csv"
-        existing_targets_df.to_csv(existing_targets_file, index=False)
+        existing_targets_file = self.existing_targets_path / f"{filename}.{fmt}"
+        with open(existing_targets_file, "w+") as f:
+            json.dump(data, f, indent=2)
+        # existing_targets_file = self.existing_targets_path / f"{filename}.csv"
+        # existing_targets_df.to_csv(existing_targets_file, index=False)
         try:
             print_path = existing_targets_file.relative_to(self.project_path.parent)
         except Exception as e:
             print_path = existing_targets_file
         logger.info(f"write existing targets to:\n    {print_path}")
 
-        targets_files = sorted(self.existing_targets_path.glob("*.csv"))
+        targets_files = sorted(self.existing_targets_path.glob(f"*.{fmt}"))
         N = self.selector_parameters.get("retained_recovery_files", 5)
         targets_files_to_remove = targets_files[:-N]
         for filepath in targets_files_to_remove:
@@ -1073,7 +1121,7 @@ class TargetSelector:
         rank_history_path.mkdir(exist_ok=True, parents=True)
         return rank_history_path / f"{target_id}.csv"
 
-    def recover_existing_targets(self, existing_targets_file="last"):
+    def recover_existing_targets(self, existing_targets_file="last", fmt="json"):
         """
         During each iteration of the selector, the names of all of the existing targets
         are dumped into a file.
@@ -1082,7 +1130,7 @@ class TargetSelector:
         """
 
         if existing_targets_file == "last":
-            targets_files = sorted(self.existing_targets_path.glob("*.csv"))
+            targets_files = sorted(self.existing_targets_path.glob(f"*.{fmt}"))
             if len(targets_files) == 0:
                 logger.info(f"No existing targets file to recover")
                 return
@@ -1097,21 +1145,36 @@ class TargetSelector:
             return
 
         logger.info(f"recover targets from\n    {existing_targets_file}")
-        existing_targets_df = pd.read_csv(existing_targets_file)
-        logger.info(f"attempt {len(existing_targets_df)} targets")
+        with open(existing_targets_file) as f:
+            existing_targets = json.load(f)
+
         recovered_targets = []
-        for ii, row in existing_targets_df.iterrows():
-            target_id = row.target_id
-            if target_id in self.target_lookup:
-                logger.warning(f"skip load existing {target_id}")
-                continue
+        for target_id, target_info in existing_targets.items():
             target = Target(
-                target_id, ra=row.ra, dec=row.dec, base_score=row.base_score
+                target_id,
+                ra=target_info["ra"],
+                dec=target_info["dec"],
+                base_score=target_info["base_score"],
+                alt_ids=target_info["alt_ids"],
             )
-            # self.recover_score_history(target)
-            # self.recover_rank_history(target)
             self.add_target(target)
             recovered_targets.append(target_id)
+
+        # existing_targets_df = pd.read_csv(existing_targets_file)
+        # logger.info(f"attempt {len(existing_targets_df)} targets")
+        # recovered_targets = []
+        # for ii, row in existing_targets_df.iterrows():
+        #     target_id = row.target_id
+        #     if target_id in self.target_lookup:
+        #         logger.warning(f"skip load existing {target_id}")
+        #         continue
+        #     target = Target(
+        #         target_id, ra=row.ra, dec=row.dec, base_score=row.base_score
+        #     )
+        #     # self.recover_score_history(target)
+        #     # self.recover_rank_history(target)
+        #     self.add_target(target)
+        #     recovered_targets.append(target_id)
         logger.info(f"recovered {len(recovered_targets)} existing targets")
         return recovered_targets
 
@@ -1160,10 +1223,12 @@ class TargetSelector:
                 logger.debug(f"no messages")
                 no_updates.append(target_id)
                 continue
+
             if not target.updated:
                 logger.debug(f"not updated; skip")
                 skipped.append(target_id)
                 continue
+
             last_score = target.get_last_score()
             if last_score is None:
                 skipped.append(target_id)
@@ -1230,6 +1295,7 @@ class TargetSelector:
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
         skip_tasks: list = None,
+        startup: bool = False,
         t_ref: Time = None,
     ):
         """
@@ -1237,12 +1303,15 @@ class TargetSelector:
 
         Parameters
         ----------
-        scoring_function : Callable, optional
+        scoring_function : Callable
         observatory_scoring_function : Callable, optional
         modeling_function : Callable, optional
         lightcurve_compiler : Callable, optional
         lc_plotting_function : Callable, optional
-        skip_tasks
+        skip_tasks : list, optional
+        startup : bool, default=False
+            passed to the "perform_all_tasks()" function for query_managers.
+            useful for skipping certain steps on first iteration.
         t_ref : `astropy.time.Time`, default=Time.now()
             the reference time at the start of the iteration.
             useful for simulations.
@@ -1285,7 +1354,7 @@ class TargetSelector:
         t1 = time.perf_counter()
         self.check_for_targets_of_opportunity()
         if not "qm_tasks" in skip_tasks:
-            self.perform_query_manager_tasks(t_ref=t_ref)
+            self.perform_query_manager_tasks(startup=startup, t_ref=t_ref)
         else:
             logger.info("skip query manager tasks")
         perf_times["qm_tasks"] = time.perf_counter() - t1
@@ -1329,7 +1398,7 @@ class TargetSelector:
             self.build_target_models(modeling_function, t_ref=t_ref, lazy=lazy_modeling)
         perf_times["modeling"] = time.perf_counter() - t1
 
-        # ========================= Do the scoring, ========================== #
+        # ========================== Do the scoring ========================== #
         t1 = time.perf_counter()
         if "evaluate" not in skip_tasks:
             if scoring_function is None:
@@ -1432,10 +1501,11 @@ class TargetSelector:
         Most of the parameters are callable functions, which you can provide.
         Only one is required: scoring_function
 
-        All but one of the Callable types (functions) should have signature:
+        All but one of the Callable types (functions) should have a 'standard' signature:
+            `func(target, t_ref)`
 
         The only exception is observatory_scoring_function, which should have signature
-            func(target, obs: astroplan.Observer, t_ref)
+            `func(target, obs: astroplan.Observer, t_ref)`
 
         Parameters
         ----------
@@ -1483,8 +1553,8 @@ class TargetSelector:
                 "qm_tasks", "obs_info", "pre_check", "modeling", "evaluate",
                 "ranking", "reject", "plotting", "write_targets", "messaging",
         iterations : int, optional
-
-
+            How many iterations to perform before exiting
+            default infinite loop.
 
         Examples
         --------
@@ -1540,6 +1610,9 @@ class TargetSelector:
                 # Don't send messages on the first loop.
                 # If many targets are recovered, 100s of messages could be sent...
                 loop_skip_tasks.append("messaging")
+                startup = True
+            else:
+                startup = False  # skips some query_manager tasks on startup
 
             try:
                 self.perform_iteration(
@@ -1549,6 +1622,7 @@ class TargetSelector:
                     lightcurve_compiler=lightcurve_compiler,
                     lc_plotting_function=lc_plotting_function,
                     skip_tasks=loop_skip_tasks,
+                    startup=startup,
                     t_ref=t_ref,
                 )
             except Exception as e:
@@ -1563,5 +1637,8 @@ class TargetSelector:
                 if N_iterations >= iterations:
                     break
 
-            logger.info(f"sleep for {sleep_time} sec")
-            time.sleep(sleep_time)
+            if startup:
+                logger.info("no sleep after startup")
+            else:
+                logger.info(f"sleep for {sleep_time} sec")
+                time.sleep(sleep_time)

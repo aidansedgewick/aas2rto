@@ -113,7 +113,7 @@ class TargetLookup:
     def consolidate_targets(
         self, seplimit=5 * u.arcsec, sort=False, warn_overwrite=True
     ):
-        logger.info("merge duplicated targets")
+        logger.info("find duplicated targets and merge...")
 
         target_ids = []
         coord_list = []
@@ -122,6 +122,10 @@ class TargetLookup:
             if target.coord is None:
                 continue
             coord_list.append(target.coord)
+
+        if len(coord_list) == 0:
+            logger.info("no targets in target_lookup to consolidate")
+            return
 
         coords = SkyCoord(coord_list)
         grouped_indices = group_nearby_targets(coords, seplimit=seplimit)
@@ -150,7 +154,7 @@ def group_nearby_targets(coords: SkyCoord, seplimit=5 * u.arcsec):
     are "connected" (within seplim).
 
     Not suitable for large groups >~100, as it uses recursive search, can possibly
-    return RecursionDepth
+    raise RecursionError
 
 
     eg.
@@ -222,8 +226,8 @@ def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
         for key, target_data in target.target_data.items():
             if key in output.target_data:
                 msg = (
-                    f"In merge: {output.target_id}/{target.target_id}"
-                    f"overwriting existing {key} target_data..."
+                    f"overwriting existing {key} target_data "
+                    f"in merge: {output.target_id}/{target.target_id}"
                 )
                 if warn_overwrite:
                     warnings.warn(DuplicateDataWarning(msg))
@@ -242,4 +246,10 @@ def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
                 )
                 warnings.warn(DuplicateDataWarning(msg))
             output.alt_ids[alt_key] = alt_id
+
+        output.update_messages.extend(target.update_messages)
+
+    targets
+    output.update_messages.append("merged targets: {}")
+
     return output

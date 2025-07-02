@@ -289,21 +289,25 @@ class Target:
         t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
 
         info_lines = [f"Target {self.target_id} at {t_ref_str}, see:"]
-        broker_lines = (
-            f"    FINK: fink-portal.org/{self.target_id}\n"
-            f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.target_id}\n"
-            f"    ALeRCE: alerce.online/object/{self.target_id}"
-        )
-        info_lines.append(broker_lines)
 
-        tns_data = self.target_data.get("tns", None)
-        if tns_data:
-            name = tns_data.parameters.get("Name", None)
-            if name is not None:
-                tns_code = tns_data.parameters["Name"].split()[1]
-                tns_url = f"wis-tns.org/object/{tns_code}"
-                yse_url = f"ziggy.ucolick.org/yse/transient_detail/{tns_code}"
-                info_lines.extend([f"    TNS: {tns_url}", f"    YSE: {yse_url}"])
+        broker_name = self.alt_ids.get("ztf", None)
+        if broker_name is not None:
+            broker_lines = [
+                f"    FINK: fink-portal.org/{self.target_id}",
+                f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.target_id},"
+                f"    ALeRCE: alerce.online/object/{self.target_id}",
+            ]
+            info_lines.extend(broker_lines)
+
+        tns_name = self.alt_ids.get("tns", None)
+        if tns_name is not None:
+            tns_url = f"wis-tns.org/object/{tns_name}"
+            info_lines.append(f"    TNS: {tns_url}")
+
+        yse_name = self.alt_ids.get("yse", None)
+        if yse_name is not None:
+            yse_url = f"ziggy.ucolick.org/yse/transient_detail/{yse_name}"
+            info_lines.append(f"    YSE: {yse_url}")
 
         alt_rev = {}
         for source, alt_name in self.alt_ids.items():

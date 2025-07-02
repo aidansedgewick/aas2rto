@@ -339,7 +339,7 @@ class AtlasQueryManager(BaseQueryManager):
         # logger.debug(f"loading {target_id}")
         lightcurve_filepath = self.get_lightcurve_file(target_id)
         if not lightcurve_filepath.exists():
-            logger.info(f"{target_id} is missing lightcurve")
+            logger.debug(f"{target_id} is missing lightcurve")
             return None
         lightcurve = pd.read_csv(lightcurve_filepath)
         if lightcurve.empty:
@@ -347,8 +347,14 @@ class AtlasQueryManager(BaseQueryManager):
             return None
         return lightcurve
 
-    def perform_all_tasks(self, t_ref: Time = None):
+    def perform_all_tasks(self, startup=False, t_ref: Time = None):
         t_ref = t_ref or Time.now()
+
+        if startup:
+            logger.info("perform no ATLAS queries on iter 0: only load existing")
+            self.load_target_lightcurves(t_ref=t_ref, flag_only_existing=False)
+            return
+
         try:
             self.recover_finished_queries(t_ref=t_ref)
             # also populates "submitted queries"
@@ -404,7 +410,5 @@ class AtlasQuery:
             textdata = photom_data.text
         else:
             textdata = photom_data
-        lightcurve = pd.read_csv(
-            io.StringIO(textdata.replace("###", "")), delim_whitespace=True
-        )
+        lightcurve = pd.read_csv(io.StringIO(textdata.replace("###", "")), sep="\s+")
         return lightcurve

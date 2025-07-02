@@ -10,7 +10,9 @@ import numpy as np
 
 import pandas as pd
 
+import astropy.units as u
 from astropy.table import Table
+from astropy.time import Time
 
 import sncosmo
 
@@ -24,6 +26,8 @@ except ModuleNotFoundError as e:
     raise ModuleNotFoundError(msg)
 
 from dustmaps import sfd
+
+from dust_extinction.parameter_averages import F99
 
 from aas2rto.target import Target
 from aas2rto.utils import check_unexpected_config_keys
@@ -76,16 +80,35 @@ def get_detections(
         if use_badqual:
             data = lc[np.isin(lc["tag"], [valid_tag, badqual_tag])]
         else:
-            data = lc[lc["tag"] == "valid"]
+            data = lc[lc["tag"] == valid_tag]
         return data
     else:
         return lc
 
 
+class PickleableF99Dust(sncosmo.PropagationEffect):
+
+    _minwave = 909.09
+    _maxwave = 60000.0
+
+    def __init__(self, r_v=3.1):
+        raise NotImplementedError
+        self._param_names = ["ebv"]
+        self.param_names_latex = ["E(B-V)"]
+        self._parameters = np.array([0.0])
+        self._r_v = r_v
+        self._f = F99(Rv=r_v)
+
+    def propagate(self, wave, flux, phase=None):
+        ebv = self._parameters[0]
+        ext = self._f.extinguish(wave * u.AA, Ebv=ebv)
+        return flux * ext
+
+
 def initialise_model() -> sncosmo.Model:
     dust = sncosmo.F99Dust()
     model = sncosmo.Model(
-        source="salt2", effects=[dust], effect_names=["mw"], effect_frames=["obs"]
+        source="salt3", effects=[dust], effect_names=["mw"], effect_frames=["obs"]
     )
     return model
 
@@ -108,10 +131,12 @@ def write_salt_model(model: sncosmo.Model, filepath: Path):
 
 
 def read_salt_model(filepath: Path, initializer: Callable = None):
+
     with open(filepath, "rb") as f:
         try:
             model_data = pickle.load(f)
         except Exception as e:
+            logger.error(f"error loading {filepath.stem}")
             return None
 
     if initializer is None:
@@ -135,7 +160,7 @@ class SncosmoSaltModeler:
         existing_models_path=None,
         initializer=None,
         use_emcee=True,
-        nsamples=1500,
+        nsamples=2500,
         nwalkers=12,
         z_max=0.2,
         show_traceback=True,
@@ -170,7 +195,9 @@ class SncosmoSaltModeler:
         for k, v in kwargs.items():
             logger.warning(f"\033[33;1munknown kwarg\033[0m {k}={v}")
 
-    def __call__(self, target: Target):
+    def __call__(self, target: Target, t_ref=None):
+        t_ref = t_ref or Time.now()
+
         if sncosmo is None:
             msg = (
                 "`sncosmo` not imported properly. try:\n    "
@@ -191,6 +218,9 @@ class SncosmoSaltModeler:
         else:
             model_filepath = None
 
+        if target.compiled_lightcurve is None:
+            return None
+
         detections = get_detections(
             target.compiled_lightcurve, use_badqual=self.use_badqual
         )
@@ -198,8 +228,11 @@ class SncosmoSaltModeler:
 
         brightest_detection = detections["mag"].min()
         if brightest_detection > self.faint_limit:
-            msg = f"brightest {brightest_detection} > {self.faint_limit}: too faint!"
-            logger.info(msg)
+            msg = (
+                f"no model for {target_id}:\n    "
+                f"brightest {brightest_detection} > {self.faint_limit}: too faint!"
+            )
+            logger.debug(msg)
             return None
 
         N_detections = {}
@@ -243,7 +276,7 @@ class SncosmoSaltModeler:
         bounds = {"z": (0.001, self.z_max)}
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
-            known_redshift = float(tns_data.parameters.get("Redshift", "nan"))
+            known_redshift = float(tns_data.parameters.get("redshift", "nan"))
             if np.isfinite(known_redshift):
                 logger.debug(f"{target.target_id} use known TNS z={known_redshift:.3f}")
                 model.set(z=known_redshift)

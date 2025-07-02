@@ -85,25 +85,28 @@ def get_updates_from_query_results(
 ):
     """
     Compare two dataframes of query_results. Get the rows which have been updated, or are new.
-
-    Index column should be oid
     """
 
     if updated_results is None or updated_results.empty:
         # Even if it's None, that's fine.
         return get_empty_query_results(extra_columns=comparison)
 
-    updated_results = process_alerce_query_results(
-        updated_results, comparison=comparison
-    )
-
+    # updated_results = process_alerce_query_results(
+    #     updated_results, comparison=comparison
+    # )
+    updated_results = updated_results.copy()
     if existing_results is None or existing_results.empty:
         return updated_results
 
-    existing_results = process_alerce_query_results(
-        existing_results, comparison=comparison
-    )  # Makes a COPY.
-    existing_results.set_index("oid", verify_integrity=True)
+    updated_results.set_index("oid", drop=False, verify_integrity=True, inplace=True)
+
+    # make sure no duplicates again...
+
+    # existing_results = process_alerce_query_results(
+    #     existing_results, comparison=comparison
+    # )  # Makes a COPY.
+    existing_results = existing_results.copy()
+    existing_results.set_index("oid", drop=False, verify_integrity=True, inplace=True)
 
     updates = []
     for oid, updated_row in updated_results.iterrows():
@@ -118,6 +121,7 @@ def get_updates_from_query_results(
         return get_empty_query_results(extra_columns=comparison)
     updates_df = pd.DataFrame(updates)
     updates_df.sort_values("oid", inplace=True)
+
     # updates_df.set_index("objectId", verify_integrity=True, inplace=True, drop=False)
     return updates_df
 
@@ -291,6 +295,18 @@ class AlerceQueryManager(BaseQueryManager):
         """
         t_ref = t_ref or Time.now()
 
+        for query_name in self.object_queries.keys():
+            query_results_file = self.get_query_results_file(query_name)
+            existing_results = self.query_results.get(query_name)
+            if existing_results is None and query_results_file.exists():
+                # if there's nothing already loaded, and something to load...
+                query_results = pd.read_csv(query_results_file)
+                query_results = process_alerce_query_results(query_results)
+                self.query_results[query_name] = query_results
+
+    def get_queries_to_rerun(self, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
         to_requery = []
 
         for query_name in self.object_queries.keys():
@@ -299,12 +315,6 @@ class AlerceQueryManager(BaseQueryManager):
             if query_results_file_age > self.query_parameters["object_query_interval"]:
                 # we need to do this one again.
                 to_requery.append(query_name)
-
-            if self.query_results.get(query_name) is None:  # no query data to load...
-                if query_results_file.exists():
-                    query_results = pd.read_csv(query_results_file)
-                    query_results = process_alerce_query_results(query_results)
-                    self.query_results[query_name] = query_results
         return to_requery
 
     def query_for_object_updates(
@@ -338,6 +348,7 @@ class AlerceQueryManager(BaseQueryManager):
             if query_updates is None or query_updates.empty:
                 updated_results = get_empty_query_results(extra_columns=comparison)
             else:
+                # remove duplicates from THIS query result.
                 updated_results = process_alerce_query_results(
                     query_updates, comparison=comparison
                 )
@@ -356,6 +367,8 @@ class AlerceQueryManager(BaseQueryManager):
                 )
             else:
                 query_results = updates
+
+            # remove duplicates from COMBINED query result
             query_results = process_alerce_query_results(
                 query_results, comparison=comparison
             )
@@ -450,58 +463,56 @@ class AlerceQueryManager(BaseQueryManager):
             logger.info(f"{N_success} successful, {N_failed} failed lc queries")
         return success, failed
 
-    def load_target_lightcurves(self, oid_list: List[str] = None, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
+    # def load_target_lightcurves(self, oid_list: List[str] = None, t_ref: Time = None):
+    #     t_ref = t_ref or Time.now()
 
-        loaded = []
-        missing = []
-        skipped = []
-        t_start = time.perf_counter()
+    #     loaded = []
+    #     missing = []
+    #     skipped = []
+    #     t_start = time.perf_counter()
 
-        if oid_list is None:
-            oid_list = list(self.target_lookup.keys())
-            logger.info(f"try loading all {len(oid_list)} lcs in target_lookup")
-        else:
-            logger.info(f"try loading {len(oid_list)} lcs")
+    #     if oid_list is None:
+    #         oid_list = list(self.target_lookup.keys())
+    #         logger.info(f"try loading all {len(oid_list)} lcs in target_lookup")
+    #     else:
+    #         logger.info(f"try loading {len(oid_list)} lcs")
 
-        for oid in oid_list:
-            # TODO: not optimum to read every time... but not a bottleneck for now.
-            lightcurve = self.load_single_lightcurve(oid)
-            if lightcurve is None:
-                missing.append(oid)
-                logger.info(f"{oid} lightcurve is bad")
-                continue
+    #     for oid in oid_list:
+    #         # TODO: not optimum to read every time... but not a bottleneck for now.
+    #         lightcurve = self.load_single_lightcurve(oid)
+    #         if lightcurve is None:
+    #             missing.append(oid)
+    #             logger.info(f"{oid} lightcurve is bad")
+    #             continue
 
-            target = self.target_lookup.get(oid, None)
-            if target is None:
-                logger.warning(f"load_lightcurve: {oid} not in target_lookup!")
-                missing.append(oid)
-                continue
-            else:
-                alerce_data = target.get_target_data("alerce")
-                existing_lightcurve = alerce_data.lightcurve
-                if existing_lightcurve is not None:
-                    if len(lightcurve) <= len(existing_lightcurve):
-                        skipped.append(oid)
-                        continue
-            loaded.append(oid)
-            lightcurve = lightcurve[lightcurve["jd"] < t_ref.jd]
-            alerce_data.add_lightcurve(lightcurve)
-            target.updated = True
-        t_end = time.perf_counter()
+    #         target = self.target_lookup.get(oid, None)
+    #         if target is None:
+    #             logger.warning(f"load_lightcurve: {oid} not in target_lookup!")
+    #             missing.append(oid)
+    #             continue
+    #         else:
+    #             alerce_data = target.get_target_data("alerce")
+    #             existing_lightcurve = alerce_data.lightcurve
+    #             if existing_lightcurve is not None:
+    #                 if len(lightcurve) <= len(existing_lightcurve):
+    #                     skipped.append(oid)
+    #                     continue
+    #         loaded.append(oid)
+    #         lightcurve = lightcurve[lightcurve["jd"] < t_ref.jd]
+    #         alerce_data.add_lightcurve(lightcurve)
+    #         target.updated = True
+    #     t_end = time.perf_counter()
 
-        N_loaded = len(loaded)
-        N_missing = len(missing)
-        N_skipped = len(skipped)
-        # if N_loaded > 0:
-        logger.info(
-            f"loaded {N_loaded}, missing {N_missing} lightcurves in {t_end-t_start:.1f}s"
-        )
-        return loaded, missing
+    #     N_loaded = len(loaded)
+    #     N_missing = len(missing)
+    #     N_skipped = len(skipped)
+    #     # if N_loaded > 0:
+    #     logger.info(
+    #         f"loaded {N_loaded}, missing {N_missing} lightcurves in {t_end-t_start:.1f}s"
+    #     )
+    #     return loaded, missing
 
-    def load_single_lightcurve(self, oid: str):
-        t1 = time.perf_counter()
-
+    def load_single_lightcurve(self, oid: str, t_ref=None):
         lightcurve_file = self.get_lightcurve_file(oid)
         if not lightcurve_file.exists():
             logger.warning(f"{oid} is missing lightcurve")
@@ -674,23 +685,27 @@ class AlerceQueryManager(BaseQueryManager):
             logger.info(f"{len(missing_cutouts)} cutouts missing")
         return loaded_cutouts, missing_cutouts
 
-    def perform_all_tasks(self, t_ref: Time = None):
+    def perform_all_tasks(self, startup=False, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        queries_to_run = self.load_existing_query_results(t_ref=t_ref)
+        # self.load_existing_query_results(t_ref=t_ref)
+
+        queries_to_rerun = self.get_queries_to_rerun()
         updated_objects = self.query_for_object_updates(
-            to_requery=queries_to_run, t_ref=t_ref
+            to_requery=queries_to_rerun, t_ref=t_ref
         )
         new_targets = self.new_targets_from_updates(updated_objects, t_ref=t_ref)
 
         # Lightcurves
-        to_query = self.get_lightcurves_to_query(t_ref=t_ref)
-        success, failed = self.perform_lightcurve_queries(to_query, t_ref=t_ref)
-        loaded_lcs, missing_lcs = self.load_target_lightcurves(t_ref=t_ref)
+        lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
+        success, failed = self.perform_lightcurve_queries(lcs_to_query, t_ref=t_ref)
+        loaded_lcs, missing_lcs = self.load_target_lightcurves(
+            id_from_target_function=alerce_id_from_target, t_ref=t_ref
+        )
 
         # Query probabilities of targets we've just updated.
 
         # Cutouts
-        missing_cutouts = self.get_cutouts_to_query(t_ref=t_ref)
-        success, failed = self.perform_cutouts_queries(missing_cutouts)
-        self.load_cutouts()
+        # missing_cutouts = self.get_cutouts_to_query(t_ref=t_ref)
+        # success, failed = self.perform_cutouts_queries(missing_cutouts)
+        # self.load_cutouts()

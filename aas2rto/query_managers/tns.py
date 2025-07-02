@@ -1,12 +1,13 @@
-import copy
+import io
 import json
-import re
 import requests
 import time
+import traceback as tr
 import warnings
+import zipfile
 from logging import getLogger
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 import numpy as np
 
@@ -16,12 +17,396 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, search_around_sky
 from astropy.time import Time, TimeDelta
 
-from aas2rto import Target, TargetData
 from aas2rto import utils
 from aas2rto.query_managers.base import BaseQueryManager
+from aas2rto.target import Target
+from aas2rto.target_data import TargetData
 from aas2rto.utils import calc_file_age
 
 logger = getLogger(__name__.split(".")[-1])
+
+
+def process_tns_query_results():
+    pass
+
+
+def keep_latest_rows(df: pd.DataFrame):
+    df = df.copy()
+    df.sort_values(["name", "mjdmod"], inplace=True)
+    df.drop_duplicates("name", keep="last", inplace=True)
+    return df
+
+
+class TnsQueryManager(BaseQueryManager):
+    name = "tns"
+
+    expected_tns_keys = ("user", "uid", "query_parameters", "tns_parameters")
+    default_tns_search_parameters = {
+        "num_page": "50",  # 50 is max allowed?
+        "format": "csv",  # probably don't change this one...
+    }
+    default_query_parameters = {
+        "query_interval": 0.125,  # days
+        "lookback_time": 60.0,  # days
+        "query_sleep_time": 3.0,
+    }
+
+    def __init__(
+        self,
+        tns_config: dict,
+        target_lookup: Dict[str, Target],
+        parent_path=None,
+        create_paths=True,
+    ):
+        self.tns_config = tns_config
+        utils.check_unexpected_config_keys(
+            self.tns_config, self.expected_tns_keys, name="tns_config"
+        )
+
+        self.target_lookup = target_lookup
+
+        # self.recent_coordinate_searches = set()
+        # self.query_results = None
+
+        self.tns_results = None
+
+        tns_user = self.tns_config.get("user")
+        tns_uid = self.tns_config.get("uid")
+        if (tns_user is None) or (tns_uid is None):
+            msg = f"user ({tns_user}) or uid ({tns_uid}) is None"
+            raise ValueError(msg)
+
+        # self.tns_headers = build_tns_headers(tns_user, tns_uid)
+        self.tns_query = TnsQuery(tns_user, tns_uid)
+
+        self.query_parameters = self.default_query_parameters.copy()
+        query_parameters = self.tns_config.get("query_parameters", {})
+        self.query_parameters.update(query_parameters)
+        utils.check_unexpected_config_keys(
+            self.query_parameters, self.default_query_parameters
+        )
+
+        self.tns_search_parameters = self.default_tns_search_parameters.copy()
+        tns_search_parameters = self.tns_config.get("tns_search_parameters", {})
+        self.tns_search_parameters.update(tns_search_parameters)
+        utils.check_unexpected_config_keys(
+            self.tns_search_parameters,
+            ALLOWED_TNS_PARAMETERS,
+            name="tns.tns_parameters",
+        )
+
+        self.process_paths(
+            parent_path=parent_path,
+            create_paths=create_paths,
+            directories=["query_results"],
+        )
+
+    def load_existing_tns_results(self):
+
+        existing_results = sorted(list(self.query_results_path.glob("tns_delta*")))
+
+        df_list = []
+        for filepath in existing_results:
+            try:
+                df = pd.read_csv(filepath)
+                logger.info(f"load {filepath.stem}")
+            except pd.errors.EmptyDataError:
+                logger.info(f"cannot read {filepath.stem}")
+                continue
+            df_list.append(df)
+
+        if len(df_list) > 0:
+            tns_results = pd.concat(df_list)
+            if not "mjdmod" in tns_results.columns:
+                tns_results["mjdmod"] = Time(tns_results["lastmodified"]).mjd
+            self.tns_results = tns_results
+        else:
+            logger.info("no existing TNS information!")
+
+    def collect_missing_daily_deltas(self, t_ref=None):
+        t_ref = t_ref or Time.now()
+
+        new_deltas = []
+        for ii in range(14):
+            t_ref = t_ref - TimeDelta(24 * u.hour)
+            datestr = t_ref.strftime("%Y%m%d")
+            filepath = self.get_query_results_file(f"tns_delta_{datestr}")
+            if filepath.exists():
+                continue
+            df = self.tns_query.get_tns_daily_delta(t_ref=t_ref)
+            if df is not None:
+                if df.empty:
+                    logger.warning(f"{filepath.name} is empty")
+                df.to_csv(filepath, index=False)
+                new_deltas.append(df)
+
+        if len(new_deltas) > 0:
+            results = pd.concat(new_deltas)
+            if "mjdmod" not in results.columns:
+                results["mjdmod"] = Time(results["lastmodified"], format="iso").mjd
+            return results
+        else:
+            return pd.DataFrame(columns=["name", "lastmodified", "mjdmod"])
+
+    def collect_missing_hourly_deltas(self, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
+        curr_hour = t_ref.ymdhms.hour
+        curr_datestr = t_ref.strftime("%Y%m%d")
+
+        yday = t_ref - TimeDelta(24 * u.hour)
+        yday_datestr = yday.strftime("%Y%m%d")
+        yday_glob_pattern = f"tns_delta_{yday_datestr}_h*"
+        yday_hourly = sorted(self.query_results_path.glob(yday_glob_pattern))
+        if len(yday_hourly) > 0:
+            logger.info("delete yesterday's hourly delta files")
+        for filepath in yday_hourly:
+            filepath.unlink()  # delete!
+
+        new_deltas = []
+        for hour in range(curr_hour):
+            fstem = f"tns_delta_{curr_datestr}_h{hour:02d}"
+            filepath = self.get_query_results_file(fstem)
+            if filepath.exists():
+                continue
+            df = self.tns_query.get_tns_hourly_delta(hour)
+            if df is not None:
+                if df.empty:
+                    logger.warning(f"{filepath.stem} is empty")
+                df.to_csv(filepath, index=False)
+                new_deltas.append(df)
+
+        if len(new_deltas) > 0:
+            results = pd.concat(new_deltas)
+            if "mjdmod" not in results.columns:
+                results["mjdmod"] = Time(results["lastmodified"], format="iso").mjd
+            return results
+        else:
+            return pd.DataFrame(columns=["name", "lastmodified", "mjdmod"])
+
+    def match_tns_results_by_coordinates(
+        self,
+        results=None,
+        seplimit=5 * u.arcsec,
+        skip_matched=False,
+        t_ref: Time = None,
+    ):
+        t_ref = t_ref or Time.now()
+        logger.info(f"match TNS data on coords <{seplimit:.1f}")
+
+        if results is None:
+            logger.info("re-match ALL tns results")
+            results = self.tns_results
+            if self.tns_results is None:
+                logger.info("no existing TNS results to match!")
+                return
+
+        tns_candidate_coords = SkyCoord(
+            results["ra"], results["declination"], unit=(u.deg, u.deg)
+        )
+
+        target_candidate_coords = []
+        target_candidate_target_ids = []
+        for target_id, target in self.target_lookup.items():
+            tns_data = target.get_target_data("tns")
+            if tns_data.parameters is None and skip_matched:
+                continue
+            target_candidate_coords.append(target.coord)
+            target_candidate_target_ids.append(target_id)
+
+        if len(target_candidate_coords) == 0:
+            logger.info("no targets left to TNS match")
+            return
+
+        target_candidate_coords = SkyCoord(target_candidate_coords)
+
+        target_match_idx, tns_match_idx, skysep, _ = search_around_sky(
+            target_candidate_coords, tns_candidate_coords, seplimit
+        )
+        logger.info(f"coordinate match for {len(target_match_idx)} TNS objects")
+
+        # Who refers to targets by TNS name only?
+        tns_alt_keys = ["tns", "yse"]
+
+        # Who has their own internal names for targets?
+        alt_id_prefixes = {
+            "ZTF": "ztf",
+            "ATLAS": "atlas",
+            "PS": "panstarrs",
+            "LSST": "lsst",
+        }
+
+        for ii, (idx1, idx2, skysep) in enumerate(
+            zip(target_match_idx, tns_match_idx, skysep)
+        ):
+            target_id = target_candidate_target_ids[idx1]
+            target = self.target_lookup[target_id]
+            tns_data = target.get_target_data("tns")
+            curr_tns_name = target.alt_ids.get("tns", None)
+
+            tns_row = self.tns_results.iloc[idx2]
+
+            tns_name = tns_row["name"]
+            if curr_tns_name is not None and tns_name != curr_tns_name:
+                msg = f"{target_id} new tns match {tns_name} does not match old tns_match {curr_tns_name}"
+                logger.warning(msg)
+
+            for alt_key in tns_alt_keys:
+                target.alt_ids[alt_key] = tns_name
+            internal_names = str(tns_row["internal_names"]).replace(" ", "").split(",")
+            for name in internal_names:
+                for prefix, alt_key in alt_id_prefixes.items():
+                    if name.startswith(prefix):
+                        curr_alt_id = target.alt_ids.get(alt_key)
+                        if curr_alt_id is not None and curr_alt_id != name:
+                            msg = f"{target_id}/{tns_name}: new {alt_key}_id {name} does not match existing {curr_alt_id}"
+                            logger.warning(msg)
+                        target.alt_ids[alt_key] = name
+
+            existing_parameters = tns_data.parameters or {}
+            params = "objid redshift type discoverydate lastmodified mjdmod".split()
+            updated_parameters = tns_row[params].to_dict()
+            tns_data.parameters = updated_parameters
+
+            if updated_parameters["mjdmod"] > existing_parameters.get("mjdmod", 0.0):
+                target.updated = True
+
+        if not len(np.unique(target_match_idx)) == len(target_match_idx):
+            logger.warning("target matches multiple TNS rows")
+
+    def perform_all_tasks(self, startup=False, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
+        if startup:
+            self.load_existing_tns_results()
+        else:
+            try:
+                new_daily_deltas = self.collect_missing_daily_deltas(t_ref=t_ref)
+                new_hourly_deltas = self.collect_missing_hourly_deltas(t_ref=t_ref)
+            except Exception as e:
+                logger.error("exception in tns tasks")
+                return e
+
+            if not new_daily_deltas.empty or not new_hourly_deltas.empty:
+
+                self.tns_results = pd.concat(
+                    [self.tns_results, new_daily_deltas, new_hourly_deltas]
+                )
+
+                self.tns_results.sort_values(["name", "mjdmod"], inplace=True)
+                self.tns_results.drop_duplicates(inplace=True, keep="last")
+
+        self.match_tns_results_by_coordinates()
+
+
+def build_tns_headers(tns_user, tns_uid):
+    """Returns a dict with the correctly formatted string."""
+
+    if tns_user is None or tns_uid is None:
+        wrn = utils.MissingKeysWarning(f"user={tns_user} or uid={tns_uid} is None!")
+        warnings.warn(wrn)
+        return None
+
+    marker_dict = dict(tns_id=str(tns_uid), type="user", name=tns_user)
+    marker_str = json.dumps(marker_dict)
+    # marker_str is a literal string of a dict:
+    #       '{"tns_id": "1234", "type": "user", "name": "your_name"}'
+
+    tns_marker = f"tns_marker{marker_str}"
+    return {"User-Agent": tns_marker}
+
+
+class TnsQuery:
+
+    tns_base_url = "https://www.wis-tns.org"
+    tns_search_url = f"{tns_base_url}/search"
+    tns_public_objects_url = f"{tns_base_url}/system/files/tns_public_objects"
+
+    def __init__(self, tns_user: str, tns_uid: str, query_sleep_time=3.0):
+        self.tns_user = tns_user
+        self.tns_uid = str(tns_uid)
+        self.query_sleep_time = query_sleep_time
+
+        self.tns_headers = build_tns_headers(self.tns_user, self.tns_uid)
+
+    def do_post(self, url):
+        return requests.post(url, headers=self.tns_headers)
+
+    def tns_search(self, parameters):
+        self.check_search_parameters(parameters)
+
+    @staticmethod
+    def check_search_parameters(parameters: dict):
+        unknown_parameters = []
+        for k, v in parameters.items():
+            if k not in ALLOWED_TNS_PARAMETERS:
+                unknown_parameters.append(k)
+
+        if unknown_parameters:
+            raise ValueError("unknown_parameters")
+
+    def submit_public_object_request(self, url, retries=0, max_retries=3):
+        response = self.do_post(url)
+
+        self.wait_after_request(response)
+        if response.status_code == 200:
+            return self.read_csv_zip_response(response)
+        if response.status_code in [404, 429] and retries < max_retries:
+
+            msg = (
+                f"status {response.status_code}: resubmit this request!"
+                f" try {retries}/{max_retries} {url.split('/')[-1]}"
+            )
+            logger.error(msg)
+            return self.submit_public_object_request(url, retries=retries + 1)
+        else:
+            logger.error(f"{url} returned response {response.status_code}, ")
+            return pd.DataFrame(columns=["name", "lastmodified", "mjdmod"])
+
+    def wait_after_request(self, response: requests.Response):
+        req_limit = response.headers.get("x-rate-limit-limit")
+        req_remain = response.headers.get("x-rate-limit-remaining")
+        req_reset = response.headers.get("x-rate-limit-reset")  # time
+
+        logger.info(f"{req_remain}/{req_limit} requests left (reset {req_reset}s)")
+
+        if int(req_limit) < 2:
+            logger.info(f"waiting {req_reset}s for reset...")
+            time.sleep(int(req_reset) + 1.0)
+        else:
+            time.sleep(self.query_sleep_time)
+
+    def get_full_tns_history(self):
+        raise NotImplementedError()
+
+    def get_tns_daily_delta(self, t_ref=None, response_only=False):
+        if t_ref is None:
+            t_ref = Time.now() - TimeDelta(24 * u.hour)
+
+        timestamp = t_ref.strftime("%Y%m%d")
+        filename = f"tns_public_objects_{timestamp}.csv.zip"
+        url = f"{self.tns_public_objects_url}/{filename}"
+        return self.submit_public_object_request(url)
+
+    def get_tns_hourly_delta(self, hour, response_only=False):
+        filename = f"tns_public_objects_{hour:02d}.csv.zip"
+        url = f"{self.tns_public_objects_url}/{filename}"
+        return self.submit_public_object_request(url)
+
+    def read_csv_zip_response(self, response: requests.Response):
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            with z.open(z.namelist()[0]) as f:
+                try:
+                    df = pd.read_csv(f, skiprows=1)  # if actual data, skip header row
+                except pd.errors.EmptyDataError as e:
+                    df = pd.DataFrame(columns=["name", "lastmodified", "mjdmod"])
+                    return df
+
+        lastmod = df["lastmodified"].values.astype(str)
+        df["mjdmod"] = Time(lastmod, format="iso").mjd
+        print(df)
+        return df
+
 
 ALLOWED_TNS_PARAMETERS = [
     "discovered_period_value",
@@ -79,323 +464,3 @@ ALLOWED_TNS_PARAMETERS = [
     "format",
     "num_page",
 ]
-
-
-def build_tns_headers(tns_user: str, tns_uid: int):
-    """Returns a dict with the correctly formatted string."""
-
-    if tns_user is None or tns_uid is None:
-        wrn = utils.MissingKeysWarning(f"user={tns_user} or uid={tns_uid} is None!")
-        warnings.warn(wrn)
-        return None
-
-    marker_dict = dict(tns_id=str(tns_uid), type="user", name=tns_user)
-    marker_str = json.dumps(marker_dict)
-    # marker_str is a literal string of a dict:
-    #       '{"tns_id": "1234", "type": "user", "name": "your_name"}'
-
-    tns_marker = f"tns_marker{marker_str}"
-    return {"User-Agent": tns_marker}
-
-
-def process_tns_query_results(raw_query_results: pd.DataFrame):
-    query_results = raw_query_results.copy()
-    query_results.drop_duplicates("Name", keep="last", inplace=True)
-    return query_results
-
-
-def empty_data_frame():
-    return pd.DataFrame(columns=["Name"])
-
-
-class TnsQueryManager(BaseQueryManager):
-    name = "tns"
-
-    expected_tns_keys = ("user", "uid", "query_parameters", "tns_parameters")
-    default_tns_parameters = {
-        "num_page": "50",  # 50 is max allowed?
-        "format": "csv",  # probably don't change this one...
-    }
-    default_query_parameters = {
-        "query_interval": 0.125,  # days
-        "lookback_time": 60.0,  # days
-    }
-
-    def __init__(
-        self,
-        tns_config: dict,
-        target_lookup: Dict[str, Target],
-        parent_path=None,
-        create_paths=True,
-    ):
-        self.tns_config = tns_config
-        utils.check_unexpected_config_keys(
-            self.tns_config, self.expected_tns_keys, name="tns_config"
-        )
-
-        self.target_lookup = target_lookup
-
-        self.recent_coordinate_searches = set()
-        self.query_results = None
-
-        tns_user = self.tns_config.get("user")
-        tns_uid = self.tns_config.get("uid")
-        if (tns_user is None) or (tns_uid is None):
-            msg = f"user ({tns_user}) or uid ({tns_uid}) is None"
-            raise ValueError(msg)
-
-        self.tns_headers = build_tns_headers(tns_user, tns_uid)
-
-        self.query_parameters = self.default_query_parameters.copy()
-        query_parameters = self.tns_config.get("query_parameters", {})
-        self.query_parameters.update(query_parameters)
-        utils.check_unexpected_config_keys(
-            self.query_parameters, self.default_query_parameters
-        )
-
-        self.tns_parameters = self.default_tns_parameters.copy()
-        tns_parameters = self.tns_config.get("tns_parameters", {})
-        self.tns_parameters.update(tns_parameters)
-        utils.check_unexpected_config_keys(
-            self.tns_parameters, ALLOWED_TNS_PARAMETERS, name="tns.tns_parameters"
-        )
-
-        self.process_paths(parent_path=parent_path, create_paths=create_paths)
-
-    def query_for_updates(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        query_results_file = self.get_query_results_file("tns_results")
-        query_results_file_age = calc_file_age(query_results_file, t_ref)
-
-        if self.query_results is None and query_results_file.exists():
-            query_results = pd.read_csv(query_results_file)
-            query_results = process_tns_query_results(query_results)
-            self.query_results = query_results
-        if query_results_file_age < self.query_parameters["query_interval"]:
-            return None
-
-        query_parameters = self.get_query_data()
-        query_updates = TnsQuery.query(query_parameters, self.tns_headers)
-
-        existing_results = self.query_results
-        if existing_results is None:
-            existing_results = empty_data_frame()
-        query_results = pd.concat([existing_results, query_updates], ignore_index=True)
-        query_results.to_csv(query_results_file, index=False)
-        self.query_results = query_results
-
-        # Make sure that we crossmatch everything again.
-        self.recent_coordinate_searches = set()
-
-    def get_query_data(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        query_parameters = {**self.tns_parameters}
-
-        lookback_time = self.query_parameters.get("lookback_time", 60.0)
-
-        t_start = t_ref - TimeDelta(lookback_time, format="jd")
-        query_parameters["date_start[date]"] = t_start.iso.split()[0]
-
-        return query_parameters
-
-    # def update_matched_tns_names(self, t_ref: Time = None):
-    #     t_ref = t_ref or Time.now()
-
-    #     matched_tns_names = []
-    #     for target_id, target in self.target_lookup.items():
-    #         tns_name = target.tns_data.parameters.get("Name", None)
-    #         if tns_name is not None:
-    #             matched_tns_names[tns_name] = target_id
-
-    def match_tns_on_names(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-        logger.info("match TNS data by target_id")
-
-        unmatched_rows = []
-        matched = 0
-        for idx, tns_row in self.query_results.iterrows():
-            disc_name = tns_row["Disc. Internal Name"]
-            if disc_name in self.target_lookup:
-                target = self.target_lookup[disc_name]
-                tns_data = target.get_target_data("tns")
-                tns_data.parameters = tns_row.to_dict()
-                target.alt_ids["tns"] = tns_data.parameters["Name"]
-                matched = matched + 1
-            else:
-                unmatched_rows.append(tns_row)
-
-        logger.info(f"matched {matched} TNS objects by name")
-        self.tns_results = pd.DataFrame(unmatched_rows)
-
-    def match_tns_on_coordinates(self, seplimit=5 * u.arcsec, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-        logger.info(f"match TNS data on coords <{seplimit:.1f}")
-
-        tns_candidate_coords = SkyCoord(
-            self.tns_results["RA"], self.tns_results["DEC"], unit=(u.hourangle, u.deg)
-        )
-
-        target_candidate_coords = []
-        target_candidate_target_ids = []
-        for target_id, target in self.target_lookup.items():
-            if target_id in self.recent_coordinate_searches:
-                continue
-            tns_data = target.target_data.get("tns", None)
-            if tns_data:
-                if tns_data.parameters:
-                    continue
-            target_candidate_coords.append(target.coord)
-            target_candidate_target_ids.append(target_id)
-
-        if len(target_candidate_coords) == 0:
-            logger.info("no targets left to TNS match")
-            return
-
-        target_candidate_coords = SkyCoord(target_candidate_coords)
-
-        target_match_idx, tns_match_idx, skysep, _ = search_around_sky(
-            target_candidate_coords, tns_candidate_coords, seplimit
-        )
-
-        if not len(np.unique(target_match_idx)) == len(target_match_idx):
-            logger.warning("target matches multiple TNS rows")
-        if not len(np.unique(tns_match_idx)) == len(tns_match_idx):
-            logger.warning("TNS row matches multiple targets")
-
-        logger.info(f"coordinate match for {len(target_match_idx)} TNS objects")
-        for ii, (idx1, idx2, skysep) in enumerate(
-            zip(target_match_idx, tns_match_idx, skysep)
-        ):
-            target_id = target_candidate_target_ids[idx1]
-            target = self.target_lookup[target_id]
-
-            tns_row = self.tns_results.iloc[idx2]
-            try:
-                tns_parameters = tns_row.to_dict()
-            except Exception as e:
-                logger.warning(f"tns_row.to_dict() failed for {target_id}")
-                print(e)
-                raise ValueError(e)
-            tns_data = target.get_target_data("tns")
-            tns_data.parameters = tns_parameters
-            target.alt_ids["tns"] = tns_parameters["Name"]
-
-        self.recent_coordinate_searches.update(target_candidate_target_ids)
-        # This set is emptied every time TNS-results is read in.
-
-    def perform_all_tasks(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        self.query_for_updates(t_ref=t_ref)
-
-        self.match_tns_on_names(t_ref=t_ref)  # If the "Disc. Name" directly matches...
-        self.match_tns_on_coordinates(t_ref=t_ref)
-
-
-class TnsQuery:
-    # allowed_parameters = allowed_tns_parameters
-    tns_base_url = "https://www.wis-tns.org/search"
-    sleep_time = 3.0
-
-    def __init__(self):
-        pass
-
-    @staticmethod
-    def check_parameters(
-        search_params: dict, allowed_parameters=ALLOWED_TNS_PARAMETERS
-    ):
-        for k, v in search_params.items():
-            if not k in allowed_parameters:
-                logger.warning(f"unexpected TNS keyword {k}")
-
-    @staticmethod
-    def build_param_url(search_params: dict):
-        url_components = []
-        for k, v in search_params.items():
-            if isinstance(v, bool):
-                v = int(v)
-            url_components.append(f"&{k}={str(v)}")
-        return "".join(url_components)
-
-    @classmethod
-    def do_post(cls, search_params: dict, tns_headers: dict, page: int):
-        param_url = cls.build_param_url(search_params)
-        url = f"{cls.tns_base_url}?{param_url}&page={page}"
-        return requests.post(url, headers=tns_headers)
-
-    @classmethod
-    def process_response(cls, response):
-        response_data = response.text.splitlines()
-
-        columns = response_data[0].replace('"', "").split(",")
-        # Find everything in quotes, eg. "SN 2022sai", "ASAS-SN, ALeRCE"
-        # Can't use split(",") here, as some entries eg. "ASAS-SN, ALeRCE" would split.
-        regex_quoted = re.compile('"[^"]*"')
-        df_data = [
-            [dat.replace('"', "") or np.nan for dat in regex_quoted.findall(row)]
-            for row in response_data[1:]
-        ]
-        df = pd.DataFrame(df_data, columns=columns)
-        return df
-
-    @classmethod
-    def query(cls, search_params: dict, tns_headers: dict):
-        utils.check_unexpected_config_keys(
-            search_params, ALLOWED_TNS_PARAMETERS, name="tns_query.search_params"
-        )
-
-        num_page = int(search_params.get("num_page", 50))
-        if num_page > 50:
-            logger.warning(f"num_page(={num_page}) > max allowed(=50). fixed.")
-            num_page = 50
-        search_params["num_page"] = num_page
-
-        page = 0
-        df_list = []
-        while True:
-            t1 = time.perf_counter()
-            response = cls.do_post(search_params, tns_headers, page)
-            df = cls.process_response(response)
-            N_results = len(df)
-
-            status = response.status_code
-            req_limit = response.headers.get("x-rate-limit-limit")
-            req_remaining = response.headers.get("x-rate-limit-remaining")
-            req_reset = response.headers.get("x-rate-limit-reset")
-
-            logger.info(
-                f"{req_remaining}/{req_limit} requests left (reset {req_reset}s)"
-            )
-            if (response.status_code != 200) or N_results == 0:
-                logger.info(f"break: page {page} status={status}, len={N_results}")
-                logger.info(
-                    f"{req_remaining}/{req_limit} requests left (reset {req_reset}s)"
-                )
-                break
-
-            df_list.append(df)
-
-            if N_results < int(num_page):
-                logger.info(f"break after {N_results} results < {num_page}")
-                break
-
-            t2 = time.perf_counter()
-            query_time = t2 - t1
-
-            if cls.sleep_time is not None:
-                if cls.sleep_time - query_time > 0:
-                    time.sleep(cls.sleep_time - query_time)
-
-            logger.info(f"{N_results} results from page {page} in {query_time:.2f}")
-            if int(req_remaining) < 2:
-                logger.info(f"waiting {req_reset}s for reset...")
-                time.sleep(int(req_reset) + 1.0)
-            page = page + 1
-
-        if not df_list:
-            return pd.DataFrame(columns=["Name"])  # empty dataframe.
-
-        results_df = pd.concat(df_list, ignore_index=True)
-        return results_df

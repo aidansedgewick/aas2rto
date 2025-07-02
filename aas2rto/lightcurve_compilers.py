@@ -29,7 +29,7 @@ def prepare_ztf_data(
     # Rename the filters so sncosmo knows what they are.
     ztf_band_lookup = {1: "ztfg", 2: "ztfr", 3: "ztfi"}
     ztf_colmap = {"magpsf": "mag", "sigmapsf": "magerr"}
-    use_cols = ["jd", "mjd", "magpsf", "sigmapsf", "diffmaglim", "fid", "tag", "candid"]
+    use_cols = "jd mjd magpsf sigmapsf diffmaglim fid tag candid".split()
 
     if isinstance(ztf_data, TargetData):
 
@@ -53,22 +53,23 @@ def prepare_ztf_data(
             ztf_lc = pd.concat(data_list, ignore_index=True)
         else:
             ztf_lc = ztf_data.lightcurve
+
+        if len(detections) == 0:
+            print(ztf_data.lightcurve[avail_cols])
     else:
         logger.warning(f"")
         ztf_lc = ztf_data
 
-    ztf_lc.loc[:, "band"] = ztf_lc["fid"].map(ztf_band_lookup)
+    ztf_lc["source"] = "ztf"
 
+    # fix column names here
+    ztf_lc.loc[:, "band"] = ztf_lc["fid"].map(ztf_band_lookup)
     ztf_lc.sort_values("jd", inplace=True)
     ztf_lc.rename(ztf_colmap, axis=1, inplace=True)
     if "mjd" not in ztf_lc.columns:
         ztf_lc.insert(1, "mjd", Time(ztf_lc["jd"], format="jd").mjd)
 
     return ztf_lc
-
-
-# def prepare_ztf_lc():
-#    pass
 
 
 def prepare_atlas_data(
@@ -142,8 +143,20 @@ def prepare_atlas_data(
         atlas_lc.loc[:, "jd"] = Time(atlas_lc["mjd"].values, format="mjd").jd
         atlas_lc.loc[:, "tag"] = pd.Series(tag_data)
 
+    atlas_lc["source"] = "atlas"
+
     atlas_lc.rename(atlas_colmap, axis=1, inplace=True)
-    use_cols = ["mjd", "jd", "mag", "magerr", "diffmaglim", "tag", "band", "N_exp"]
+    use_cols = [
+        "mjd",
+        "jd",
+        "mag",
+        "magerr",
+        "diffmaglim",
+        "tag",
+        "band",
+        "N_exp",
+        "source",
+    ]
     return atlas_lc[use_cols]
 
 
@@ -153,13 +166,29 @@ def prepare_yse_data(
     badqual_tag=DEFAULT_BADQUAL_TAG,
     ulimit_tag=DEFAULT_ULIMIT_TAG,
 ):
-    yse_band_lookup = {band: f"ps1::{band}" for band in "g r i z y".split()}
+    ps1_lookup = {band: f"ps1::{band}" for band in "w g r i z y".split()}
+    swift_lookup = {band: f"uvot::{band}" for band in "b u uvm1 uvw1 uvw2 v".split()}
+    atlas_lookup = {"orange-ATLAS": "atlaso", "cyan-ATLAS": "atlasc"}
+    ztf_lookup = {"g-ZTF": "ztfg", "r-ZTF": "ztfr", "i-ZTF": "ztfi"}
+    yse_band_lookup = {**ps1_lookup, **swift_lookup, **atlas_lookup, **ztf_lookup}
+
+    source_lookup = {
+        "P48": "ztf",
+        "Pan-STARRS1": "yse",
+        "Pan-STARRS2": "yse",
+        "Swift": "swift",
+    }
 
     yse_lc = yse_data.lightcurve.copy()
     yse_lc["band"] = yse_lc["flt"].map(yse_band_lookup)
-    yse_lc["tag"] = valid_tag
+    yse_lc["source"] = yse_lc["instrument"].map(source_lookup)
+
+    # yse_lc["tag"] = valid_tag
     # TODO: properly set tag for limits, etc.
-    return yse_lc
+
+    use_cols = ["mjd", "jd", "mag", "magerr", "tag", "band", "source"]
+
+    return yse_lc[use_cols]
 
 
 class DefaultLightcurveCompiler:
@@ -202,7 +231,6 @@ class DefaultLightcurveCompiler:
         if broker_data is not None:
             try:
                 ztf_lc = prepare_ztf_data(broker_data, **tags)
-                ztf_lc["source"] = "ztf"
                 lightcurve_dfs.append(ztf_lc)
             except Exception as e:
                 print(e)
@@ -219,15 +247,13 @@ class DefaultLightcurveCompiler:
                 )
                 if not (len(atlas_df) == 0 or atlas_df.empty):
                     lightcurve_dfs.append(atlas_df)
-                atlas_df["source"] = "atlas"
 
         # Get YSE data
         yse_data = target.target_data.get("yse", None)
         if yse_data is not None:
-            if (yse_data.lightcurve) and (not yse_data.lightcurve.empty):
-                yse_df = prepare_yse_data(
-                    yse_data,
-                )
+            yse_lc = yse_data.lightcurve
+            if (yse_lc is not None) and (not yse_lc.empty):
+                yse_df = prepare_yse_data(yse_data)
                 if not (len(yse_df) == 0 or yse_df.empty):
                     lightcurve_dfs.append(yse_df)
                 yse_df["source"] = "yse"

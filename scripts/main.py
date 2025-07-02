@@ -45,11 +45,15 @@ if __name__ == "__main__":
     selector = TargetSelector.from_config(config_file)
 
     lc_plotting_function = plot_default_lightcurve
-    if "supernovae" in config_file.stem:
-        scoring_function = SupernovaPeakScore()  # This is a class - initialise it!
+    if "supernovae" in config_file.stem or "sne" in config_file.stem:
+        scoring_function = SupernovaPeakScore(
+            use_compiled_lightcurve=True
+        )  # This is a class - initialise it!
 
-        models_path = selector.project_path / "models"
-        modeling_function = SncosmoSaltModeler(existing_models_path=models_path)
+        models_path = None  # selector.project_path / "models"
+        modeling_function = SncosmoSaltModeler(
+            existing_models_path=models_path, use_emcee=False, show_traceback=False
+        )
         lc_plotting_function = plot_sncosmo_lightcurve
     elif "atlas_test" in config_file.stem:
         scoring_function = example_functions.latest_flux_atlas_requirement

@@ -33,7 +33,7 @@ def plot_sncosmo_lightcurve(target: Target, t_ref: Time = None, **kwargs) -> plt
 class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
 
     @classmethod
-    def plot(cls, target: Target, t_ref: Time = None, **kwargs) -> plt.Figure:
+    def plot(cls, target: Target, t_ref: Time = None, **kwargs):
         t_ref = t_ref or Time.now()
 
         plotter = cls(t_ref=t_ref, **kwargs)
@@ -68,7 +68,6 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
         # self.add_comments(target)
 
     def plot_sncosmo_models(self, target: Target):
-
         model = target.models.get(self.model_name, None)
         if model is None:
             return

@@ -39,7 +39,8 @@ class BaseQueryManager(abc.ABC):
 
     @abc.abstractmethod
     def perform_all_tasks(self):
-        raise NotImplementedError
+        msg = f"query_manager {self.name}: implement a function which accepts kwargs:\n    startup:bool, t_ref=:astropy.time.Time"
+        raise NotImplementedError(msg)
 
     def add_target(self, target):
         if target.target_id in self.target_lookup:
@@ -53,7 +54,8 @@ class BaseQueryManager(abc.ABC):
         data_path: Path = None,
         parent_path: Path = None,
         create_paths: bool = True,
-        # paths: list = EXPECTED_DIRECTORIES,
+        extra_directories: list = None,
+        directories: list = EXPECTED_DIRECTORIES,
     ):
         """
         If data path is None
@@ -67,32 +69,44 @@ class BaseQueryManager(abc.ABC):
             data_path = Path(data_path)
             parent_path = data_path.parent
 
-        self.parent_path = parent_path
-        self.data_path = data_path
+        self.parent_path = parent_path.absolute()
+        self.data_path = data_path.absolute()
 
-        # utils.check_unexpected_config_keys(
-        #    dirs, EXPECTED_DIRECTORIES, name=f"{self.name} qm __init__(paths)"
-        # )
+        utils.check_unexpected_config_keys(
+            directories, EXPECTED_DIRECTORIES, name=f"{self.name}_qm kwarg: directories"
+        )
 
-        self.lightcurves_path = self.data_path / "lightcurves"
-        self.alerts_path = self.data_path / "alerts"
-        self.probabilities_path = self.data_path / "probabilities"
-        self.parameters_path = self.data_path / "parameters"
-        self.magstats_path = self.data_path / "magstats"
-        self.query_results_path = self.data_path / "query_results"
-        self.cutouts_path = self.data_path / "cutouts"
+        extra_directories = extra_directories or []
+
+        self.paths_lookup = {}
+        for dir_name in directories + extra_directories:
+            path = self.data_path / dir_name
+            self.paths_lookup[dir_name] = path
+            setattr(self, f"{dir_name}_path", path)
+
+        # self.lightcurves_path = self.data_path / "lightcurves"
+        # self.alerts_path = self.data_path / "alerts"
+        # self.probabilities_path = self.data_path / "probabilities"
+        # self.parameters_path = self.data_path / "parameters"
+        # self.magstats_path = self.data_path / "magstats"
+        # self.query_results_path = self.data_path / "query_results"
+        # self.cutouts_path = self.data_path / "cutouts"
         if create_paths:
             self.create_paths()
 
     def create_paths(self):
+
         self.data_path.mkdir(exist_ok=True, parents=True)
-        self.lightcurves_path.mkdir(exist_ok=True, parents=True)
-        self.alerts_path.mkdir(exist_ok=True, parents=True)
-        self.probabilities_path.mkdir(exist_ok=True, parents=True)
-        self.parameters_path.mkdir(exist_ok=True, parents=True)
-        self.magstats_path.mkdir(exist_ok=True, parents=True)
-        self.query_results_path.mkdir(exist_ok=True, parents=True)
-        self.cutouts_path.mkdir(exist_ok=True, parents=True)
+        for dir_name, path in self.paths_lookup.items():
+            path.mkdir(exist_ok=True)
+
+        # self.lightcurves_path.mkdir(exist_ok=True, parents=True)
+        # self.alerts_path.mkdir(exist_ok=True, parents=True)
+        # self.probabilities_path.mkdir(exist_ok=True, parents=True)
+        # self.parameters_path.mkdir(exist_ok=True, parents=True)
+        # self.magstats_path.mkdir(exist_ok=True, parents=True)
+        # self.query_results_path.mkdir(exist_ok=True, parents=True)
+        # self.cutouts_path.mkdir(exist_ok=True, parents=True)
 
     def init_missing_target_data(self):
         for target_id, target in self.target_lookup.items():
@@ -105,6 +119,7 @@ class BaseQueryManager(abc.ABC):
         return self.query_results_path / f"{query_name}.{fmt}"
 
     def get_alert_dir(self, target_id) -> Path:
+        self.check_known_path("")
         return self.alerts_path / f"{target_id}"
 
     def get_alert_file(self, target_id, candid, fmt="json", mkdir=True) -> Path:
@@ -114,15 +129,19 @@ class BaseQueryManager(abc.ABC):
         return alert_dir / f"{candid}.{fmt}"
 
     def get_magstats_file(self, target_id) -> Path:
+        self.check_known_path("magstats")
         return self.magstats_path / f"{target_id}.csv"
 
     def get_lightcurve_file(self, target_id, fmt="csv") -> Path:
+        self.check_known_path("lightcurves")
         return self.lightcurves_path / f"{target_id}.{fmt}"
 
     def get_probabilities_file(self, target_id, fmt="csv") -> Path:
+        self.check_known_path("probabilities")
         return self.probabilities_path / f"{target_id}.{fmt}"
 
     def get_cutouts_dir(self, target_id) -> Path:
+        self.check_known_path("cutouts")
         return self.cutouts_path / f"{target_id}"
 
     def get_cutouts_file(self, target_id, candid, fmt="pkl", mkdir=True) -> Path:
@@ -132,7 +151,12 @@ class BaseQueryManager(abc.ABC):
         return cutouts_dir / f"{candid}.{fmt}"
 
     def get_parameters_file(self, target_id, fmt="pkl") -> Path:
+        self.check_known_path("parameters")
         return self.parameters_path / f"{target_id}.{fmt}"
+
+    def check_known_path(self, dir_name):
+        if not dir_name in self.paths_lookup:
+            msg = f"{dir_name} not a known path for {self.name} qm. provide 'dir_name' in "
 
     def load_single_lightcurve(self, id_, t_ref=None):
         logger.error(
@@ -197,7 +221,7 @@ class BaseQueryManager(abc.ABC):
 
             lightcurve = self.load_single_lightcurve(id_, t_ref=t_ref)
             if lightcurve is None:
-                logger.warning(f"{self.name}: loaded {id_} LC is bad")
+                # logger.warning(f"{self.name}: loaded {id_} LC is bad")
                 missing.append(id_)
                 continue
 
@@ -244,15 +268,7 @@ class BaseQueryManager(abc.ABC):
 
         t_ref = t_ref or Time.now()
 
-        for dir in [
-            self.lightcurves_path,
-            self.alerts_path,
-            self.probabilities_path,
-            self.parameters_path,
-            self.magstats_path,
-            self.query_results_path,
-            self.cutouts_path,
-        ]:
+        for dir_name, dir in self.paths_lookup.items():
             for filepath in dir.glob("*"):
                 filepath = Path(filepath)
                 file_age = utils.calc_file_age(filepath, t_ref)

@@ -41,7 +41,7 @@ def calc_timespan_factor(timespan: float, characteristic_timespan: float = 20.0)
 
 def calc_rising_fraction(band_det: pd.DataFrame, single_point_value: float = 0.5):
     if len(band_det) > 1:
-        interval_rising = band_det["magpsf"].values[:-1] > band_det["magpsf"].values[1:]
+        interval_rising = band_det["mag"].values[:-1] > band_det["mag"].values[1:]
         rising_fraction = sum(interval_rising) / len(interval_rising)
     else:
         rising_fraction = single_point_value
@@ -62,18 +62,37 @@ def calc_color_factor(gmag, rmag):
     return color_factor
 
 
+DEFAULT_SCORING_SOURCES = ["ztf", "yse"]
+
+
 class SupernovaPeakScore:
+    """
+
+    Parameters
+    ----------
+    faint_limit
+    min_timespan
+    max_timespan
+    charachteristic_timespan
+    min_rising_fraction
+    min_detections
+    default_color_factor
+    scoring_sources: tuple, default=(ztf, yse)
+        which sources should we consider when computing eg. timespan
+    """
+
     def __init__(
         self,
         faint_limit: float = 19.0,
         min_timespan: float = 1.0,
-        max_timespan: float = 25.0,
+        max_timespan: float = 30.0,
         characteristic_timespan: float = 20.0,
         min_rising_fraction: float = 0.4,
-        min_ztf_detections: int = 3,
+        min_detections: int = 3,
         default_color_factor: float = 0.1,
         broker_priority: tuple = DEFAULT_ZTF_BROKER_PRIORITY,
-        use_compiled_lightcurve=False,
+        use_compiled_lightcurve=True,
+        scoring_sources: tuple = DEFAULT_SCORING_SOURCES,
     ):
         self.__name__ = "supernova_peak_score"  # self.__class__.__name__
 
@@ -83,15 +102,18 @@ class SupernovaPeakScore:
         self.characteristic_timespan = characteristic_timespan
         self.min_rising_fraction = min_rising_fraction
         self.default_color_factor = default_color_factor
-        self.min_ztf_detections = min_ztf_detections
+        self.min_detections = min_detections
         self.broker_priority = tuple(broker_priority)
         self.use_compiled_lightcurve = use_compiled_lightcurve
+        self.scoring_sources = scoring_sources
 
     def __call__(self, target: Target, t_ref: Time) -> Tuple[float, List]:
         # t_ref = t_ref or Time.now()
 
         # to keep track
         scoring_comments = []
+
+        exclude_comments = []
         reject_comments = []
         factors = {}
         reject = False
@@ -99,60 +121,46 @@ class SupernovaPeakScore:
 
         target_id = target.target_id
 
-        ###===== Get the ZTF data (fink, lasair, etc.) =====###
+        ###===== Get the 'good' data (ZTF, PS1, etc.) =====###
 
-        if self.use_compiled_lightcurve:
-            clc = target.compiled_lightcurve
-            ztf_det_mask = (clc["source"] == "ztf") & (clc["tag"] == "valid")
-            ztf_detections = clc[ztf_det_mask]
-        else:
-            ztf_source = None
-            # ztf_source_name = None
-            for source in self.broker_priority:
-                ztf_source = target.target_data.get(source, None)
-                if ztf_source is None:
-                    continue
-                if ztf_source.lightcurve is None:
-                    # If eg. FINK has a fink "TargetData" obj, but no lightcurve...
-                    msg = f"{target_id} has `{source}` TargetData, but no lightcurve!"
-                    logger.warning(msg)
-                    ztf_source = None  # ...it's not useful, so skip anyway.
-                    continue
-                source_name = source
-                break
+        if target.compiled_lightcurve is None:
+            return -1.0, ["no compiled lightcurve"]
 
-            if ztf_source is None:
-                msg = f"{target_id}: none of {self.broker_priority} available"
-                scoring_comments.append(msg)
-                logger.warning(msg)
-                scoring_comments.extend(reject_comments)
-                return -1.0, scoring_comments
-            ztf_detections = ztf_source.detections
+        clc = target.compiled_lightcurve
+        mask_list = []
+        for source in self.scoring_sources:
+            source_mask = (clc["source"] == source) & (clc["tag"] == "valid")
+            mask_list.append(source_mask.values)
 
-        ###===== Make a quick check on the MJD data... ===###
-        if sum(ztf_detections["mjd"] > t_ref.mjd) > 0:
-            mjd_max = ztf_detections["mjd"].max()
+        detections_mask = sum(mask_list).astype(bool)
+        detections = clc[detections_mask]
+
+        if len(detections) == 0:
+            return -1.0, ["no detections"]
+
+        ###===== Make a quick check on the MJD data ===###
+        if sum(detections["mjd"] > t_ref.mjd) > 0:
+            mjd_max = detections["mjd"].max()
             mjd_warning = (
                 f"{target_id}:\n    highest date ({mjd_max:.3f}) "
                 f"later than t_ref={t_ref.mjd:.3f} ?!"
             )
             logger.warning(mjd_warning)
-            ztf_detections = ztf_detections[ztf_detections["mjd"] < t_ref.mjd]
+            detections = detections[detections["mjd"] < t_ref.mjd]
 
         ###===== Is it bright enough =======###
-        last_mag = ztf_detections["magpsf"].values[-1]
-        last_band = ztf_detections["fid"].values[-1]
+        last_mag = detections["mag"].values[-1]
+        last_band = detections["band"].values[-1]
         mag_factor = calc_mag_factor(last_mag)
         scoring_comments.append(f"mag_factor={mag_factor:.2f} from mag={last_mag:.2f}")
         if last_mag > self.faint_limit:
             exclude = True
-            scoring_comments.append(
-                f"exclude: mag={last_mag:.1f}>{self.faint_limit} (faint lim)"
-            )
+            comm = f"exclude: mag={last_mag:.1f}>{self.faint_limit} (faint lim)"
+            exclude_comments.append(comm)
         factors["mag"] = mag_factor
 
         ###===== Is the target very old? ======###
-        timespan = t_ref.mjd - ztf_detections["mjd"].min()
+        timespan = t_ref.mjd - detections["mjd"].min()
         factors["timespan"] = calc_timespan_factor(
             timespan, characteristic_timespan=self.characteristic_timespan
         )
@@ -160,33 +168,45 @@ class SupernovaPeakScore:
         scoring_comments.append(comm)
         if timespan > self.max_timespan:
             reject = True
-            reject_comments.append(f"target is {timespan:.2f} days old")
+            reject_comments.append(f"REJECT: target is {timespan:.2f} days old")
 
         ##==== or much too young!? ====##
         if timespan < self.min_timespan:
             exclude = True
-            exclude_comment = f"exclude: timespan<{self.min_timespan} (min)"
-            scoring_comments.append(exclude_comment)
+            exclude_comment = (
+                f"exclude: timespan {timespan:.2f}<{self.min_timespan:.2f} (min)"
+            )
+            exclude_comments.append(exclude_comment)
 
         ###===== Is the target still rising ======###
-        unique_fid = ztf_detections["fid"].unique()
+        unique_bands = detections["band"].unique()
         N_detections = {}
-        for fid in unique_fid:
-            fid_detections = ztf_detections[ztf_detections["fid"] == fid]
-            N_detections[fid] = len(fid_detections)
 
-            rising_fraction_fid = calc_rising_fraction(fid_detections)
-            fid_comm = f"f_rising={rising_fraction_fid:.2f} for {len(fid_detections)} band {fid} obs"
-            scoring_comments.append(fid_comm)
-            factors[f"rising_fraction_{fid}"] = rising_fraction_fid
-            if rising_fraction_fid < self.min_rising_fraction:
-                reject = True
-                comm = f"rising_fraction {fid} is {rising_fraction_fid:.2f} < {self.min_rising_fraction}"
-                reject_comments.append(comm)
+        f_rising_data = {}
+        for band in unique_bands:
+            band_detections = detections[detections["band"] == band]
+            N_detections[band] = len(band_detections)
+
+            rising_fraction_band = calc_rising_fraction(band_detections)
+            # band_comm = f"f_rising={rising_fraction_band:.2f} for {len(band_detections)} band {band} obs"
+            # scoring_comments.append(band_comm)
+
+            f_rising_data[band] = rising_fraction_band
+            factors[f"rising_fraction_{band}"] = rising_fraction_band
+            if rising_fraction_band < self.min_rising_fraction:
+                pass
+                # reject = True
+                # comm = f"REJECT: rising_fraction {band} is {rising_fraction_band:.2f} < {self.min_rising_fraction}"
+                # reject_comments.append(comm)
+
+        f_rising_comm = "f_rise:" + " ".join(
+            f"{b}:{f:.2f}" for b, f in f_rising_data.items()
+        )
+        scoring_comments.append(f_rising_comm)
 
         ###===== How many observations =====###
-        if len(ztf_detections) < self.min_ztf_detections:
-            comm = f"exclude as detections {N_detections} insufficient"
+        if len(detections) < self.min_detections:
+            comm = f"exclude: {N_detections} detections insufficient"
             scoring_comments.append(comm)
             exclude = True
 
@@ -269,17 +289,22 @@ class SupernovaPeakScore:
                 if (not np.isfinite(chisq)) or (not np.isfinite(ndof)):
                     scoring_comments.append(f"chisq={chisq:.2f} and ndof={ndof}")
                 else:
-                    chisq_nu = chisq / ndof
-                    scoring_comments.append(f"model chisq={chisq:.3f} with ndof={ndof}")
+                    try:
+                        chisq_nu = chisq / ndof
+                        msg = f"model chisq={chisq:.3f} with ndof={ndof}"
+                        scoring_comments.append(msg)
+                    except ZeroDivisionError as e:
+                        scoring_comments.append(f"model has ndof=0")
                     # TODO how to use chisq_nu properly?
 
         scoring_factors = np.array(list(factors.values()))
         if not all(scoring_factors > 0):
+            print(detections)
             neg_factors = "REJECT:\n" + "\n".join(
                 f"    {k}={v}" for k, v in factors.items() if not v > 0
             )
             reject_comments.append(neg_factors)
-            logger.warning(f"{target_id} has negative factors:\n{neg_factors}")
+            logger.warning(f"{target_id} has -ve/inf/nan factors:\n{neg_factors}")
             exclude = True
 
         combined_factors = np.prod(scoring_factors)
@@ -296,6 +321,8 @@ class SupernovaPeakScore:
             logger.debug(f"{target_id}:\n{reject_str}")
             final_score = -np.inf
 
+        # nice if the exclude and reject comments are at the end.
+        scoring_comments.extend(exclude_comments)
         scoring_comments.extend(reject_comments)
 
         return final_score, scoring_comments

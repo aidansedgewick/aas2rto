@@ -8,9 +8,9 @@ from astropy.time import Time
 
 import emcee
 
-from dk154_targets.target import Target
+from aas2rto.target import Target
 
-from dk154_targets import paths
+from aas2rto import paths
 
 logger = getLogger("bazin_model")
 

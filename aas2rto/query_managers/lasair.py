@@ -476,12 +476,15 @@ class LasairQueryManager(BaseQueryManager):
             )
             target.update_messages.append(alert_text)
 
-    def perform_all_tasks(self, t_ref: Time = None):
+    def perform_all_tasks(self, startup=False, t_ref: Time = None):
         t_ref = t_ref or Time.now()
-        alerts = self.listen_for_alerts(t_ref=t_ref)
 
-        processed_alerts = self.process_alerts(alerts)
-        self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
+        if startup:
+            logger.info("skip listening for alerts on startup step (iter 0)")
+        else:
+            alerts = self.listen_for_alerts(t_ref=t_ref)
+            processed_alerts = self.process_alerts(alerts)
+            self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
 
         self.update_target_alt_ids()
 
@@ -489,9 +492,12 @@ class LasairQueryManager(BaseQueryManager):
         alert_target_ids = [alert["objectId"] for alert in alerts]
         success, failed = self.perform_lightcurve_queries(alert_target_ids, t_ref=t_ref)
 
-        to_query = self.get_lightcurves_to_query(t_ref=t_ref)
-        logger.info(f"lightcurves for {len(to_query)}")
-        success, failed = self.perform_lightcurve_queries(to_query, t_ref=t_ref)
+        if startup:
+            logger.info("skip query lightcurves on startup")
+        else:
+            to_query = self.get_lightcurves_to_query(t_ref=t_ref)
+            logger.info(f"lightcurves for {len(to_query)}")
+            success, failed = self.perform_lightcurve_queries(to_query, t_ref=t_ref)
         loaded, missing = self.load_target_lightcurves(t_ref=t_ref)
 
         self.apply_messenger_updates(processed_alerts)

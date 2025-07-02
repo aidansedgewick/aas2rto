@@ -75,21 +75,30 @@ class DefaultLightcurvePlotter:
 
         self.default_figsize = (6.5, 5)
 
-        self.ztf_colors = {"ztfg": "C0", "ztfr": "C1"}
-        self.atlas_colors = {"atlasc": "C2", "atlaso": "C3"}
+        self.ztf_colors = {"ztfg": "C2", "ztfr": "C3", "ztfi": "C4"}
+        self.atlas_colors = {"atlasc": "C9", "atlaso": "C1"}  # cyan, orange
+        self.yse_colors = {
+            f"ps1::{b}": f"C{ii}" for ii, b in enumerate("g r i z y w".split(), 2)
+        }
         self.lsst_colors = {
-            f"lsst{b}": f"C{ii}" for ii, b in enumerate("g r i z y u".split())
+            f"lsst{b}": f"C{ii}" for ii, b in enumerate("g r i z y w".split())
         }
         self.plot_colors = {
             **self.ztf_colors,
             **self.atlas_colors,
             **self.lsst_colors,
+            **self.yse_colors,
             "no_band": "k",
         }
 
-        self.det_kwargs = dict(ls="none", marker="o")
-        self.ulimit_kwargs = dict(ls="none", marker="v", mfc="none")
-        self.badqual_kwargs = dict(ls="none", marker="o", mfc="none")
+        ztf_shapes = {x: "o" for x in "ztfg ztfr ztfi".split()}
+        atlas_shapes = {x: "o" for x in "atlasc atlaso".split()}
+        yse_shapes = {f"ps1::{x}": "s" for x in "g r i z y w".split()}
+        self.plot_shapes = {**ztf_shapes, **atlas_shapes, **yse_shapes}
+
+        self.valid_kwargs = dict(ls="none")  # , marker="o")
+        self.ulimit_kwargs = dict(ls="none")  # , marker="v", mfc="none")
+        self.badqual_kwargs = dict(ls="none", mfc="none")  # , marker="o")
 
         self.tag_col = "tag"
         self.valid_tag = "valid"
@@ -111,6 +120,7 @@ class DefaultLightcurvePlotter:
         target_id = target.target_id
 
         if target.compiled_lightcurve is None:
+
             logger.warning(f"{target_id} has no compiled lightcurve for plotting.")
             return self.fig
         lightcurve = target.compiled_lightcurve.copy()
@@ -135,10 +145,12 @@ class DefaultLightcurvePlotter:
 
         for ii, (band, band_history) in enumerate(lightcurve.groupby(band_col)):
             band_color = self.plot_colors.get(band, f"C{ii%8}")
-            band_kwargs = dict(color=band_color)
+            shape = self.plot_shapes.get(band, "o")
+            det_kwargs = dict(color=band_color, marker=shape)
+            lim_kwargs = dict(color=band_color, marker="$\u2193$")
 
             scatter_handle = self.ax.errorbar(
-                0, 0, yerr=0.1, label=band, **band_kwargs, **self.det_kwargs
+                0, 0, yerr=0.1, label=band, **det_kwargs, **self.valid_kwargs
             )
             self.legend_handles.append(scatter_handle)
 
@@ -150,13 +162,13 @@ class DefaultLightcurvePlotter:
                 if len(ulimits) > 0:
                     xdat = ulimits["mjd"].values - self.t_ref.mjd
                     ydat = ulimits[self.diffmaglim_col]
-                    self.ax.errorbar(xdat, ydat, **band_kwargs, **self.ulimit_kwargs)
+                    self.ax.errorbar(xdat, ydat, **lim_kwargs, **self.ulimit_kwargs)
                 if len(badqual) > 0:
                     xdat = badqual["mjd"].values - self.t_ref.mjd
                     ydat = badqual[self.mag_col].values
                     yerr = badqual[self.magerr_col].values
                     self.ax.errorbar(
-                        xdat, ydat, yerr=yerr, **band_kwargs, **self.badqual_kwargs
+                        xdat, ydat, yerr=yerr, **det_kwargs, **self.badqual_kwargs
                     )
                 N_det = len(detections)
                 N_badqual = len(badqual)
@@ -175,7 +187,7 @@ class DefaultLightcurvePlotter:
                 ydat = detections[self.mag_col]
                 yerr = detections[self.magerr_col]
                 self.ax.errorbar(
-                    xdat, ydat, yerr=yerr, **band_kwargs, **self.det_kwargs
+                    xdat, ydat, yerr=yerr, **det_kwargs, **self.valid_kwargs
                 )
                 self.photometry_plotted = True
                 self.peakmag_vals.append(ydat.min())
@@ -205,7 +217,7 @@ class DefaultLightcurvePlotter:
                 va="center",
                 fontsize=12,
             )
-            im_ax.text(1.05, 0.5, imtype, **imtext_kwargs)
+            im_ax.text(1.08, 0.5, imtype, **imtext_kwargs)
 
             im = cutouts.get(imtype.lower(), None)
             if im is None:
@@ -227,15 +239,27 @@ class DefaultLightcurvePlotter:
 
             self.cutouts_added = True
 
-    def format_axes(self, target):
-        title = str(target)
-        tns_data = target.target_data.get("tns", None)
-        if tns_data is not None:
-            known_redshift = float(tns_data.parameters.get("Redshift", "nan"))
-            if np.isfinite(known_redshift):
-                title = title + r" ($z_{\rm TNS}=" + f"{known_redshift}" + "$)"
+    def format_axes(self, target: Target):
+
+        self.fig.subplots_adjust(top=0.85)
+
+        names = list(set(target.alt_ids.values()))
+        title = " -- ".join(sorted(names))
+
         transform_kwargs = dict(ha="center", va="top", transform=self.fig.transFigure)
         self.ax.text(0.5, 0.98, title, fontsize=14, **transform_kwargs)
+
+        t_ra = target.coord.ra
+        t_dec = target.coord.dec
+        subtitle = f"ra,dec=({t_ra.deg:.4f},{t_dec.deg:+.6f})"
+
+        tns_data = target.target_data.get("tns", None)
+        if tns_data is not None:
+            known_redshift = float(tns_data.parameters.get("redshift", "nan"))
+            if np.isfinite(known_redshift):
+                subtitle = subtitle + r" ($z_{\rm TNS}=" + f"{known_redshift}" + "$)"
+
+        self.ax.text(0.5, 0.93, subtitle, fontsize=11, **transform_kwargs)
 
         self.peakmag_vals.append(17.0)
         y_bright = np.nanmin(self.peakmag_vals) - 0.2
@@ -274,11 +298,11 @@ class DefaultLightcurvePlotter:
         self.fig.subplots_adjust(bottom=0.3)
         if len(comments) > 0:
             N = len(comments) // 2
-            text = "score comments:\n" + "\n".join(
+            text_col1 = "score comments:\n" + "\n".join(
                 f"    {comm}" for comm in comments[:N]
             )
             transform_kwargs = dict(ha="left", va="top", transform=self.fig.transFigure)
-            self.fig.text(0.03, 0.2, text, fontsize=8, **transform_kwargs)
-            text = "\n" + "\n".join(f"    {comm}" for comm in comments[N:])
-            self.fig.text(0.53, 0.2, text, fontsize=8, **transform_kwargs)
+            self.fig.text(0.03, 0.2, text_col1, fontsize=8, **transform_kwargs)
+            text_col2 = "\n" + "\n".join(f"    {comm}" for comm in comments[N:])
+            self.fig.text(0.53, 0.2, text_col2, fontsize=8, **transform_kwargs)
             self.comments_added = True

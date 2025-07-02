@@ -1,3 +1,5 @@
+from astropy.time import Time
+
 from aas2rto import Target
 
 
@@ -6,5 +8,5 @@ class EmptyModel:
         pass
 
 
-def empty_modeling(target: Target):
+def empty_modeling(target: Target, t_ref: Time = None):
     return EmptyModel()

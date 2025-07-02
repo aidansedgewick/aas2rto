@@ -3,6 +3,7 @@ import json
 import os
 import requests
 import time
+import warnings
 from logging import getLogger
 from requests.auth import HTTPBasicAuth
 from typing import Dict, List, Tuple
@@ -16,6 +17,7 @@ from astropy.time import Time
 from aas2rto import utils
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.target import Target
+from aas2rto.target_lookup import TargetLookup
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -64,58 +66,83 @@ def process_yse_lightcurve(
 ):
     lightcurve = input_lightcurve.copy()
     lightcurve.drop(["varlist:"], inplace=True, axis=1)
-    lightcurve.sort_values("mjd")
+    lightcurve.sort_values("mjd", inplace=True)
     jd_dat = Time(lightcurve["mjd"].values, format="mjd").jd
     lightcurve.insert(1, "jd", jd_dat)
     # if only_yse_data:
     if not use_all_sources:
-        # lightcurve.query("instrument=='GPC1'", inplace=True)
-
         mask = lightcurve["telescope"].str.startswith("Pan-STARRS")
         if additional_sources:
             if isinstance(additional_sources, str):
                 additional_sources = [additional_sources]
-            for source in additional_sources:
+            for source_key in additional_sources:
+                # make sure eg. "ZTF" is translated to "P48" YSE-convention...
+                source = ADDITIONAL_SOURCES_LOOKUP[source_key]
+
                 source_mask = lightcurve["telescope"].str.lower() == source.lower()
                 mask = mask | source_mask
 
         lightcurve = lightcurve[mask]
-    lightcurve.query("(0<magerr) & (magerr < 1)", inplace=True)
-    lightcurve.reset_index(drop=True)
 
-    lightcurve["tag"] = "valid"
+    ### FOR NOW, JUST IGNORE EVERYTHING WITH DQ 'BAD'
+    bad_dq_mask = lightcurve["dq"].astype("str").str.lower() == "bad"
+    lightcurve = lightcurve[~bad_dq_mask]
+
+    lightcurve = lightcurve[(0 < lightcurve["magerr"]) & (lightcurve["magerr"] < 1.0)]
+    lightcurve = lightcurve[lightcurve["flt"].str.lower() != "unknown"]
+
+    lightcurve.reset_index(drop=True, inplace=True)
+
+    if len(lightcurve) == 0:
+        return lightcurve
+    lightcurve.loc[:, "tag"] = "valid"
     low_snr_mask = 1.0 / lightcurve["magerr"] < 3
-    bad_dq_mask = lightcurve["dq"].str.lower() == "bad"
+
+    bad_dq_mask = lightcurve["dq"].astype("str").str.lower() == "bad"
+
     badquality_mask = low_snr_mask | bad_dq_mask
-    lightcurve.loc[badquality_mask, "tag"] = "badquality"
+    lightcurve.loc[badquality_mask, "tag"] = "badqual"
     return lightcurve
 
 
-def _get_indicator_guesses(col):
-    if col is None:
-        return YseQueryManager.default_update_indicator_columns
-    return [col] + list(YseQueryManager.default_update_indicator_columns)
+def get_object_updates(
+    existing_results: pd.DataFrame,
+    updated_results: pd.DataFrame,
+    comparison_col="ndetections",
+    name_col="name",
+):
+    if existing_results is None:
+        return updated_results
 
+    if updated_results is None:
+        return pd.DataFrame(columns=[name_col, comparison_col])
 
-def _get_indicator_column(query_config, query_updates: pd.DataFrame):
-    if not isinstance(query_updates, pd.DataFrame):
+    existing_results = existing_results.copy()
+    existing_results.set_index(name_col, inplace=True, drop=False)
+
+    updated_results = updated_results.copy()
+    updated_results.set_index(name_col, inplace=True, drop=False)
+
+    # get INNER JOIN
+
+    updates = []
+    for name, updated_row in updated_results.iterrows():
+        if name in existing_results.index:
+            existing_row = existing_results.loc[name]
+            if updated_row[comparison_col] > existing_row[comparison_col]:
+                updates.append(updated_row)
+            else:
+                updates.append(updated_row)
+    if len(updates) > 0:
+        updates_df = pd.DataFrame(updates)
+        updates_df.sort_values("name")
+        return
+    else:
         return None
-    indicator_col = query_config.get("updated_indicator", None)
-    indicator_guesses = _get_indicator_guesses(indicator_col)
-    update_indicator = None
-    for col in indicator_guesses:
-        if col in query_updates.columns:
-            update_indicator = col
-            break
-    return update_indicator
 
 
-def yse_id_from_target(target, resolving_order=("yse",)):
+def yse_id_from_target(target, resolving_order=("yse", "tns")):
 
-    target_id = target.target_id
-    if target_id.lower().startswith("yse"):
-        yse_id = target_id
-        return yse_id
     for source_name in resolving_order:
         yse_id = target.alt_ids.get(source_name, None)
         if yse_id is not None:
@@ -123,27 +150,41 @@ def yse_id_from_target(target, resolving_order=("yse",)):
     return None
 
 
+ADDITIONAL_SOURCES_LOOKUP = {
+    "ATLAS": "ATLAS",
+    "P48": "P48",
+    "ZTF": "P48",
+    "Swift": "Swift",
+    "UVOT": "Swift",
+}
+
+
 class YseQueryManager(BaseQueryManager):
     name = "yse"
     default_query_parameters = {
         "n_objects": 25,
         "object_query_interval": 1.0,  # how often to query for new objects
-        "lightcurve_update_interval": 2.0,  # how often to update each target
+        "lightcurve_update_interval": 1.0,  # how often to update each target
         "max_latest_lookback": 30.0,  # bad if latest data is older than 30 days
         "max_earliest_lookback": 70.0,  # bad if the youngest data is older than 70 days (AGN!)
         "max_failed_queries": 10,  # after X failed queries, stop trying
         "max_total_query_time": 600,  # total time to spend in each stage seconds
-        "use_only_yse": True,
+        "use_all_sources": True,
+        "additional_sources": None,
     }
     default_coordinate_columns = (("transient_RA", "transient_Dec"),)
     default_update_indicator_columns = ("number_of_detection", "latest_detction")
-    default_yse_only = True
+
+    expected_object_query_keys = ["query_id", "coordinates", "update_indicator"]
+    required_object_query_keys = ["query_id"]
+
+    expected_additional_sources = ADDITIONAL_SOURCES_LOOKUP
 
     def __init__(
         self,
         yse_config: Dict,
-        target_lookup: Dict[str, Target],
-        data_path=None,
+        target_lookup: TargetLookup,
+        parent_path=None,
         create_paths=True,
     ):
         self.yse_config = yse_config
@@ -151,19 +192,22 @@ class YseQueryManager(BaseQueryManager):
 
         self.credential_config = self.yse_config.get("credential_config", {})
         self.auth = YseQuery.prepare_auth(self.credential_config)
+        self.check_query_parameters()
 
-        yse_queries = self.yse_config.get("yse_queries", [])
-        self.yse_queries = yse_queries
-
-        self.process_query_parameters()
+        object_queries = self.yse_config.get("object_queries", [])
+        self.object_queries = object_queries
+        self.check_yse_queries()
 
         self.query_results = {}
         self.query_updates = {}
-        self.query_updates_available = False
 
-        self.process_paths(data_path=data_path, create_paths=create_paths)
+        self.process_paths(
+            parent_path=parent_path,
+            create_paths=create_paths,
+            directories=["lightcurves", "parameters", "query_results"],
+        )
 
-    def process_query_parameters(self, t_ref: Time = None):
+    def check_query_parameters(self, t_ref: Time = None):
         self.query_parameters = self.default_query_parameters.copy()
         query_params = self.yse_config.get("query_parameters", {})
         unknown_kwargs = [
@@ -174,133 +218,163 @@ class YseQueryManager(BaseQueryManager):
             logger.warning(msg)
         self.query_parameters.update(query_params)
 
-    def query_for_updates(self, t_ref: Time = None) -> pd.DataFrame:
+        additional_sources = query_params.get("additional_sources", None)
+
+        if additional_sources is not None:
+            unknown_sources = utils.check_unexpected_config_keys(
+                additional_sources,
+                self.expected_additional_sources.keys(),
+                name="yse.additional_sources",
+            )
+            if unknown_sources:
+
+                rev_sources = {
+                    s: [] for s in set(self.expected_additional_sources.values())
+                }
+                for alias, source in self.expected_additional_sources.items():
+                    rev_sources[source].append(alias)
+
+                raise ValueError(
+                    f"unknown 'additional sources' {unknown_sources}.\nChoose from (sources and allowed aliases):\n"
+                    f"{rev_sources}\n"
+                )
+
+    def check_yse_queries(self):
+
+        for query_name, query_pattern in self.object_queries.items():
+            unexpected_keys = utils.check_unexpected_config_keys(
+                query_pattern.keys(),
+                self.expected_object_query_keys,
+                name=f"yse.object_queries.{query_name}",
+            )
+            if unexpected_keys:
+                logger.warning(f"{unexpected_keys}")
+
+            missing_keys = utils.check_missing_config_keys(
+                query_pattern.keys(),
+                self.required_object_query_keys,
+                name=f"yse.object_queries.{query_name}",
+            )
+            if len(missing_keys) > 0:
+                msg = f"yse.object_query.{query_name} missing required keys {missing_keys}"
+                raise ValueError(msg)
+
+    def load_existing_query_results(self):
+        for query_name, query_parameters in self.yse_queries.items():
+            query_results_filepath = self.get_query_results_file(query_name)
+            logger.info(f"load {query_name} results")
+            try:
+                df = pd.read_csv(query_results_filepath)
+                self.query_results[query_name] = df
+            except pd.errors.EmptyDataError as e:
+                logger.error(f"empty data for query {query_name}")
+
+    def query_for_updates(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        for query_id, column_data in self.yse_queries.items():
-            query_name = f"yse_{query_id}"
+        for query_name, query_pattern in self.object_queries.items():
+            query_id = query_pattern["query_id"]
+
             query_results_file = self.get_query_results_file(query_name)
-            results_file_age = utils.calc_file_age(
-                query_results_file, t_ref, allow_missing=True
-            )
+            results_file_age = utils.calc_file_age(query_results_file, t_ref=t_ref)
+
             if results_file_age < self.query_parameters["object_query_interval"]:
-                if query_results_file.stat().st_size > 1:
-                    logger.debug("read")
-                    logger.info(f"read existing yse id {query_id} results")
-                    raw_query_updates = pd.read_csv(query_results_file)
-
-                    query_updates = process_yse_query_results(raw_query_updates)
-                    if query_updates.empty:
-                        continue
-                    self.query_updates[query_id] = query_updates
-                    # It's fine that we don't make the query now (ie, don't go to "else:")
-                    # we just assume that there were no results if the file is tiny.
+                continue  # don't need to make this query
 
             else:
-                # if we need to make the query...
-                logger.info(f"query for {query_name}")
-                t_start = time.perf_counter()
-                raw_query_updates = YseQuery.query_explorer(query_id, self.auth)
-                if raw_query_updates.empty:
-                    raw_query_updates.to_csv(query_results_file, index=False)
-                raw_query_updates["query_id"] = query_id
-                raw_query_updates.to_csv(query_results_file, index=False)
-                query_updates = process_yse_query_results(raw_query_updates)
-                self.query_updates[query_id] = query_updates
-                t_end = time.perf_counter()
-                logger.info(
-                    f"{query_name} returned {len(query_updates)} in {t_end-t_start:.1f}s"
+                logger.info(f"perform query: {query_name} (id={query_id})")
+                existing_results = self.query_results.get(query_name)
+
+                new_results = YseQuery.query_explorer(query_id, self.auth)
+                new_results.to_csv(query_results_file, index=False)
+
+                if new_results.empty:
+                    continue
+
+                comparison_col = query_pattern.get("comparison_col")
+                updates = get_object_updates(
+                    existing_results, new_results, comparison_col=comparison_col
                 )
-                self.query_updates[query_id] = query_updates
-                self.query_updates_available = True
 
-    def new_targets_from_updates(self, updates: pd.DataFrame, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
+                self.query_updates[query_name] = updates
 
+    def get_updated_targets(self):
+
+        updated_targets = []
         new_targets = []
-        if updates is None:
-            return new_targets
+        for query_name, updates in self.query_updates.items():
 
-        logger.info(f"{len(updates)} updates to process")
-        for yse_id, row in updates.iterrows():
-            target = self.target_lookup.get(yse_id, None)
-            if target is not None:
+            if updates is None:
+                logger.info(f"no updates for {query_name}")
                 continue
-            if "query_id" in row.index:
-                query_id = row.query_id
-                coordinate_columns = self.yse_queries[query_id].get("coordinates", None)
-                if coordinate_columns is not None:
-                    if len(coordinate_columns) != 2:
-                        coordinate_columns = None
-                        logger.info(
-                            "provide pair of coordinate columns, eg. "
-                            "['transient_RA', 'transient_Dec']"
-                        )
-            else:
-                coordinate_columns = None
-            target = target_from_yse_query_row(
-                yse_id, row, coordinate_columns=coordinate_columns
-            )
-            self.target_lookup[yse_id] = target
-            new_targets.append(yse_id)
-        return new_targets
 
-    def target_updates_from_query_results(self, t_ref: Time = None):
-        update_dfs = []
-        for query_id, updated_results in self.query_updates.items():
-            # Decide which column to use to get updated targets:
-            update_indicator = _get_indicator_column(
-                self.yse_queries[query_id], updated_results
-            )
-
-            updated_targets = []
-            existing_results = self.query_results.get(query_id, None)
-
-            if existing_results is None:
-                self.query_results[query_id] = updated_results
-                logger.info(
-                    f"no existing id={query_id} results, use updates {len(updated_results)}"
-                )
+            if not isinstance(updates, pd.DataFrame):
+                msg = f"updates from {query_name} is type {type(updates)}, not pd.DF!"
+                warnings.warn(Warning(msg))
                 continue
-            # existing_results.sort_values(["oid", "lastmjd"], inplace=True)
-            for target_id, updated_row in updated_results.iterrows():
-                if target_id in existing_results.index:
-                    existing_row = existing_results.loc[target_id]
-                    if update_indicator is None:
-                        updated_targets.append(target_id)
-                        continue
-                    if updated_row[update_indicator] > existing_row[update_indicator]:
-                        updated_targets.append(target_id)
+
+            query_pattern = self.object_queries[query_name]
+            coordinate_cols = query_pattern.get("coordinate_cols")
+            name_col = query_pattern.get("name_col")
+
+            if name_col not in updates:
+                msg = f"{name_col} not in updates columns:\n    {updates.columns}"
+                warnings.warn(Warning(msg))
+                logger.warning(msg)
+
+            for ii, row in updates.iterrows():
+                target_id = row[name_col]
+                if target_id in self.target_lookup:
+                    target = self.target_lookup.get(target_id)
+                    yse_id = yse_id_from_target(target)
+                    updated_targets.append(yse_id)
+                    target.updated = True
+
+                    target.update_messages.append("YSE data updated")
                 else:
+                    target = target_from_yse_query_row(target_id, row, coordinate_cols)
+                    target.updated = True
+                    target.update_messages.append("New YSE target")
+                    self.target_lookup.add_target(target)
                     updated_targets.append(target_id)
-            self.query_results[query_id] = updated_results
-            updated = updated_results.loc[updated_targets]
-            update_dfs.append(updated)
+                    new_targets.append(target_id)
 
-        if len(update_dfs) > 0:
-            # yse_updates = updated_results.loc[updated_targets]
-            yse_updates = pd.concat(update_dfs)
-            logger.info(f"{len(yse_updates)} yse target updates")
-        else:
-            yse_updates = None
-        return yse_updates
+        new_targets = list(set(new_targets))
+        updated_targets = list(set(new_targets))
+        logger.info(
+            f"updates for {len(updated_targets)} targets ({len(new_targets)} are new)"
+        )
+        return updated_targets
+
+    def reset_query_updates(self):
+
+        for query_name in self.query_updates.keys():
+            self.query_updates[query_name] = None
 
     def get_transient_parameters_to_query(
-        self, target_id_list: List[str] = None, t_ref: Time = None
+        self, yse_id_list: List[str] = None, t_ref: Time = None
     ):
         t_ref = t_ref or Time.now()
 
-        if target_id_list is None:
-            target_id_list = list(self.target_lookup.keys())
+        if yse_id_list is None:
+            yse_id_list = []
+            for target_id, target in self.target_lookup.items():
+                yse_id = yse_id_from_target(target)
+                if yse_id is None:
+                    continue
+                yse_id_list.append(yse_id)
 
         to_query = []
-        for target_id in target_id_list:
-            parameters_file = self.get_parameters_file(target_id, fmt="json")
+        for yse_id in yse_id_list:
+            parameters_file = self.get_parameters_file(yse_id, fmt="json")
             parameters_file_age = utils.calc_file_age(
                 parameters_file, t_ref, allow_missing=True
             )
-            if parameters_file_age > self.query_parameters["interval"]:
-                to_query.append(target_id)
+            if (
+                parameters_file_age
+                > self.query_parameters["lightcurve_update_interval"]
+            ):
+                to_query.append(yse_id)
         return to_query
 
     def perform_transient_parameters_queries(self, target_id_list, t_ref: Time = None):
@@ -322,7 +396,7 @@ class YseQueryManager(BaseQueryManager):
                 )
             except Exception as e:
                 failed.append(target_id)
-                print(f"failed", e)
+                logger.error(f"{target_id} params query failed: {e}")
                 continue
             if transient_parameters is None:
                 continue
@@ -361,9 +435,12 @@ class YseQueryManager(BaseQueryManager):
             parameters_file = self.get_parameters_file(target_id, fmt="json")
             if not parameters_file.exists():
                 missing.append(target_id)
+                continue
             with open(parameters_file, "r") as f:
                 parameters = json.load(f)
-            target.yse_data.parameters = parameters
+
+            yse_data = target.get_target_data("yse")
+            yse_data.parameters = parameters
             if target.ra is None or target.dec is None:
                 ra = parameters.get("ra", None)
                 dec = parameters.get("dec", None)
@@ -377,7 +454,7 @@ class YseQueryManager(BaseQueryManager):
         if N_loaded > 0:
             logger.info(f"loaded {N_loaded} parameter files in {t_end-t_start:.1f}s")
         if N_missing > 0:
-            logger.info(f"{N_loaded} parameter files missing!")
+            logger.info(f"{N_missing} parameter files missing!")
         if len(coords_updated) > 0:
             logger.info(f"{len(coords_updated)} coordinates updated")
         return loaded, missing
@@ -389,6 +466,24 @@ class YseQueryManager(BaseQueryManager):
                 missing_coordinates.append(target_id)
         if len(missing_coordinates) > 0:
             logger.warning(f"\033[33m{len(missing_coordinates)} missing ra/dec!\033[0m")
+
+    def update_yse_ids(self):
+
+        missing = []
+        changed = []
+        for target_id, target in self.target_lookup.items():
+            tns_name = target.alt_ids.get("tns", None)
+            if tns_name is not None:
+                yse_id = target.alt_ids.get("yse", None)
+                if yse_id is None:
+                    missing.append(target_id)
+                if yse_id != tns_name:
+                    changed.append(target_id)
+                target.alt_ids["yse"] = tns_name
+        if len(missing) > 0:
+            logger.info(f"{len(missing)} targets added yse_id from tns")
+        if len(changed) > 0:
+            logger.info(f"{len(changed)} targets have yse_id CHANGED!")
 
     def get_lightcurves_to_query(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -438,11 +533,6 @@ class YseQueryManager(BaseQueryManager):
             if lightcurve.empty:
                 lightcurve.to_csv(lightcurve_file, index=True)
 
-            try:
-                lightcurve = process_yse_lightcurve(lightcurve)
-            except KeyError as e:
-                logger.error(f"{yse_id}")
-                raise ValueError
             lightcurve.to_csv(lightcurve_file, index=False)
             success.append(yse_id)
 
@@ -452,7 +542,6 @@ class YseQueryManager(BaseQueryManager):
             t_end = time.perf_counter()
             logger.info(f"lightcurve queries in {t_end - t_start:.1f}s")
             logger.info(f"{N_success} successful, {N_failed} failed lc queries")
-
         return success, failed
 
     def load_single_lightcurve(self, yse_id, t_ref=None):
@@ -462,40 +551,52 @@ class YseQueryManager(BaseQueryManager):
             return None
         try:
             lightcurve = pd.read_csv(lightcurve_filepath)
+            additional_sources = self.query_parameters["additional_sources"]
+            use_all_sources = self.query_parameters["use_all_sources"]
+            try:
+                lightcurve = process_yse_lightcurve(
+                    lightcurve,
+                    additional_sources=additional_sources,
+                    use_all_sources=use_all_sources,
+                )
+                return lightcurve
+            except KeyError as e:
+                logger.error(f"{yse_id}")
+                raise ValueError
+
         except pd.errors.EmptyDataError as e:
-            logger.warning(f"bad (empty) lightcurve file for {fink_id}")
+            print(e)
+            logger.warning(f"bad (empty) lightcurve file for {yse_id}")
             return None
 
-    def perform_all_tasks(self, t_ref: Time = None):
+    def perform_all_tasks(self, startup=False, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        self.query_for_updates(t_ref=t_ref)
-        if len(self.query_results) == 0:
-            # This will only happen on the initial pass.
-            for query_name, query_updates in self.query_updates.items():
-                new_targets = self.new_targets_from_updates(query_updates, t_ref=t_ref)
-                msg = f"{len(new_targets)} new targets from yse query id={query_name}"
-                logger.info(msg)
-                self.query_results[query_name] = query_updates
-        if self.query_updates_available:
-            logger.info("query updates are available!")
-            yse_updates = self.target_updates_from_query_results(t_ref=t_ref)
-            new_targets = self.new_targets_from_updates(yse_updates)
-            msg = f"{len(new_targets)} new targets from yse query id={query_name}"
-            logger.info(msg)
+        if startup:
+            logger.info("don't query for new updates at startup")
+        else:
+            self.query_for_updates(t_ref=t_ref)
+            updated_targets = self.get_updated_targets()
+            self.reset_query_updates()
 
-        to_query = self.get_transient_parameters_to_query(t_ref=t_ref)
-        success, failed = self.perform_transient_parameters_queries(
-            to_query, t_ref=t_ref
-        )
+            if updated_targets:
+                self.perform_lightcurve_queries(updated_targets)
+
+            to_query = self.get_lightcurves_to_query(t_ref=t_ref)
+            success, failed = self.perform_lightcurve_queries(to_query, t_ref=t_ref)
+
+            to_query = self.get_transient_parameters_to_query(t_ref=t_ref)
+            success, failed = self.perform_transient_parameters_queries(
+                to_query, t_ref=t_ref
+            )
+
+        self.update_yse_ids()
         loaded, missing = self.load_transient_parameters(t_ref=t_ref)
-
-        to_query = self.get_lightcurves_to_query(t_ref=t_ref)
-        success, failed = self.perform_lightcurve_queries(to_query, t_ref=t_ref)
-        loaded, missing = self.load_lightcurves(t_ref=t_ref)
+        loaded, missing = self.load_target_lightcurves(
+            t_ref=t_ref, id_from_target_function=yse_id_from_target
+        )
 
         self.check_coordinates()
-        self.query_updates_available = False
 
 
 class YseQuery:
@@ -548,7 +649,6 @@ class YseQuery:
         response = requests.get(url, auth=auth)
         if not process_result:
             return response
-        print(response.text)
         return cls.process_lightcurve(response.text)
 
     @classmethod
@@ -574,9 +674,7 @@ class YseQuery:
         if len(data) == 1:
             lightcurve = pd.DataFrame([], columns=columns)
         else:
-            lightcurve = pd.read_csv(
-                io.StringIO("\n".join(data)), delim_whitespace=True
-            )
+            lightcurve = pd.read_csv(io.StringIO("\n".join(data)), sep="\s+")
         if return_header:
             return lightcurve, header
         return lightcurve
