@@ -64,10 +64,9 @@ class TargetSelector:
 
     Parameters
     ----------
-    selector_config [dict]
+    selector_config : dict
         A dictionary, with keys {expected_config_keys}
-    create_paths
-
+    create_paths : bool
     """
 
     expected_config_keys = (
@@ -83,18 +82,20 @@ class TargetSelector:
         "ncpu": None,
         "unranked_value": 9999,
         "minimum_score": 0.0,
+        "minimum_altitude": 40.0 * u.degree,
         "retained_recovery_files": 5,
         "skip_tasks": [],
         "obs_info_dt": 0.5 / 24.0,
+        "obs_info_update": 2.0 / 24.0,
         "lazy_modeling": True,
-        "lazy_compile": False,
+        "lazy_compile": True,
         "lazy_plotting": True,
         "plotting_interval": 0.25,
         "consolidate_seplim": 5 * u.arcsec,
         "write_comments": True,
     }
     default_base_path = paths.wkdir
-    expected_messenger_keys = ("telegram", "slack")
+    expected_messenger_keys = ("telegram", "slack", "git_web")
 
     def __init__(self, selector_config: dict, create_paths=True):
         # Unpack configs.
@@ -335,6 +336,7 @@ class TargetSelector:
         self.messengers = {}
         self.telegram_messenger = None
         self.slack_messenger = None
+        self.git_webpage_manager = None
         for msgr_name, msgr_config in self.messengers_config.items():
             use_msgr = msgr_config.pop("use", True)
             if not use_msgr:
@@ -346,6 +348,12 @@ class TargetSelector:
             elif msgr_name == "slack":
                 msgr = messengers.SlackMessenger(msgr_config)
                 self.slack_messenger = msgr
+            elif msgr_name == "git_web":
+                msgr = messengers.GitWebpageManager(
+                    msgr_config, self.paths.get("www_path", None)
+                )
+                self.git_webpage_manager = msgr
+
             else:
                 raise NotImplementedError(f"No messenger {msgr_name}")
             self.messengers[msgr_name] = msgr
@@ -364,16 +372,26 @@ class TargetSelector:
         access in a target with eg. `my_target.observatory_info["lasilla"]`
         """
         t_ref = t_ref or Time.now()
+        obs_info_update = self.selector_parameters["obs_info_update"]
 
+        counter = {}
         for obs_name, observatory in self.observatories.items():
             if observatory is None:
                 continue
+            msg = f"{obs_name}: obs_info missing/older than {obs_info_update*24:.1f}hr"
+            logger.info(msg)
+
+            counter = 0
 
             obs_info = ObservatoryInfo.for_observatory(
                 observatory, t_ref=t_ref, horizon=horizon, dt=dt
             )
 
             for target_id, target in self.target_lookup.items():
+                existing_info = target.observatory_info.get(obs_name)
+                if existing_info is not None:
+                    if t_ref.mjd - existing_info.t_ref.mjd < obs_info_update:
+                        continue
                 target_obs_info = obs_info.copy()
                 assert target_obs_info.target_altaz is None
                 if target.coord is not None:
@@ -382,6 +400,8 @@ class TargetSelector:
                 if target.observatory_info[obs_name].target_altaz is None:
                     msg = f"\033[33m{target_id} {obs_name} altaz missing\033[0m"
                     logger.warning(msg)
+                counter = counter + 1
+            logger.info(f"updated obs_info for {counter} targets")
 
     def check_for_targets_of_opportunity(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -857,6 +877,9 @@ class TargetSelector:
                 continue
             fig = plotting_function(target, t_ref=t_ref)
             fig.savefig(fig_path)
+            target.lc_fig_path = (
+                fig_path  # useful to have target know where it's figs are...
+            )
             plt.close(fig=fig)
             plotted.append(target_id)
         if len(plotted) > 0 or len(skipped) > 0:
@@ -886,6 +909,7 @@ class TargetSelector:
                     observatory, target, t_ref=t_ref, obs_info=obs_info
                 )
                 fig.savefig(fig_path)
+                target.vis_fig_paths[obs_name] = fig_path
                 plt.close(fig=fig)
                 plotted.append(target_id)
             if len(plotted) > 0 or len(skipped) > 0:
@@ -944,7 +968,10 @@ class TargetSelector:
                 continue
             data_list.append(
                 dict(
-                    target_id=target_id, score=last_score, ra=target.ra, dec=target.dec
+                    target_id=target_id,
+                    score=last_score,
+                    ra=target.ra,
+                    dec=target.dec,
                 )
             )
 
@@ -982,6 +1009,9 @@ class TargetSelector:
                 self.collect_plots(target, obs_name, row["ranking"])
         logger.info(f"{sum(negative_score)} targets excluded, {len(score_df)} ranked")
         return score_df
+
+    def collect_visible_targets_at_observatory(self, obs_name):
+        pass
 
     def get_ranked_list_path(self, obs_name, mkdir=True) -> Path:
         ranked_lists_path = self.outputs_path / "ranked_lists"
@@ -1198,6 +1228,12 @@ class TargetSelector:
                 rank_t_ref = Time(row.mjd, format="mjd")
                 target.update_rank_history(row["ranking"], obs_name, t_ref=rank_t_ref)
 
+    def perform_web_tasks(self, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+        self.git_webpage_manager.update_webpages(
+            self.target_lookup, self.ranked_lists, t_ref=t_ref
+        )
+
     def perform_messaging_tasks(self, t_ref: Time = None):
         """
         Loop through each target in TargetLookup.
@@ -1360,7 +1396,6 @@ class TargetSelector:
         perf_times["qm_tasks"] = time.perf_counter() - t1
 
         # ===================== Merge duplicated targets ===================== #
-
         if isinstance(self.target_lookup, TargetLookup):
             self.target_lookup.consolidate_targets(seplimit=seplimit)
             self.target_lookup.update_target_id_mappings()
@@ -1471,11 +1506,13 @@ class TargetSelector:
             self.perform_messaging_tasks()
         else:
             logger.info("skip messaging tasks")
+        perf_times["messaging"] = time.perf_counter() - t1
+
+        # ========================== Perform web tasks ======================= #
+        self.perform_web_tasks(t_ref=t_ref)
 
         # ======== Reset all targets to un-updated for the next loop ========= #
         self.reset_updated_targets()
-
-        perf_times["messaging"] = time.perf_counter() - t1
 
         print(
             f"time summary:\n    "
@@ -1605,6 +1642,7 @@ class TargetSelector:
         while True:
             t_ref = Time.now()
 
+            t_start = time.perf_counter()
             loop_skip_tasks = skip_tasks or []
             if N_iterations == 0:
                 # Don't send messages on the first loop.
@@ -1640,5 +1678,9 @@ class TargetSelector:
             if startup:
                 logger.info("no sleep after startup")
             else:
-                logger.info(f"sleep for {sleep_time} sec")
+                exc_time = time.perf_counter() - t_start
+                sleep_time_actual = max(sleep_time - exc_time, 60.0)
+
+                logger.info(f"loop execution time = {exc_time:.1f}sec")
+                logger.info(f"...so sleep for {sleep_time_actual:.1f}sec")
                 time.sleep(sleep_time)

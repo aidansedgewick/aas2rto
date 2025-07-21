@@ -1,5 +1,6 @@
 import copy
 import time
+import warnings
 from logging import getLogger
 
 import numpy as np
@@ -76,6 +77,7 @@ def prepare_atlas_data(
     atlas_data: TargetData,
     average_epochs=True,
     rolling_window=0.1,
+    badqual_mag_lim=20.5,
     valid_tag=DEFAULT_VALID_TAG,
     badqual_tag=DEFAULT_BADQUAL_TAG,
     ulimit_tag=DEFAULT_ULIMIT_TAG,
@@ -84,7 +86,7 @@ def prepare_atlas_data(
     # atlas_cols = ["m", "dm", "mag5sig"]
     atlas_colmap = {"m": "mag", "dm": "magerr", "mag5sig": "diffmaglim"}
 
-    atlas_lc = atlas_data.lightcurve.copy()
+    atlas_lc = atlas_data.lightcurve.copy()  # avoid stupid SettingWithCopy warning
 
     # atlas_df["snr"] = atlas_df["uJy"] / atlas_df["duJy"]
 
@@ -107,26 +109,30 @@ def prepare_atlas_data(
 
         row_list = []
         for (mjd_id, f_id), group in atlas_lc.groupby(["mjd_group", "F"]):
-            group.drop(["Obs", "F"], inplace=True, axis=1)  # so can compute mean on it.
+            group.drop(["Obs", "F"], inplace=True, axis=1)  # for computing mean
 
-            row = group.mean()
-            row["F"] = f_id
-            row["N_exp"] = len(group)
-            if len(group) == 1:
-                row_list.append(row)
-                continue
+            row = {
+                "mjd": np.mean(group["mjd"].values),
+                "F": f_id,
+                "N_exp": len(group),
+                "flux5sig": np.mean(group["flux5sig"].values),
+            }
 
-            weights = 1.0 / (group["fluxerr"] ** 2)
-            flux = np.sum(weights * group["flux"]) / np.sum(weights)
-            fluxerr = 1.0 / np.sqrt(np.sum(weights))
-            row["flux"] = flux
-            row["fluxerr"] = fluxerr
-            row["mag5sig"] = (-2.5 * np.log10(row["flux5sig"])) + 23.9
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                weights = 1.0 / (group["fluxerr"].values ** 2)
+                flux = np.sum(weights * group["flux"].values) / np.sum(weights)
+                fluxerr = 1.0 / np.sqrt(np.sum(weights))
+                row["flux"] = flux
+                row["fluxerr"] = fluxerr
+                row["mag5sig"] = (-2.5 * np.log10(row["flux5sig"])) + 23.9
             row_list.append(row)
 
         atlas_lc = pd.DataFrame(row_list)
         atlas_lc["snr"] = atlas_lc["flux"] / atlas_lc["fluxerr"]
         flux_sign = np.sign(atlas_lc["flux"])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
         atlas_lc["m"] = (-2.5 * np.log10(abs(atlas_lc["flux"])) + 23.9) * flux_sign
         atlas_lc["dm"] = dm_snr / abs(atlas_lc["snr"])
     else:
@@ -134,7 +140,9 @@ def prepare_atlas_data(
 
     atlas_lc.reset_index(drop=True, inplace=True)
 
-    tag_data = np.full(len(atlas_lc), valid_tag, dtype="object")
+    tag_data = np.full(len(atlas_lc), valid_tag, dtype="object")  # all valid to start!
+    badqual_mask = (atlas_lc["m"] > badqual_mag_lim) | (atlas_lc["snr"] < 3.0)
+    tag_data[badqual_mask] = badqual_tag
     upperlim_mask = (atlas_lc["m"] > atlas_lc["mag5sig"]) | (atlas_lc["m"] < 0)
     tag_data[upperlim_mask] = ulimit_tag
 
@@ -142,7 +150,6 @@ def prepare_atlas_data(
         atlas_lc.loc[:, "band"] = atlas_lc["F"].map(atlas_band_lookup)
         atlas_lc.loc[:, "jd"] = Time(atlas_lc["mjd"].values, format="mjd").jd
         atlas_lc.loc[:, "tag"] = pd.Series(tag_data)
-
     atlas_lc["source"] = "atlas"
 
     atlas_lc.rename(atlas_colmap, axis=1, inplace=True)
@@ -198,8 +205,15 @@ class DefaultLightcurveCompiler:
     badqual_tag = DEFAULT_BADQUAL_TAG
     ulimit_tag = DEFAULT_ULIMIT_TAG
 
-    def __init__(self, average_atlas_epochs=True, ztf_broker_priority=None, **config):
+    def __init__(
+        self,
+        atlas_badqual_mag_lim=18.0,
+        average_atlas_epochs=True,
+        ztf_broker_priority=None,
+        **config,
+    ):
         self.average_atlas_epochs = average_atlas_epochs
+        self.atlas_badqual_mag_lim = atlas_badqual_mag_lim
         self.ztf_broker_priority = ztf_broker_priority or DEFAULT_ZTF_BROKER_PRIORITY
 
         for key, val in config.items():
@@ -229,6 +243,7 @@ class DefaultLightcurveCompiler:
                 break
 
         if broker_data is not None:
+            t0 = time.perf_counter()
             try:
                 ztf_lc = prepare_ztf_data(broker_data, **tags)
                 lightcurve_dfs.append(ztf_lc)
@@ -243,7 +258,10 @@ class DefaultLightcurveCompiler:
             atlas_lc = atlas_data.lightcurve
             if (atlas_lc is not None) and (not atlas_lc.empty):
                 atlas_df = prepare_atlas_data(
-                    atlas_data, average_epochs=self.average_atlas_epochs, **tags
+                    atlas_data,
+                    average_epochs=self.average_atlas_epochs,
+                    badqual_mag_lim=self.atlas_badqual_mag_lim,
+                    **tags,
                 )
                 if not (len(atlas_df) == 0 or atlas_df.empty):
                     lightcurve_dfs.append(atlas_df)

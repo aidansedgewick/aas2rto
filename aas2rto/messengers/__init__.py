@@ -1,2 +1,3 @@
 from aas2rto.messengers.slack_messenger import SlackMessenger
 from aas2rto.messengers.telegram_messenger import TelegramMessenger
+from aas2rto.messengers.git_webpage_manager import GitWebpageManager

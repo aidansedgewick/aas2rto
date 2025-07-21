@@ -248,7 +248,7 @@ class TnsQueryManager(BaseQueryManager):
 
             tns_name = tns_row["name"]
             if curr_tns_name is not None and tns_name != curr_tns_name:
-                msg = f"{target_id} new tns match {tns_name} does not match old tns_match {curr_tns_name}"
+                msg = f"    \n{target_id} new tns match {tns_name} does not match old tns_match {curr_tns_name}"
                 logger.warning(msg)
 
             for alt_key in tns_alt_keys:
@@ -261,6 +261,7 @@ class TnsQueryManager(BaseQueryManager):
                         if curr_alt_id is not None and curr_alt_id != name:
                             msg = f"{target_id}/{tns_name}: new {alt_key}_id {name} does not match existing {curr_alt_id}"
                             logger.warning(msg)
+                        # else:
                         target.alt_ids[alt_key] = name
 
             existing_parameters = tns_data.parameters or {}

@@ -57,6 +57,8 @@ class AtlasQueryManager(BaseQueryManager):
     default_query_parameters = {
         "lightcurve_query_lookback": 30.0,
         "lightcurve_update_interval": 2.0,
+        "non_atlas_detection_time_limit": 7.0,
+        "query_candidate_faint_limit": 20.5,
         "max_submitted": 25,
         "requests_timeout": 20.0,
     }
@@ -260,7 +262,7 @@ class AtlasQueryManager(BaseQueryManager):
             elif query_status == self.QUERY_THROTTLED:
                 throttled.append(target_id)
                 self.server_throttled = True
-                msg = "\033[33;1mATLAS THROTTLED\033[0m: no more queries for now..."
+                msg = "\033[33;1mATLAS SERVER THROTTLED\033[0m: no more queries for now..."
                 logger.warning(msg)
 
         self.throttled_queries.extend(throttled)
@@ -308,29 +310,66 @@ class AtlasQueryManager(BaseQueryManager):
             ra=target.ra,
             dec=target.dec,
             mjd_min=mjd_min,
-            mjd_max=t_ref.mjd - 1e-3,
+            mjd_max=t_ref.mjd - 1e-3,  # approx one minute before t_ref
             send_email=False,
             comment=comment,
         )
 
-    def select_query_candidates(self, t_ref: Time = None):
+    def select_query_candidates(self, lc_checks=True, t_ref: Time = None):
         t_ref = t_ref or Time.now()
+
+        lc_interval = self.query_parameters["lightcurve_update_interval"]
+        faint_limit = self.query_parameters["query_candidate_faint_limit"]
+        time_limit = self.query_parameters["non_atlas_detection_time_limit"]
+
+        N_no_score = 0
+        N_too_faint = 0
+        N_irrelevant = 0
+        N_recent_update = 0
+        N_no_detections = 0
 
         score_lookup = {}
         for target_id, target in self.target_lookup.items():
-            last_score = (
-                target.get_last_score()
-            )  # no observatory means None -> "no_observatory"
+            last_score = target.get_last_score()  # for "no_observatory"
             if last_score is None:
+                N_no_score = N_no_score + 1
                 continue
             lightcurve_filepath = self.get_lightcurve_file(target_id)
             lightcurve_file_age = calc_file_age(lightcurve_filepath, t_ref)
-            if (
-                lightcurve_file_age
-                < self.query_parameters["lightcurve_update_interval"]
-            ):
+
+            if lightcurve_file_age < lc_interval:
+                N_recent_update = N_recent_update + 1
                 continue
+
+            if lc_checks:
+                lc = target.compiled_lightcurve
+                non_atlas_valid = lc[(lc["source"] != "atlas") & (lc["tag"] == "valid")]
+                if len(non_atlas_valid) == 0 or non_atlas_valid.empty:
+                    N_no_detection = N_no_detections + 1
+                    continue
+
+                last_det = non_atlas_valid.iloc[-1]
+                if last_det["mag"] > faint_limit:
+                    N_too_faint = N_too_faint + 1
+                    continue
+
+                last_det_lookback = t_ref.mjd - last_det["mjd"]
+                if last_det_lookback > time_limit:
+                    N_irrelevant = N_irrelevant + 1
+                    continue
+
             score_lookup[target_id] = last_score
+
+        msg = (
+            f"targets not considered for forced photom:\n"
+            f"    {N_no_score} with no valid score yet\n"
+            f"    {N_no_detections} with no valid detections\n"
+            f"    {N_recent_update} updated <{lc_interval:.1f} days ago\n"
+            f"    {N_too_faint} fainter than minimum {faint_limit:.2f} mag\n"
+            f"    {N_irrelevant} with last non-altas detections >{time_limit:.1f} days ago"
+        )
+        logger.info(msg)
+
         object_series = pd.Series(score_lookup)
         object_series.sort_values(inplace=True, ascending=False)
         return object_series.index

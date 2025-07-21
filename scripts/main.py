@@ -55,6 +55,8 @@ if __name__ == "__main__":
             existing_models_path=models_path, use_emcee=False, show_traceback=False
         )
         lc_plotting_function = plot_sncosmo_lightcurve
+
+        modeling_function = empty_modeling
     elif "atlas_test" in config_file.stem:
         scoring_function = example_functions.latest_flux_atlas_requirement
         modeling_function = empty_modeling

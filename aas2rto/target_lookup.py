@@ -140,8 +140,12 @@ class TargetLookup:
             if len(group) == 1:
                 continue
             targets_to_merge = []
+            logger.info(f"merge targets {group}")
             for target_id in group:
                 target_ii = self.pop(target_id)
+                if target_ii is None:
+                    logger.warning(f"WARNING: target {target_ii} is None!")
+                    continue
                 targets_to_merge.append(target_ii)
             merged = merge_targets(
                 targets_to_merge, sort=sort, warn_overwrite=warn_overwrite

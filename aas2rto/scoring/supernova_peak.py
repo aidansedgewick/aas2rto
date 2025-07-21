@@ -8,6 +8,7 @@ import numpy as np
 
 import pandas as pd
 
+from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from astroplan import Observer
@@ -63,6 +64,7 @@ def calc_color_factor(gmag, rmag):
 
 
 DEFAULT_SCORING_SOURCES = ["ztf", "yse"]
+gal_center = SkyCoord(frame="galactic", l=0.0, b=0.0, unit="deg")
 
 
 class SupernovaPeakScore:
@@ -90,6 +92,7 @@ class SupernovaPeakScore:
         min_rising_fraction: float = 0.4,
         min_detections: int = 3,
         default_color_factor: float = 0.1,
+        min_bulge_sep=10.0,
         broker_priority: tuple = DEFAULT_ZTF_BROKER_PRIORITY,
         use_compiled_lightcurve=True,
         scoring_sources: tuple = DEFAULT_SCORING_SOURCES,
@@ -102,6 +105,7 @@ class SupernovaPeakScore:
         self.characteristic_timespan = characteristic_timespan
         self.min_rising_fraction = min_rising_fraction
         self.default_color_factor = default_color_factor
+        self.min_bulge_sep = min_bulge_sep
         self.min_detections = min_detections
         self.broker_priority = tuple(broker_priority)
         self.use_compiled_lightcurve = use_compiled_lightcurve
@@ -147,6 +151,17 @@ class SupernovaPeakScore:
             )
             logger.warning(mjd_warning)
             detections = detections[detections["mjd"] < t_ref.mjd]
+
+        ###===== Is it in the bulge? =======###
+        gal_target = target.coord.galactic
+
+        bulge_sep = target.coord.separation(gal_center)
+        if bulge_sep.deg < self.min_bulge_sep:
+            reject = True
+            coord_string = f"(l,b)=({gal_target.l.deg:.1f},{gal_target.b.deg:.2f})"
+            scoring_comments.append(
+                f"REJECT: {coord_string} < {self.min_bulge_sep:.1f} from MW center"
+            )
 
         ###===== Is it bright enough =======###
         last_mag = detections["mag"].values[-1]

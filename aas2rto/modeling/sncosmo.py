@@ -92,7 +92,6 @@ class PickleableF99Dust(sncosmo.PropagationEffect):
     _maxwave = 60000.0
 
     def __init__(self, r_v=3.1):
-        raise NotImplementedError
         self._param_names = ["ebv"]
         self.param_names_latex = ["E(B-V)"]
         self._parameters = np.array([0.0])

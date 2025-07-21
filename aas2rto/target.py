@@ -105,6 +105,10 @@ class Target:
         self.score_comments = {"no_observatory": []}
         self.rank_history = {"no_observatory": []}
 
+        # Paths to scratch figures
+        self.lc_fig_path = None
+        self.vis_fig_paths = {}
+
         # Is this source known by any other names?
         self.alt_ids = alt_ids or {}
         if source is not None:
@@ -284,7 +288,7 @@ class Target:
             return result
         return result[0]  # Otherwise just return the score.
 
-    def get_info_string(self, t_ref: Time = None):
+    def get_info_lines(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
         t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
 
@@ -294,7 +298,7 @@ class Target:
         if broker_name is not None:
             broker_lines = [
                 f"    FINK: fink-portal.org/{self.target_id}",
-                f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.target_id},"
+                f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.target_id}",
                 f"    ALeRCE: alerce.online/object/{self.target_id}",
             ]
             info_lines.extend(broker_lines)
@@ -354,7 +358,10 @@ class Target:
                     + " detections"
                 )
                 info_lines.append(l)
+        return info_lines
 
+    def get_info_string(self, t_ref: Time = None):
+        info_lines = self.get_info_lines(t_ref=t_ref)
         return "\n".join(info_lines)
 
     def write_comments(self, outdir: Path, t_ref: Time = None):
