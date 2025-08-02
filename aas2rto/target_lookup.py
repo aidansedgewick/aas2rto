@@ -76,13 +76,15 @@ class TargetLookup:
         target = self.lookup.pop(base_id)
 
         self.id_mapping.pop(base_id)  # also remove the base id.
+        removed_ids = []
         for source_key, alt_id in target.alt_ids.items():
+            removed_ids.append(alt_id)
             if alt_id == base_id:
                 continue  # we have already removed it.
             base_id_from_alt = self.id_mapping.pop(alt_id, None)
-            if base_id_from_alt is None:
+            if base_id_from_alt is None and alt_id not in removed_ids:
                 msg = f"alt_id '{alt_id}' for base_id={base_id} not in id_mapping"
-                logger.warn(msg)
+                logger.warning(msg)
         return target
 
     def keys(self):
@@ -108,6 +110,20 @@ class TargetLookup:
 
     def update_target_id_mappings(self):
         for target_id, target in self.lookup.items():
+            self.update_id_mapping_single_target(target)
+
+    def update_to_preferred_target_id(self, preferred_alt="tns"):
+        to_modify = {}
+        for target_id, target in self.lookup.items():
+            new_id = target.alt_ids.get(preferred_alt, None)
+            if new_id is None or target_id == new_id:
+                continue
+            to_modify[target_id] = new_id
+
+        for old_id, new_id in to_modify.items():
+            target = self.pop(old_id)
+            target.target_id = new_id
+            self.lookup[new_id] = target
             self.update_id_mapping_single_target(target)
 
     def consolidate_targets(

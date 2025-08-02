@@ -1,5 +1,6 @@
 import copy
 import time
+import warnings
 from logging import getLogger
 
 import numpy as np
@@ -53,11 +54,10 @@ def prepare_ztf_data(
             ztf_lc = pd.concat(data_list, ignore_index=True)
         else:
             ztf_lc = ztf_data.lightcurve
-
-        if len(detections) == 0:
-            print(ztf_data.lightcurve[avail_cols])
     else:
-        logger.warning(f"")
+        logger.warning(
+            f"in prepare_ztf_data: ztf_data should be type TargetData, not {type(ztf_data)}"
+        )
         ztf_lc = ztf_data
 
     ztf_lc["source"] = "ztf"
@@ -116,18 +116,22 @@ def prepare_atlas_data(
                 row_list.append(row)
                 continue
 
-            weights = 1.0 / (group["fluxerr"] ** 2)
-            flux = np.sum(weights * group["flux"]) / np.sum(weights)
-            fluxerr = 1.0 / np.sqrt(np.sum(weights))
-            row["flux"] = flux
-            row["fluxerr"] = fluxerr
-            row["mag5sig"] = (-2.5 * np.log10(row["flux5sig"])) + 23.9
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                weights = 1.0 / (group["fluxerr"] ** 2)
+                flux = np.sum(weights * group["flux"]) / np.sum(weights)
+                fluxerr = 1.0 / np.sqrt(np.sum(weights))
+                row["flux"] = flux
+                row["fluxerr"] = fluxerr
+                row["mag5sig"] = (-2.5 * np.log10(row["flux5sig"])) + 23.9
             row_list.append(row)
 
         atlas_lc = pd.DataFrame(row_list)
         atlas_lc["snr"] = atlas_lc["flux"] / atlas_lc["fluxerr"]
         flux_sign = np.sign(atlas_lc["flux"])
-        atlas_lc["m"] = (-2.5 * np.log10(abs(atlas_lc["flux"])) + 23.9) * flux_sign
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            atlas_lc["m"] = (-2.5 * np.log10(abs(atlas_lc["flux"])) + 23.9) * flux_sign
         atlas_lc["dm"] = dm_snr / abs(atlas_lc["snr"])
     else:
         atlas_lc["N_exp"] = 1
@@ -166,8 +170,11 @@ def prepare_yse_data(
     badqual_tag=DEFAULT_BADQUAL_TAG,
     ulimit_tag=DEFAULT_ULIMIT_TAG,
 ):
+
     ps1_lookup = {band: f"ps1::{band}" for band in "w g r i z y".split()}
-    swift_lookup = {band: f"uvot::{band}" for band in "b u uvm1 uvw1 uvw2 v".split()}
+    swift_lookup = {
+        band.upper(): f"uvot::{band}" for band in "b u uvm1 uvm2 uvw1 uvw2 v".split()
+    }
     atlas_lookup = {"orange-ATLAS": "atlaso", "cyan-ATLAS": "atlasc"}
     ztf_lookup = {"g-ZTF": "ztfg", "r-ZTF": "ztfr", "i-ZTF": "ztfi"}
     yse_band_lookup = {**ps1_lookup, **swift_lookup, **atlas_lookup, **ztf_lookup}
@@ -180,6 +187,11 @@ def prepare_yse_data(
     }
 
     yse_lc = yse_data.lightcurve.copy()
+
+    if "jd" not in yse_lc:
+        yse_lc["jd"] = Time(yse_lc["mjd"], format="mjd").jd1
+    if "tag" not in yse_lc:
+        yse_lc["tag"] = valid_tag
     yse_lc["band"] = yse_lc["flt"].map(yse_band_lookup)
     yse_lc["source"] = yse_lc["instrument"].map(source_lookup)
 
@@ -262,4 +274,8 @@ class DefaultLightcurveCompiler:
         if len(lightcurve_dfs) > 0:
             compiled_lightcurve = pd.concat(lightcurve_dfs, ignore_index=True)
             compiled_lightcurve.sort_values("mjd", inplace=True, ignore_index=True)
+
+            if any(pd.isna(compiled_lightcurve["band"])):
+                logger.warning(f"band 'NaN' in {target_id} compiled_lightcurve")
+
         return compiled_lightcurve

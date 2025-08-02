@@ -18,6 +18,7 @@ logger = getLogger(__name__.split(".")[-1])
 
 default_dt = 0.5 / 24.0
 default_forecast = 1.0
+default_backcast = 0.0
 
 
 def observatory_tonight(
@@ -55,7 +56,6 @@ def get_next_valid_sunset_sunrise(
 
     time_to_sunrise = sunrise - t_ref
     if time_to_sunrise < delta_t:
-        print("doing the next thing")
         invalid_sunset = sunset
         invalid_sunrise = sunrise
         t_shift = sunrise + 2.0 * delta_t
@@ -121,17 +121,31 @@ class ObservatoryInfo:
         t_ref: Time = None,
         t_grid: Time = None,
         forecast: float = None,
+        backcast: float = None,
         dt: float = None,
     ):
+        """
+        Parameters
+        ----------
+        observatory : astroplan.Observer
+        horizon : astropy.quantity, default=-18.0 * u.deg
+        t_ref: astropy.Time, default=now
+
+
+        """
+
         if t_ref is None:
             logger.warning("t_ref is None! Defaulting to Time.now()")
         t_ref = t_ref or Time.now()
 
         if t_grid is None:
-            dt = dt or default_dt
-            forecast = forecast or default_forecast
+            if dt is None:
+                logger.warning(f"should not pass dt as None! set as {default_dt}")
+            dt = dt or default_dt  # sometimes dt is explitly passed as None ?!
             N_samples = int(round((1 / dt))) + 1  # for endpoint
-            t_grid = t_ref + np.linspace(0, forecast, N_samples) * u.day
+            forecast = forecast or default_forecast
+            backcast = backcast or default_backcast
+            t_grid = t_ref + np.linspace(-backcast, forecast, N_samples) * u.day
         else:
             if not isinstance(t_grid, Time):
                 raise TypeError(f"t_grid should be Time, not {type(t_grid)}")

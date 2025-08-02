@@ -2,6 +2,7 @@ import copy
 import getpass
 import io
 import requests
+import shutil
 import time
 import traceback
 import yaml
@@ -57,8 +58,12 @@ class AtlasQueryManager(BaseQueryManager):
     default_query_parameters = {
         "lightcurve_query_lookback": 30.0,
         "lightcurve_update_interval": 2.0,
-        "max_submitted": 25,
-        "requests_timeout": 20.0,
+        "max_submitted": 20,
+        "max_query_time": 180.0,
+        "timeout": 20.0,
+        "submit_faint_limit": 20.0,
+        "submit_stale_time": 7.0,
+        "alt_id_priority": ("tns", "lsst", "ztf", "yse", "ls4"),
     }
     expected_config_params = ("query_parameters", "token", "project_identifier")
 
@@ -116,6 +121,9 @@ class AtlasQueryManager(BaseQueryManager):
     ):
         t_ref = t_ref or Time.now()
 
+        timeout = None  # self.query_parameters["timeout"]
+        max_query_time = self.query_parameters["max_query_time"]
+
         finished_queries = []
         ongoing_queries = []
 
@@ -123,11 +131,21 @@ class AtlasQueryManager(BaseQueryManager):
 
         next_url = AtlasQuery.atlas_default_queue_url
 
+        start_time = time.perf_counter()
         while next_url is not None:
+            query_time = time.perf_counter() - start_time
+            if query_time > max_query_time:
+                msg = (
+                    f"Don't try next page url. "
+                    f"Break as query time {query_time:.1f}s > max {max_query_time:.1f}s"
+                )
+                logger.warning(msg)
+                break
+
             ## Loop through "pages" of results, with N results per page.
             try:
                 task_response = AtlasQuery.get_existing_queries(
-                    headers=self.atlas_headers, url=next_url
+                    headers=self.atlas_headers, url=next_url, timeout=timeout
                 )
             except Exception as e:
                 logger.warning("\033[33mget_existing_queries failed.\033[0m")
@@ -136,6 +154,15 @@ class AtlasQueryManager(BaseQueryManager):
                 break
             task_results = task_response["results"]
             for task_result in task_results[::-1]:
+                query_time = time.perf_counter() - start_time
+                if query_time > max_query_time:
+                    msg = (
+                        f"Stop requesting finished queries for now. "
+                        f"Break as query time {query_time:.1f}s > max {max_query_time:.1f}s"
+                    )
+                    logger.warning(msg)
+                    break
+
                 submit_comment = task_result.get("comment", None)
                 if submit_comment is None:
                     logger.warning("existing query has no comment")
@@ -150,7 +177,12 @@ class AtlasQueryManager(BaseQueryManager):
                     continue
 
                 task_url = task_result.get("url", None)
-                status = self.recover_query_data(target_id, task_url)
+                try:
+                    status = self.recover_query_data(target_id, task_url)
+                except requests.exceptions.ReadTimeout as e:
+                    logger.error("Timeout: break")
+                    break
+
                 if status == self.QUERY_SUBMITTED:
                     self.submitted_queries[target_id] = task_url
                     ongoing_queries.append(target_id)
@@ -173,8 +205,14 @@ class AtlasQueryManager(BaseQueryManager):
     def recover_query_data(self, target_id, task_url, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
+        timeout = self.query_parameters["timeout"]
+        max_query_time = self.query_parameters["max_query_time"]
+
+        start_time = time.perf_counter()
         with requests.Session() as s:
-            query_response = s.get(task_url, headers=self.atlas_headers)
+            query_response = s.get(
+                task_url, headers=self.atlas_headers, timeout=timeout
+            )
             query_data = query_response.json()
 
             # Is the query finished
@@ -234,7 +272,16 @@ class AtlasQueryManager(BaseQueryManager):
         self.local_throttled = False
         self.server_throttled = False
 
+        max_query_time = self.query_parameters["max_query_time"]
+
+        start_time = time.perf_counter()
         for target_id in target_id_list:
+            query_time = time.perf_counter() - start_time
+            if query_time > max_query_time:
+                msg = f"Querying time {query_time:.1f}s > max allowed {max_query_time:.1f}s. Break for now."
+                logger.warning(msg)
+                break
+
             if target_id in self.submitted_queries:
                 continue  # Already submitted
             if target_id in self.throttled_queries:
@@ -254,7 +301,11 @@ class AtlasQueryManager(BaseQueryManager):
                 throttled.append(target_id)
                 continue
 
-            query_status = self.submit_query(target, t_ref=t_ref)
+            try:
+                query_status = self.submit_query(target, t_ref=t_ref)
+            except requests.exceptions.ReadTimeout as e:
+                logger.info(f"break after {target.target_id} query submit ReadTimeout")
+                break
             if query_status == self.QUERY_SUBMITTED:
                 submitted.append(target_id)
             elif query_status == self.QUERY_THROTTLED:
@@ -270,6 +321,8 @@ class AtlasQueryManager(BaseQueryManager):
     def submit_query(self, target: Target, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
+        timeout = None  # self.query_parameters["timeout"]
+
         query_data = self.prepare_query_data(target, t_ref=t_ref)
         if query_data.get("ra", None) is None or query_data.get("dec", None) is None:
             logger.warning(
@@ -277,7 +330,9 @@ class AtlasQueryManager(BaseQueryManager):
             )
             return self.QUERY_BAD_REQUEST
 
-        res = AtlasQuery.atlas_query(query_data, headers=self.atlas_headers)
+        res = AtlasQuery.atlas_query(
+            query_data, headers=self.atlas_headers, timeout=timeout
+        )
         if res.status_code == self.QUERY_SUBMITTED:
             task_url = res.json()["url"]
             self.submitted_queries[target.target_id] = task_url
@@ -316,30 +371,73 @@ class AtlasQueryManager(BaseQueryManager):
     def select_query_candidates(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
+        too_faint = 0
+        too_stale = 0
+        no_score = 0
+        recent_updates = 0
+
+        faint_limit = self.query_parameters["submit_faint_limit"]
+        stale_time = self.query_parameters["submit_stale_time"]
+        update_interval = self.query_parameters["lightcurve_update_interval"]
+
         score_lookup = {}
         for target_id, target in self.target_lookup.items():
             last_score = (
                 target.get_last_score()
             )  # no observatory means None -> "no_observatory"
             if last_score is None:
+                no_score = no_score + 1
                 continue
             lightcurve_filepath = self.get_lightcurve_file(target_id)
             lightcurve_file_age = calc_file_age(lightcurve_filepath, t_ref)
-            if (
-                lightcurve_file_age
-                < self.query_parameters["lightcurve_update_interval"]
-            ):
+            if lightcurve_file_age < update_interval:
+                recent_updates = recent_updates + 1
                 continue
+
+            lc = target.compiled_lightcurve
+            if lc is None:
+                continue
+            valid_lc = lc[lc["tag"] == "valid"]
+            if valid_lc["mag"].min() > faint_limit:
+                too_faint = too_faint + 1
+                continue
+            delta_t = t_ref.mjd - valid_lc.iloc[-1]["mjd"]
+            if delta_t > stale_time:
+                too_stale = too_stale + 1
+                continue
+
             score_lookup[target_id] = last_score
+
+        msg = (
+            f"Targets not considered:\n"
+            f"    {no_score} with no valid score\n"
+            f"    {recent_updates} updated <{update_interval:.1f}d ago\n"
+            f"    {too_faint} with no detections <{faint_limit:.1f}mag\n"
+            f"    {too_stale} with no detections <{stale_time:.1f}d ago"
+        )
+        logger.info(msg)
+
         object_series = pd.Series(score_lookup)
         object_series.sort_values(inplace=True, ascending=False)
+        logger.info(f"{len(object_series)} suitable targets")
         return object_series.index
 
     def load_single_lightcurve(self, target_id: str, t_ref=None):
         # logger.debug(f"loading {target_id}")
-        lightcurve_filepath = self.get_lightcurve_file(target_id)
-        if not lightcurve_filepath.exists():
-            logger.debug(f"{target_id} is missing lightcurve")
+
+        target = self.target_lookup[target_id]
+
+        lightcurve_filepath = None
+        for alt_key in self.query_parameters["alt_id_priority"]:
+            alt_id = target.alt_ids.get(alt_key, None)
+            if alt_id is not None:
+                test_filepath = self.get_lightcurve_file(alt_id)
+                if test_filepath.exists():
+                    lightcurve_filepath = test_filepath
+                    break
+
+        if lightcurve_filepath is None:
+            logger.debug(f"{target_id} is missing lightcurve ")
             return None
         lightcurve = pd.read_csv(lightcurve_filepath)
         if lightcurve.empty:
@@ -347,8 +445,38 @@ class AtlasQueryManager(BaseQueryManager):
             return None
         return lightcurve
 
+    def update_lightcurve_filenames(self):
+        alt_id_priority = self.default_query_parameters["alt_id_priority"]
+
+        t_start = time.perf_counter()
+        renamed = 0
+        skipped = 0
+        missing = 0
+        for target_id, target in self.target_lookup.items():
+            best_id = None
+            for alt_key in alt_id_priority:
+                alt_id = target.alt_ids.get(alt_key, None)
+                if alt_id is None:
+                    continue
+                if best_id is None:
+                    best_id = alt_id
+                lc_filepath = self.get_lightcurve_file(alt_id)
+                if lc_filepath.exists():
+                    best_filepath = self.get_lightcurve_file(best_id)
+                    if alt_id == best_id:
+                        skipped = skipped + 1
+                    else:
+                        shutil.move(lc_filepath, best_filepath)
+                        renamed = renamed + 1
+                    break
+        t_end = time.perf_counter()
+
+        logger.info(f"rename {renamed} LCs in {t_end-t_start:.1f}s (skipped {skipped})")
+
     def perform_all_tasks(self, startup=False, t_ref: Time = None):
         t_ref = t_ref or Time.now()
+
+        self.update_lightcurve_filenames()
 
         if startup:
             logger.info("perform no ATLAS queries on iter 0: only load existing")
@@ -356,17 +484,24 @@ class AtlasQueryManager(BaseQueryManager):
             return
 
         try:
-            self.recover_finished_queries(t_ref=t_ref)
-            # also populates "submitted queries"
+            self.recover_finished_queries(t_ref=t_ref)  # and popul. submitted_queries
         except requests.exceptions.JSONDecodeError as e:
+            return e
+        except requests.exceptions.Timeout as e:
             return e
 
         try:
             self.retry_throttled_queries(t_ref=t_ref)
         except ConnectionError as e:
             return e
+        except requests.exceptions.Timeout as e:
+            return e
+
         query_candidates = self.select_query_candidates(t_ref=t_ref)
-        self.submit_new_queries(query_candidates, t_ref=t_ref)
+        try:
+            self.submit_new_queries(query_candidates, t_ref=t_ref)
+        except requests.exceptions.Timeout as e:
+            return e
         # self.recover_finished_queries(t_ref=t_ref)
 
         self.load_target_lightcurves(t_ref=t_ref, flag_only_existing=False)
@@ -376,6 +511,7 @@ class AtlasQueryManager(BaseQueryManager):
 class AtlasQuery:
     atlas_base_url = "https://fallingstar-data.com/forcedphot"
     atlas_default_queue_url = f"{atlas_base_url}/queue/"
+    atlas_default_timeout = 90.0
 
     def __init__(self):
         pass
@@ -393,15 +529,17 @@ class AtlasQuery:
             print(response.json())
 
     @classmethod
-    def atlas_query(cls, data, headers):
-        res = requests.post(url=cls.atlas_default_queue_url, headers=headers, data=data)
+    def atlas_query(cls, data, headers, timeout=atlas_default_timeout):
+        res = requests.post(
+            url=cls.atlas_default_queue_url, headers=headers, data=data, timeout=timeout
+        )
         return res
 
     @classmethod
-    def get_existing_queries(cls, headers, url=None):
+    def get_existing_queries(cls, headers, url=None, timeout=atlas_default_timeout):
         if url is None:
             url = cls.atlas_default_queue_url
-        res = requests.get(url=url, headers=headers)
+        res = requests.get(url=url, headers=headers, timeout=timeout)
         return res.json()
 
     @staticmethod

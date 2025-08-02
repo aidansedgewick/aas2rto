@@ -40,9 +40,6 @@ def bazin_log_likelihood(params, t, fl_obs, fl_err):
     fl_diff = fl_obs - fl_model
     ll = -0.5 * np.sum(fl_diff**2 / sigma2)
     if not np.isfinite(ll):
-        print(params)
-        print(fl_model)
-        print(fl_obs)
         return -np.inf
     return ll
 
@@ -113,6 +110,8 @@ def fit_bazin(
 
     fl_obs = 10 ** (-0.4 * (mag - 8.9))
     fl_err = 1.09 / magerr
+
+    print(t_obs)
 
     t_offset = t_obs[0]
     t_shift = t_obs - t_offset

@@ -1,3 +1,4 @@
+import json
 import yaml
 from typing import List
 
@@ -863,7 +864,7 @@ class BasicModel:
         self.mag = mag + mag_offset
 
 
-def basic_modeler(target: Target):
+def basic_modeler(target: Target, t_ref: Time = None):
     detections = target.target_data["ztf"].detections
     return BasicModel(detections["mag"].iloc[-1])
 
@@ -872,7 +873,7 @@ class BasicModelBuilder:
     def __init__(self, mag_offset=0.0):
         self.mag_offset = mag_offset
 
-    def __call__(self, target: Target):
+    def __call__(self, target: Target, t_ref: Time = None):
         detections = target.target_data["ztf"].detections
         return BasicModel(detections["mag"].iloc[-1], mag_offset=self.mag_offset)
 
@@ -882,7 +883,7 @@ class AnotherModel:
         self.flux = 3631.0 * 10 ** (-0.4 * mag)
 
 
-def other_modeler(target: Target):
+def other_modeler(target: Target, t_ref: Time = None):
     detections = target.target_data["ztf"].detections
     if detections["mag"].iloc[-1] > 18.7:
         raise ValueError()  # Uh-oh, we've failed! for T105, T106
@@ -1369,26 +1370,27 @@ class Test__ExisitingTargets:
         selector.write_existing_target_list(t_ref=t_ref)
 
         exp_targets_path = (
-            selector.project_path / "existing_targets/recover_230225_000000.csv"
+            selector.project_path / "existing_targets/recover_230225_000000.json"
         )
         assert exp_targets_path.exists()
 
-        result = pd.read_csv(exp_targets_path)
-        assert set(result.columns) == set(["target_id", "ra", "dec", "base_score"])
+        with open(exp_targets_path) as f:
+            result = json.load(f)
 
-        assert set(result["target_id"]) == set(
+        assert isinstance(result, dict)
+
+        assert set(result.keys()) == set(
             ["T101", "T102", "T103", "T104", "T105", "T106"]
         )
 
-        result.set_index("target_id", inplace=True)
-        assert np.isclose(result.loc["T101"].ra, 15.0)
-        assert np.isclose(result.loc["T102"].ra, 30.0)
-        assert np.isclose(result.loc["T103"].ra, 45.0)
-        assert np.isclose(result.loc["T104"].ra, 60.0)
-        assert np.isclose(result.loc["T105"].ra, 75.0)
-        assert np.isclose(result.loc["T106"].ra, 90.0)
+        assert np.isclose(result["T101"]["ra"], 15.0)
+        assert np.isclose(result["T102"]["ra"], 30.0)
+        assert np.isclose(result["T103"]["ra"], 45.0)
+        assert np.isclose(result["T104"]["ra"], 60.0)
+        assert np.isclose(result["T105"]["ra"], 75.0)
+        assert np.isclose(result["T106"]["ra"], 90.0)
 
-        assert np.allclose(result["dec"], 30.0)
+        assert np.allclose([data_ii["dec"] for t_id, data_ii in result.items()], 30.0)
 
     def test__no_targets_to_write(self, selector):
         assert len(selector.target_lookup) == 0
@@ -1396,7 +1398,7 @@ class Test__ExisitingTargets:
 
         selector.write_existing_target_list(t_ref=t_ref)
 
-        existing_names = [f.name for f in selector.existing_targets_path.glob("*.csv")]
+        existing_names = [f.name for f in selector.existing_targets_path.glob("*.json")]
         assert set(existing_names) == set()  # No targets written!
 
     def test__write_removes_old_files(
@@ -1405,7 +1407,7 @@ class Test__ExisitingTargets:
         selector = selector_with_targets
         selector.selector_parameters["retained_recovery_files"] = 2
 
-        existing_names = [f.name for f in selector.existing_targets_path.glob("*.csv")]
+        existing_names = [f.name for f in selector.existing_targets_path.glob("*.json")]
         assert set(existing_names) == set()
 
         t1 = Time(60000.0, format="mjd")
@@ -1414,14 +1416,14 @@ class Test__ExisitingTargets:
 
         selector.write_existing_target_list(t_ref=t1)
 
-        existing_names = [f.name for f in selector.existing_targets_path.glob("*.csv")]
-        expected_names = ["recover_230225_000000.csv"]
+        existing_names = [f.name for f in selector.existing_targets_path.glob("*.json")]
+        expected_names = ["recover_230225_000000.json"]
         assert set(existing_names) == set(expected_names)
 
         selector.write_existing_target_list(t_ref=t2)
 
-        existing_names = [f.name for f in selector.existing_targets_path.glob("*.csv")]
-        expected_names = ["recover_230225_000000.csv", "recover_230226_000000.csv"]
+        existing_names = [f.name for f in selector.existing_targets_path.glob("*.json")]
+        expected_names = ["recover_230225_000000.json", "recover_230226_000000.json"]
         assert set(existing_names) == set(expected_names)
 
         for target in extra_targets:
@@ -1429,26 +1431,26 @@ class Test__ExisitingTargets:
             selector.add_target(target)
         selector.write_existing_target_list(t_ref=t3)
 
-        existing_names = [f.name for f in selector.existing_targets_path.glob("*.csv")]
-        expected_names = ["recover_230226_000000.csv", "recover_230227_000000.csv"]
+        existing_names = [f.name for f in selector.existing_targets_path.glob("*.json")]
+        expected_names = ["recover_230226_000000.json", "recover_230227_000000.json"]
         # 25th Feb file has been removed!
         assert set(existing_names) == set(expected_names)
 
-        result = pd.read_csv(
-            selector.existing_targets_path / "recover_230227_000000.csv"
+        with open(selector.existing_targets_path / "recover_230227_000000.json") as f:
+            result = json.load(f)
+
+        assert set(result["T101"].keys()) == set(
+            ["target_id", "ra", "dec", "base_score", "alt_ids"]
         )
 
-        assert set(result.columns) == set(["target_id", "ra", "dec", "base_score"])
-
         exp_target_ids = [f"T{n}" for n in range(101, 111)]
-        assert set(result["target_id"]) == set(exp_target_ids)
+        assert set(result.keys()) == set(exp_target_ids)
 
-        result.set_index("target_id", inplace=True)
-        assert np.isclose(result.loc["T106"].base_score, 1.0)
-        assert np.isclose(result.loc["T107"].base_score, 1000.0)
-        assert np.isclose(result.loc["T108"].base_score, 1000.0)
+        assert np.isclose(result["T106"]["base_score"], 1.0)
+        assert np.isclose(result["T107"]["base_score"], 1000.0)
+        assert np.isclose(result["T108"]["base_score"], 1000.0)
 
-    def test__read_existing_target_files(self, selector: TargetSelector):
+    def test__read_latest_existing_target_file(self, selector: TargetSelector):
         df = pd.DataFrame(
             [
                 ("T201", 90.0, 45.0, 50.0),
@@ -1457,13 +1459,15 @@ class Test__ExisitingTargets:
             ],
             columns="target_id ra dec base_score".split(),
         )
+        df.set_index("target_id", inplace=True, drop=False)
 
         early_df = df.iloc[:-1]
         assert set(early_df["target_id"]) == set(["T201", "T202"])
-        early_df.to_csv(
-            selector.existing_targets_path / "recover_230225.csv", index=False
-        )
-        df.to_csv(selector.existing_targets_path / "recover_230226.csv", index=False)
+
+        with open(selector.existing_targets_path / "recover_230225.json", "w+") as f:
+            json.dump(early_df.to_dict("index"), f)
+        with open(selector.existing_targets_path / "recover_230226.json", "w+") as f:
+            json.dump(df.to_dict("index"), f)
 
         selector.recover_existing_targets()
 
@@ -1483,15 +1487,16 @@ class Test__ExisitingTargets:
             ],
             columns="target_id ra dec base_score".split(),
         )
+        df.set_index("target_id", inplace=True, drop=False)
 
         early_df = df.iloc[:-1]
         assert set(early_df["target_id"]) == set(["T201", "T202"])
-        early_df.to_csv(
-            selector.existing_targets_path / "recover_230225.csv", index=False
-        )
-        df.to_csv(selector.existing_targets_path / "recover_230226.csv", index=False)
+        with open(selector.existing_targets_path / "recover_230225.json", "w+") as f:
+            json.dump(early_df.to_dict("index"), f)
+        with open(selector.existing_targets_path / "recover_230226.json", "w+") as f:
+            json.dump(df.to_dict("index"), f)
 
-        recovery_file = selector.existing_targets_path / "recover_230225.csv"
+        recovery_file = selector.existing_targets_path / "recover_230225.json"
 
         selector.recover_existing_targets(existing_targets_file=recovery_file)
 
@@ -1620,7 +1625,9 @@ class NewQueryManager:
     def __init__(self):
         self.tasks_performed = False
 
-    def perform_all_tasks(self, t_ref=None):
+    def perform_all_tasks(self, startup=False, t_ref=None):
+
+        self.startup = startup
         self.tasks_performed = True
 
 
@@ -1663,6 +1670,7 @@ class Test__LoopingFunctions:
             t_ref=t_ref,
         )
         assert selector.query_managers["new_qm"].tasks_performed is True
+        assert selector.query_managers["new_qm"].startup is False
 
         for target_id, target in selector.target_lookup.items():
             # Scored once by pre-check, and then once in evaluate
@@ -1690,7 +1698,9 @@ class Test__LoopingFunctions:
         assert len([f for f in lasilla_plots_path.glob("*.png")]) == 8
         # 8 because 4 lc fig and 4 observing charts (whereas none for no_obs!)
 
-        exp_recovery_path = selector.existing_targets_path / "recover_230312_000000.csv"
+        exp_recovery_path = (
+            selector.existing_targets_path / "recover_230312_000000.json"
+        )
         assert exp_recovery_path.exists()  # MJD = 60015.
 
         # score_hist_path = selector.existing_targets_path / "score_history"

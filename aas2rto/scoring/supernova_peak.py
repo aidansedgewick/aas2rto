@@ -8,6 +8,7 @@ import numpy as np
 
 import pandas as pd
 
+from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from astroplan import Observer
@@ -63,6 +64,8 @@ def calc_color_factor(gmag, rmag):
 
 
 DEFAULT_SCORING_SOURCES = ["ztf", "yse"]
+DEFAULT_SCORING_BANDS = "ztfg ztfr ztfi".split() + "ps1::g ps1::r ps1::i ps1::z".split()
+gal_center = SkyCoord(frame="galactic", l=0.0, b=0.0, unit="deg")
 
 
 class SupernovaPeakScore:
@@ -89,10 +92,15 @@ class SupernovaPeakScore:
         characteristic_timespan: float = 20.0,
         min_rising_fraction: float = 0.4,
         min_detections: int = 3,
+        min_lc_length: float = 0.5,
         default_color_factor: float = 0.1,
-        broker_priority: tuple = DEFAULT_ZTF_BROKER_PRIORITY,
+        max_chisq_nu: float = 10.0,
+        min_bulge_sep=15.0,
+        min_gal_lat=5.0,
+        # broker_priority: tuple = DEFAULT_ZTF_BROKER_PRIORITY,
         use_compiled_lightcurve=True,
         scoring_sources: tuple = DEFAULT_SCORING_SOURCES,
+        # scoring_bands: tuple = DEFAULT_SCORING_BANDS,
     ):
         self.__name__ = "supernova_peak_score"  # self.__class__.__name__
 
@@ -101,11 +109,16 @@ class SupernovaPeakScore:
         self.max_timespan = max_timespan
         self.characteristic_timespan = characteristic_timespan
         self.min_rising_fraction = min_rising_fraction
-        self.default_color_factor = default_color_factor
         self.min_detections = min_detections
-        self.broker_priority = tuple(broker_priority)
+        self.min_lc_length = min_lc_length
+        self.default_color_factor = default_color_factor
+        self.max_chisq_nu = max_chisq_nu
+        self.min_bulge_sep = min_bulge_sep
+        self.min_gal_lat = min_gal_lat
+        # self.broker_priority = tuple(broker_priority)
         self.use_compiled_lightcurve = use_compiled_lightcurve
         self.scoring_sources = scoring_sources
+        # self.scoring_bands = scoring_bands
 
     def __call__(self, target: Target, t_ref: Time) -> Tuple[float, List]:
         # t_ref = t_ref or Time.now()
@@ -148,6 +161,23 @@ class SupernovaPeakScore:
             logger.warning(mjd_warning)
             detections = detections[detections["mjd"] < t_ref.mjd]
 
+        ###===== Is it in the bulge or disc? =======###
+        gal_target = target.coord.galactic
+
+        bulge_sep = target.coord.separation(gal_center)
+        if bulge_sep.deg < self.min_bulge_sep:
+            reject = True
+            coord_string = f"(l,b)=({gal_target.l.deg:.1f},{gal_target.b.deg:.2f})"
+            scoring_comments.append(
+                f"REJECT: {coord_string} < {self.min_bulge_sep:.1f} from MW center"
+            )
+        if abs(gal_target.b.deg) < self.min_gal_lat:
+            reject = True
+            coord_string = f"(l,b)=({gal_target.l.deg:.1f},{gal_target.b.deg:.2f})"
+            scoring_comments.append(
+                f"REJECT: {coord_string}: abs(b) < {self.min_gal_lat:.1f} - in the disc!"
+            )
+
         ###===== Is it bright enough =======###
         last_mag = detections["mag"].values[-1]
         last_band = detections["band"].values[-1]
@@ -170,13 +200,18 @@ class SupernovaPeakScore:
             reject = True
             reject_comments.append(f"REJECT: target is {timespan:.2f} days old")
 
-        ##==== or much too young!? ====##
+        ##===== or much too young!? =====##
         if timespan < self.min_timespan:
             exclude = True
-            exclude_comment = (
-                f"exclude: timespan {timespan:.2f}<{self.min_timespan:.2f} (min)"
-            )
-            exclude_comments.append(exclude_comment)
+            comm = f"exclude: timespan {timespan:.2f}<{self.min_timespan:.2f} (min)"
+            exclude_comments.append(comm)
+
+        ##===== Is the target only a single night? =====##
+        lc_length = detections["mjd"].max() - detections["mjd"].min()
+        if lc_length < self.min_lc_length:
+            exclude = True
+            comm = f"exclude as lc length {lc_length:.2f} < {self.min_lc_length} (min)"
+            exclude_comments.append(comm)
 
         ###===== Is the target still rising ======###
         unique_bands = detections["band"].unique()
@@ -191,6 +226,9 @@ class SupernovaPeakScore:
             # band_comm = f"f_rising={rising_fraction_band:.2f} for {len(band_detections)} band {band} obs"
             # scoring_comments.append(band_comm)
 
+            if band_detections["source"].iloc[0] not in self.scoring_sources:
+                continue
+
             f_rising_data[band] = rising_fraction_band
             factors[f"rising_fraction_{band}"] = rising_fraction_band
             if rising_fraction_band < self.min_rising_fraction:
@@ -199,10 +237,12 @@ class SupernovaPeakScore:
                 # comm = f"REJECT: rising_fraction {band} is {rising_fraction_band:.2f} < {self.min_rising_fraction}"
                 # reject_comments.append(comm)
 
-        f_rising_comm = "f_rise:" + " ".join(
-            f"{b}:{f:.2f}" for b, f in f_rising_data.items()
-        )
-        scoring_comments.append(f_rising_comm)
+        f_rising_strings = [f"{b}={f:.2f}" for b, f in f_rising_data.items()]
+
+        n_items = 4
+        for ii in range(0, len(f_rising_strings), n_items):
+            f_rising_comm = "f_rise:" + " ".join(f_rising_strings[ii : ii + n_items])
+            scoring_comments.append(f_rising_comm)
 
         ###===== How many observations =====###
         if len(detections) < self.min_detections:
@@ -231,6 +271,41 @@ class SupernovaPeakScore:
                 pdict = {k: v for k, v in zip(vparam_names, median_params)}
                 sncosmo_model.update(pdict)
 
+            ###===== chisq
+            try:
+                model_result = getattr(model, "result", {})
+            except Exception as e:
+                model_result = None
+
+            chisq_nu = None
+            if model_result is not None:
+                chisq = model_result.get("chisq", np.nan)
+                ndof = model_result.get("ndof", np.nan)
+                if (not np.isfinite(chisq)) or (not np.isfinite(ndof)):
+                    scoring_comments.append(f"chisq={chisq:.2f} and ndof={ndof}")
+                else:
+                    try:
+                        chisq_nu = chisq / ndof
+                        msg = f"model chisq={chisq:.3f} with ndof={ndof}"
+                        scoring_comments.append(msg)
+                    except ZeroDivisionError as e:
+                        scoring_comments.append(f"model has ndof=0")
+                    # TODO how to use chisq_nu properly?
+
+            if chisq_nu is not None and chisq_nu > 0:
+                if chisq_nu < 5 and (1.0 / chisq_nu < 5):
+                    chisq_factor = 1.0
+                elif chisq_nu < 10 and (1.0 / chisq_nu < 10.0):
+                    chisq_factor = 0.5
+                else:
+                    chisq_factor = 0.1
+                factors["chisq_factor"] = chisq_factor
+                scoring_comments.append(
+                    f"chisq factor {chisq_factor:.2f} from chisq_nu{chisq_nu:.2f}"
+                )
+            else:
+                scoring_comments.append(f"no factor based on chisq_nu={chisq_nu}")
+
             ###===== Time from peak?
             t0 = sncosmo_model["t0"]
             peak_dt = t_ref.mjd - sncosmo_model["t0"]
@@ -246,15 +321,25 @@ class SupernovaPeakScore:
             else:
                 interest_factor = peak_only_interest_function(peak_dt)
 
-            factors["interest_factor"] = interest_factor
-            interest_comment = (
-                f"interest {interest_factor:.2f} from peak_dt={peak_dt:+.2f}d"
-            )
-            scoring_comments.append(interest_comment)
+            if chisq_nu is not None and chisq_nu < self.max_chisq_nu and chisq_nu > 0:
 
-            if peak_dt > self.max_timespan:
-                reject = True
-                reject_comments.append(f"REJECT: too far past peak ({peak_dt:+.1f}d)")
+                factors["interest_factor"] = interest_factor
+                interest_comment = (
+                    f"interest {interest_factor:.2f} from peak_dt={peak_dt:+.2f}d"
+                )
+                scoring_comments.append(interest_comment)
+
+                if peak_dt > self.max_timespan:
+                    reject = True
+                    comm = f"REJECT: too far past peak ({peak_dt:+.1f}d)"
+                    reject_comments.append(comm)
+
+            else:
+                chisq_str = f"{chisq_nu:.2f}" if chisq_nu else chisq_nu
+                comm = (
+                    f"ignore interest {interest_factor:.2f} from chisq_nu {chisq_str}"
+                )
+                scoring_comments.append(comm)
 
             ###===== Blue colour?
 
@@ -275,27 +360,6 @@ class SupernovaPeakScore:
             #         f"color factor={color_factor:.2f} from model g-r={ztfg_mag-ztfr_mag:.2f}"
             #     )
             # factors["color_factor"] = color_factor
-
-            ###===== chisq
-
-            try:
-                model_result = getattr(model, "result", {})
-            except Exception as e:
-                model_result = None
-
-            if model_result is not None:
-                chisq = model_result.get("chisq", np.nan)
-                ndof = model_result.get("ndof", np.nan)
-                if (not np.isfinite(chisq)) or (not np.isfinite(ndof)):
-                    scoring_comments.append(f"chisq={chisq:.2f} and ndof={ndof}")
-                else:
-                    try:
-                        chisq_nu = chisq / ndof
-                        msg = f"model chisq={chisq:.3f} with ndof={ndof}"
-                        scoring_comments.append(msg)
-                    except ZeroDivisionError as e:
-                        scoring_comments.append(f"model has ndof=0")
-                    # TODO how to use chisq_nu properly?
 
         scoring_factors = np.array(list(factors.values()))
         if not all(scoring_factors > 0):

@@ -130,9 +130,14 @@ def get_object_updates(
         if name in existing_results.index:
             existing_row = existing_results.loc[name]
             if updated_row[comparison_col] > existing_row[comparison_col]:
+                logger.info(
+                    f"updated!: {updated_row[comparison_col]} vs {existing_row[comparison_col]}"
+                )
                 updates.append(updated_row)
             else:
-                updates.append(updated_row)
+                logger.info(
+                    f"skip: {updated_row[comparison_col]} vs {existing_row[comparison_col]}"
+                )
     if len(updates) > 0:
         updates_df = pd.DataFrame(updates)
         updates_df.sort_values("name")
@@ -173,9 +178,14 @@ class YseQueryManager(BaseQueryManager):
         "additional_sources": None,
     }
     default_coordinate_columns = (("transient_RA", "transient_Dec"),)
-    default_update_indicator_columns = ("number_of_detection", "latest_detction")
+    default_update_indicator_columns = ("number_of_detection", "latest_detection")
 
-    expected_object_query_keys = ["query_id", "coordinates", "update_indicator"]
+    expected_object_query_keys = (
+        "query_id",
+        "name_col",
+        "coordinate_cols",
+        "comparison_col",
+    )
     required_object_query_keys = ["query_id"]
 
     expected_additional_sources = ADDITIONAL_SOURCES_LOOKUP
@@ -511,7 +521,10 @@ class YseQueryManager(BaseQueryManager):
 
         logger.info(f"attempt {len(yse_id_list)} lightcurve queries")
         t_start = time.perf_counter()
-        for yse_id in yse_id_list:
+        for ii, yse_id in enumerate(yse_id_list):
+            if ii % 25 == 0 & ii > 0:
+                logger.info(f"{ii} queries...")
+
             lightcurve_file = self.get_lightcurve_file(yse_id)
             if len(failed) >= self.query_parameters["max_failed_queries"]:
                 msg = f"Too many failed queries ({len(failed)}), stop for now"
@@ -575,12 +588,18 @@ class YseQueryManager(BaseQueryManager):
         if startup:
             logger.info("don't query for new updates at startup")
         else:
-            self.query_for_updates(t_ref=t_ref)
+            try:
+                self.query_for_updates(t_ref=t_ref)
+            except Exception as e:
+                return e
             updated_targets = self.get_updated_targets()
             self.reset_query_updates()
 
             if updated_targets:
-                self.perform_lightcurve_queries(updated_targets)
+                try:
+                    self.perform_lightcurve_queries(updated_targets)
+                except Exception as e:
+                    return e
 
             to_query = self.get_lightcurves_to_query(t_ref=t_ref)
             success, failed = self.perform_lightcurve_queries(to_query, t_ref=t_ref)

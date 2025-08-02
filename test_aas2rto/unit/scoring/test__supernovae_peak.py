@@ -18,22 +18,26 @@ from aas2rto.scoring.supernova_peak import (
     SupernovaPeakScore,
 )
 
+from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
+
+lc_compiler = DefaultLightcurveCompiler()
+
 
 @pytest.fixture
 def rising_lc_rows():
     return [
-        (60000.0, 18.6, 1),
-        (60000.1, 18.5, 2),
-        (60001.0, 17.6, 1),
-        (60001.1, 17.5, 2),
-        (60002.0, 16.6, 1),
-        (60002.1, 16.5, 2),
+        (60000.0, 18.6, "ztfg", "valid", "ztf"),
+        (60000.1, 18.5, "ztfr", "valid", "ztf"),
+        (60001.0, 17.6, "ztfg", "valid", "ztf"),
+        (60001.1, 17.5, "ztfr", "valid", "ztf"),
+        (60002.0, 16.6, "ztfg", "valid", "ztf"),
+        (60002.1, 16.5, "ztfr", "valid", "ztf"),
     ]
 
 
 @pytest.fixture
 def rising_lc(rising_lc_rows):
-    return pd.DataFrame(rising_lc_rows, columns="mjd magpsf fid".split())
+    return pd.DataFrame(rising_lc_rows, columns="mjd mag band tag source".split())
 
 
 @pytest.fixture
@@ -44,9 +48,14 @@ def mock_salt_model():
 
 
 @pytest.fixture
-def mock_target(rising_lc):
-    data = TargetData(lightcurve=rising_lc)
-    target = Target("ZTF00abc", ra=30.0, dec=60.0, target_data={"fink": data})
+def target_t_ref():
+    return Time(60010.0, format="mjd")
+
+
+@pytest.fixture
+def mock_target(rising_lc, target_t_ref):
+    target = Target("ZTF00abc", ra=30.0, dec=-60.0)  # not in the disc!
+    target.compiled_lightcurve = rising_lc
     return target
 
 
@@ -77,7 +86,7 @@ class Test__ScoringClassInit:
         assert isinstance(func.min_timespan, float)
         assert isinstance(func.max_timespan, float)
         assert isinstance(func.min_rising_fraction, float)
-        assert isinstance(func.min_ztf_detections, int)
+        assert isinstance(func.min_detections, int)
         assert isinstance(func.default_color_factor, float)
         assert isinstance(func.broker_priority, tuple)
 
@@ -90,12 +99,12 @@ class Test__ScoringClassInit:
 
 class Test__Lightcurve:
     def test__mag_factor(self, rising_lc: pd.DataFrame):
-        mag = rising_lc["magpsf"].iloc[-1]
+        mag = rising_lc["mag"].iloc[-1]
         mag_factor = calc_mag_factor(mag)
         assert np.isclose(mag_factor, 10.0)
 
     def test__rising_fractions(self, rising_lc: pd.DataFrame):
-        for fid, fid_lc in rising_lc.groupby("fid"):
+        for fid, fid_lc in rising_lc.groupby("band"):
             fid_fact = calc_rising_fraction(fid_lc)
             assert np.isclose(fid_fact, 1.0)
 
@@ -107,6 +116,8 @@ class Test__CallScoringClass:
         t_ref = Time(60005.0, format="mjd")
 
         score, comms = func(mock_target, t_ref)
+
+        print(comms)
 
         assert np.isclose(score, 10.0)
 
@@ -135,50 +146,17 @@ class Test__CallScoringClass:
 
         assert not np.isfinite(score)
 
-    def test__use_provided_broker_priority(self, mock_target: Target, rising_lc):
-        t_ref = Time(60005.0, format="mjd")
-
-        td = TargetData(lightcurve=rising_lc[:-2].copy())  # last mag=17.5 here
-        mock_target.target_data["cool_source"] = td
-
-        default_func = SupernovaPeakScore()
-        score, comms = default_func(mock_target, t_ref=t_ref)
-
-        assert np.isclose(score, 10.0)
-
-        mod_func = SupernovaPeakScore(broker_priority=["cool_source", "fink"])
-        mod_score, comms = mod_func(mock_target, t_ref)
-
-        assert np.isclose(mod_score, 10**0.5)
-
-    def test__choose_best_ztf_source(self, mock_target: Target, rising_lc):
-        t_ref = Time(60005.0, format="mjd")
-
-        alerce_td = TargetData(lightcurve=rising_lc[:-2].copy())  # mag = 17.5
-        mock_target.target_data["alerce"] = alerce_td
-
-        fink_data = mock_target.target_data.pop("fink")
-        assert "fink" not in mock_target.target_data.keys()
-
-        func = SupernovaPeakScore()
-
-        score, comms = func(mock_target, t_ref)
-
-        assert np.isclose(score, 10**0.5)
-
     def test__no_crash_with_no_data(self, mock_target: Target):
         t_ref = Time(60005.0, format="mjd")
 
-        mock_target.target_data.pop("fink")
-
-        assert set(mock_target.target_data.keys()) == set()
+        mock_target.compiled_lightcurve = None
 
         func = SupernovaPeakScore()
 
         score, comms = func(mock_target, t_ref)
 
         assert np.isclose(score, -1.0)
-        assert comms[-1].startswith("ZTF00abc: none of")
+        assert comms[-1].startswith("no compiled lightcurve")
 
     def test__exclude_target_too_faint(self, mock_target: Target):
         t_ref = Time(60005.0, format="mjd")
@@ -186,7 +164,7 @@ class Test__CallScoringClass:
         faint_limit = 15.0
         func = SupernovaPeakScore(faint_limit=faint_limit)
 
-        mag_vals = mock_target.target_data["fink"].lightcurve["magpsf"].values
+        mag_vals = mock_target.compiled_lightcurve["mag"].values
         assert all(mag_vals > faint_limit)
 
         score, comms = func(mock_target, t_ref)
@@ -206,7 +184,7 @@ class Test__CallScoringClass:
         min_timespan = 6.0
         func = SupernovaPeakScore(min_timespan=min_timespan)
 
-        mjd_vals = mock_target.target_data["fink"].lightcurve["mjd"].values
+        mjd_vals = mock_target.compiled_lightcurve["mjd"].values
 
         assert t_ref.mjd - mjd_vals.min() < min_timespan
 
@@ -225,9 +203,9 @@ class Test__CallScoringClass:
         t_ref = Time(60005.0, format="mjd")
 
         min_obs = 8
-        func = SupernovaPeakScore(min_ztf_detections=min_obs)
+        func = SupernovaPeakScore(min_detections=min_obs)
 
-        assert len(mock_target.target_data["fink"].lightcurve) < min_obs
+        assert len(mock_target.compiled_lightcurve) < min_obs
 
         score, comms = func(mock_target, t_ref)
 
@@ -235,7 +213,7 @@ class Test__CallScoringClass:
 
         comment_found = False
         for comm in comms:
-            if "exclude as detections" in comm and "insufficient" in comm:
+            if "exclude" in comm and "detections insufficient" in comm:
                 comment_found = True
                 break
         assert comment_found
@@ -270,6 +248,8 @@ class Test__CallScoringClass:
         func = SupernovaPeakScore()
 
         score, comms = func(mock_target, t_ref)
+
+        print(comms)
 
         assert np.isclose(score, 10.0)
 

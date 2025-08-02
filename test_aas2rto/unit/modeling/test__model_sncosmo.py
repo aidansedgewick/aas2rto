@@ -125,7 +125,7 @@ class Test__InitModel:
     def test__init_model(self):
         model = initialise_model()
         assert isinstance(model, sncosmo.Model)
-        assert model.source.name == "salt2"
+        assert model.source.name == "salt3"
         assert set(model.effect_names) == set(["mw"])
 
 
@@ -167,13 +167,13 @@ class Test__Modeling:
         assert model["t0"] < 60044.0
         assert hasattr(model, "result")
         assert "samples" not in model.result
-        assert len(model.result.vparam_names) == 5
         assert set(model.result.vparam_names) == set("z t0 x0 x1 c".split())
+        assert len(model.result.vparam_names) == 5
 
     def test__lsq_fit_fixed_redshift(self, mock_target):
         modeler = SncosmoSaltModeler(use_emcee=False)
         tns_data = mock_target.get_target_data("tns")
-        tns_data.parameters = {"Redshift": 0.05}
+        tns_data.parameters = {"redshift": 0.05}
 
         model = modeler(mock_target)
 
@@ -182,8 +182,8 @@ class Test__Modeling:
         assert model["t0"] < 60044.0
         assert hasattr(model, "result")
         assert "samples" not in model.result
-        assert len(model.result.vparam_names) == 4
         assert set(model.result.vparam_names) == set("t0 x0 x1 c".split())
+        assert len(model.result.vparam_names) == 4
 
     def test__no_exc_on_lsq_error(self, mock_target, monkeypatch):
         modeler = SncosmoSaltModeler()

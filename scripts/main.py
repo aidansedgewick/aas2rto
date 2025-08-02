@@ -7,7 +7,7 @@ from astropy.time import Time
 
 from aas2rto import TargetSelector
 from aas2rto.modeling import empty_modeling, SncosmoSaltModeler
-from aas2rto.plotters import plot_default_lightcurve, plot_sncosmo_lightcurve
+from aas2rto.plotting import plot_default_lightcurve, plot_sncosmo_lightcurve
 from aas2rto.scoring import (
     example_functions,
     SupernovaPeakScore,
@@ -21,7 +21,7 @@ parser = ArgumentParser()
 parser.add_argument("-c", "--config", default=None, required=True)
 parser.add_argument("-i", "--iterations", default=None, type=int)
 parser.add_argument(
-    "-x", "--existing-targets-file", default=False, const="last", nargs="?", type=str
+    "-x", "--recovery-file", default=False, const="last", nargs="?", type=str
 )
 parser.add_argument("--skip-tasks", nargs="*")
 parser.add_argument("--debug", default=False, action="store_true")
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     logger.info(f"use \033[36;1m {scoring_function.__name__}\033[0m scoring")
     logger.info(f"use \033[36;1m {modeling_function.__name__}\033[0m model")
 
-    if not args.existing_targets_file:
+    if not args.recovery_file:
         logger.info(f"NOT attempting to recover existing targets")
 
     try:
@@ -77,7 +77,7 @@ if __name__ == "__main__":
             modeling_function=modeling_function,
             lc_plotting_function=lc_plotting_function,
             iterations=args.iterations,
-            existing_targets_file=args.existing_targets_file,
+            recovery_file=args.recovery_file,
             skip_tasks=args.skip_tasks,
         )
     except Exception as e:
