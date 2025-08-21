@@ -431,9 +431,9 @@ class AtlasQueryManager(BaseQueryManager):
         for alt_key in self.query_parameters["alt_id_priority"]:
             alt_id = target.alt_ids.get(alt_key, None)
             if alt_id is not None:
-                test_filepath = self.get_lightcurve_file(alt_id)
-                if test_filepath.exists():
-                    lightcurve_filepath = test_filepath
+                candidate_filepath = self.get_lightcurve_file(alt_id)
+                if candidate_filepath.exists():
+                    lightcurve_filepath = candidate_filepath
                     break
 
         if lightcurve_filepath is None:
@@ -487,20 +487,20 @@ class AtlasQueryManager(BaseQueryManager):
             self.recover_finished_queries(t_ref=t_ref)  # and popul. submitted_queries
         except requests.exceptions.JSONDecodeError as e:
             return e
-        except requests.exceptions.Timeout as e:
+        except requests.exceptions.RequestException as e:
             return e
 
         try:
             self.retry_throttled_queries(t_ref=t_ref)
         except ConnectionError as e:
             return e
-        except requests.exceptions.Timeout as e:
+        except requests.exceptions.RequestException as e:
             return e
 
         query_candidates = self.select_query_candidates(t_ref=t_ref)
         try:
             self.submit_new_queries(query_candidates, t_ref=t_ref)
-        except requests.exceptions.Timeout as e:
+        except requests.exceptions.RequestException as e:
             return e
         # self.recover_finished_queries(t_ref=t_ref)
 

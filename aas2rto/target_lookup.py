@@ -158,6 +158,10 @@ class TargetLookup:
             targets_to_merge = []
             for target_id in group:
                 target_ii = self.pop(target_id)
+                if target_ii is None:
+                    logger.warning(f"In consolidate_targets:{target_id} RETURNED NONE!")
+                    continue
+
                 targets_to_merge.append(target_ii)
             merged = merge_targets(
                 targets_to_merge, sort=sort, warn_overwrite=warn_overwrite

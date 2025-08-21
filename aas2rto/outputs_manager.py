@@ -7,6 +7,7 @@ import numpy as np
 
 import pandas as pd
 
+from astropy import units as u
 from astropy.time import Time
 
 from astroplan import Observer
@@ -28,6 +29,7 @@ class OutputsManager:
         "unranked_value": 9999,
         "minimum_score": 0.0,
         "minimum_altitude": 40.0,
+        "rank_history_lookback": 7.0,
     }
 
     def __init__(
@@ -131,15 +133,17 @@ class OutputsManager:
         return score_df
 
     def build_visible_target_lists_at_observatory(
-        self, observatory, plots=False, write_list=True, t_ref: Time = None
+        self, observatory: Observer, plots=False, write_list=True, t_ref: Time = None
     ):
 
         minimum_alt = self.config["minimum_altitude"]
         minimum_score = self.config["minimum_score"]
 
         obs_name = observatory.name
-        sunset = observatory.sun_set_time(t_ref, which="nearest", horizon=-18.0 * u.deg)
-        sunrise = observatory.sun_rise_time(sunset, which="next", horizon=-18.0 * u.deg)
+        sunset = observatory.sun_set_time(t_ref, which="next", horizon=-18.0 * u.deg)
+        sunrise = observatory.sun_rise_time(
+            sunset, which="nearest", horizon=-18.0 * u.deg
+        )
 
         visible_targets = []
         data_list = []
@@ -150,12 +154,7 @@ class OutputsManager:
             if data["score"] is None or data["score"] < minimum_score:
                 continue
 
-            alt_mask = obs_info.target_altaz.alt.deg > minimum_alt
-            t_mask = (sunset < obs_info.t_grid) & (obs_info.t_grid < sunrise)
-
-            if sum(alt_mask & t_mask) > 0:
-                visible_targets.append(target)
-                data_list.append(data)
+            alt_grid = observatory.al
 
         if len(data_list) == 0:
             return
@@ -173,6 +172,12 @@ class OutputsManager:
             fig_path = self.path_manager.outputs_path / f"{obs_name}_visible.png"
             fig.savefig(fig_path)
             plt.close(fig=fig)
+
+    # def plot_rank_history(self):
+
+    #    fig, ax = plt.su
+
+    #    for target_id, target in self.target_lookup.items():
 
     def collect_plots(self, target: Target, obs_name: str, ranking: int, fmt="png"):
         """

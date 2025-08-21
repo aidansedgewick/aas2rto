@@ -941,8 +941,6 @@ class TargetSelector:
         t1 = time.perf_counter()
         if not "plotting" in skip_tasks:
             plotting_interval = self.selector_parameters.get("plotting_interval", 0.25)
-            if lazy_plotting:
-                logger.info(f"re-use vis/lc plots <{plotting_interval*24:.1f}hr old")
 
             self.plotting_manager.plot_all_target_lightcurves(
                 plotting_function=lc_plotting_function, t_ref=t_ref
