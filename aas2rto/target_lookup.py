@@ -158,6 +158,8 @@ class TargetLookup:
             targets_to_merge = []
             for target_id in group:
                 target_ii = self.pop(target_id)
+                if target_ii is None:
+                    logger.warning(f"{target_id} popped target is None!")
                 targets_to_merge.append(target_ii)
             merged = merge_targets(
                 targets_to_merge, sort=sort, warn_overwrite=warn_overwrite
@@ -236,6 +238,9 @@ def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
 
     if sort:
         targets = sorted(targets, key=lambda x: x.creation_time.mjd)
+
+    if any([t is None for t in targets]):
+        raise ValueError(f"Some targets are None!\n{targets}")
 
     output = targets[0]
     for target in targets[1:]:
