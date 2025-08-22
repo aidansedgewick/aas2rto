@@ -1,9 +1,12 @@
+import os
 import shutil
 import subprocess
 from logging import getLogger
 from pathlib import Path
 
 from astropy.time import Time
+
+from aas2rto.target import Target
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -15,7 +18,7 @@ class GitWebpageManager:
 
         self.remote_url = self.www_config.get("remote_url", None)
         if self.remote_url is None:
-            raise ValueError("must provide 'git_remote' in git_www config.")
+            raise ValueError("must provide 'remote_url' in git_www config.")
 
         self.git_useremail = self.www_config.get("git_useremail", None)
         if self.git_useremail is None:
@@ -39,7 +42,7 @@ class GitWebpageManager:
             raise ValueError(msg)
 
         self.local_www_path = Path(local_www_path).absolute()
-        self.init_repo()
+        self.prepare_git_repo()
 
         self.index_path = self.local_www_path / "index.html"
 
@@ -50,26 +53,16 @@ class GitWebpageManager:
         self.target_pages_path = self.local_www_path / "target"
         self.target_pages_path.mkdir(exist_ok=True, parents=True)
 
-    def init_repo(self):
+    def prepare_git_repo(self):
 
         git_dir = self.local_www_path / ".git"
         if not git_dir.exists():
-            git_init_cmd = f"git -C {self.local_www_path} init"
-            logger.info(
-                f"initialise git repo in {self.local_www_path}:\n    {git_init_cmd}"
-            )
-            output = subprocess.check_output(git_init_cmd.split())
-
-            git_email_cmd = (
-                f"git -C {self.local_www_path} config user.email {self.git_useremail}"
-            )
-            email_output = subprocess.check_output(git_email_cmd.split())
-
-            git_branch_cmd = (
-                f"git -C {self.local_www_path} branch -m '{self.git_branch}'"
-            )
-            branch_output = subprocess.check_output(git_branch_cmd.split())
-
+            try:
+                logger.info("first try to clone an existing repo (at depth=1)...")
+                self.clone_existing_repo()
+            except subprocess.CalledProcessError as e:
+                logger.error("existing repo does not exist")
+                self.init_new_git_repo()
         else:
             logger.info(".git already initialised")
 
@@ -81,6 +74,33 @@ class GitWebpageManager:
             add_origin_output = subprocess.check_output(
                 git_add_origin_cmd.split()
             ).decode("utf-8")
+
+    def clone_existing_repo(self):
+        git_clone_command = (
+            f"git clone --depth 1 {self.remote_url} {self.local_www_path}"
+        )
+        output = subprocess.check_output(git_clone_command.split())
+
+        if self.local_www_path.exists():
+            logger.info("cloned - success!")
+        else:
+            logger.warning("clone exited ok, but no cloned repo...")
+
+    def init_new_git_repo(self):
+
+        git_init_cmd = f"git -C {self.local_www_path} init"
+        logger.info(
+            f"initialise git repo in {self.local_www_path}:\n    {git_init_cmd}"
+        )
+        output = subprocess.check_output(git_init_cmd.split())
+
+        git_email_cmd = (
+            f"git -C {self.local_www_path} config user.email {self.git_useremail}"
+        )
+        email_output = subprocess.check_output(git_email_cmd.split())
+
+        git_branch_cmd = f"git -C {self.local_www_path} branch -m '{self.git_branch}'"
+        branch_output = subprocess.check_output(git_branch_cmd.split())
 
     def update_webpages(self, target_lookup, ranked_lists, t_ref=None):
         t_ref = t_ref or Time.now()
@@ -197,65 +217,121 @@ class GitWebpageManager:
 
     def build_target_pages(self, target_lookup, t_ref: Time = None):
         t_ref = t_ref or Time.now()
-        t_str = t_ref.strftime("%a, %d-%b-%Y, %H:%M")
 
         for target_id, target in target_lookup.items():
             target_page_path = self._get_target_page_path(target_id)
             target_page_url = self._get_target_page_url(target_id)
             if target.updated or (not target_page_path.exists()):
-                header_lines = [f"<header>", f"<h1>{target_id}</h1>", "</header>"]
 
-                target_info = target.get_info_lines(t_ref)
-                body_lines = []
-                for line in target_info:
-                    body_lines.append(f"<p>{line}</p>")
-
-                if target.lc_fig_path is not None:
-                    www_fig_path = self.im_path / f"{target_id}_lc.png"
-                    shutil.copy2(target.lc_fig_path, www_fig_path)
-                    www_fig_url = www_fig_path.relative_to(self.local_www_path)
-                    body_lines.append(
-                        f"<img src='../im/{www_fig_path.name}' alt='{target_id} LC'>"
-                    )
-
-                body_lines.append("</body>")
-                footer_lines = [
-                    "<footer>",
-                    f"<p><small>Page updated {t_str}</small></p>",
-                    "</footer>",
-                ]
-                page_lines = [
-                    "<html>",
-                    *header_lines,
-                    *body_lines,
-                    *footer_lines,
-                    "</html>",
-                ]
-                with open(target_page_path, "w+") as f:
-                    for line in page_lines:
-                        f.write(line + "\n")
+                self.build_page_for_target(target, target_page_path, t_ref=t_ref)
 
                 # write redirect pages...
                 alt_ids = set(target.alt_ids.values())
                 for alt_id in alt_ids:
                     if alt_id == target_id:
                         continue
-                    redirect_page_lines = [
-                        f"<html>",
-                        f"<head>",
-                        f"<meta http-equiv='refresh' content='0, url={target_page_path.name}'>",
-                        f"</head>",
-                        f"<body>Redirect: <a href='{target_page_path.name}'></a></body>"
-                        f"</html>",
-                    ]
 
                     redirect_page_path = self._get_target_page_path(alt_id)
-                    with open(redirect_page_path, "w+") as f:
-                        for line in redirect_page_lines:
-                            f.write(line + "\n")
 
-    def clean_up_image_files(self, target_lookup, t_ref: Time = None):
+                    self.build_redirect_page(redirect_page_path, target_page_path)
+
+    def build_page_for_target(self, target: Target, target_page_path: Path, t_ref=None):
         t_ref = t_ref or Time.now()
+        t_str = t_ref.strftime("%a, %d-%b-%Y, %H:%M")
+
+        target_id = target.target_id
+
+        header_lines = [f"<header>", f"<h1>{target_id}</h1>", "</header>"]
+
+        target_info = target.get_info_lines(t_ref)
+        body_lines = []
+        for line in target_info:
+            body_lines.append(f"<p>{line}</p>")
+
+        if target.lc_fig_path is not None:
+            www_fig_path = self.im_path / f"{target_id}_lc.png"
+            shutil.copy2(target.lc_fig_path, www_fig_path)
+            www_fig_url = www_fig_path.relative_to(self.local_www_path)
+            body_lines.append(
+                f"<img src='../im/{www_fig_path.name}' alt='{target_id} LC'>"
+            )
+
+        body_lines.append("</body>")
+        footer_lines = [
+            "<footer>",
+            f"<p><small>Page updated {t_str}</small></p>",
+            "</footer>",
+        ]
+        page_lines = [
+            "<html>",
+            *header_lines,
+            *body_lines,
+            *footer_lines,
+            "</html>",
+        ]
+        with open(target_page_path, "w+") as f:
+            for line in page_lines:
+                f.write(line + "\n")
+
+    def build_redirect_page(self, redirect_page_path, target_page_path):
+
+        redirect_page_lines = [
+            f"<html>",
+            f"<head>",
+            f"<meta http-equiv='refresh' content='0, url={target_page_path.name}'>",
+            f"</head>",
+            f"<body>Redirect: <a href='{target_page_path.name}'></a></body>" f"</html>",
+        ]
+
+        with open(redirect_page_path, "w+") as f:
+            for line in redirect_page_lines:
+                f.write(line + "\n")
+
+    def clean_up_commit_history(self, target_lookup, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
+    def refresh_tmux_ssh_auth_sock(self):
+        """
+        In tmux, the env is not kept up to date (?) by default,
+        so need to reload the $SSH_AUTH_SOCK parameter, otherwise
+        git push will fail.
+        """
+
+        is_tmux_session = os.environ.get("TMUX", False)
+
+        if not is_tmux_session:
+            return
+
+        ssh_auth_sock_path = Path(os.environ["SSH_AUTH_SOCK"])
+        if ssh_auth_sock_path.exists():
+            logger.info("no need to update $SSH_AUTH_SOCK - still exists!")
+            return
+
+        logger.info("refresh $SSH_AUTH_SOCK...")
+        tmux_env_cmd = "tmux show-env -s"
+        tmux_env_lines = (
+            subprocess.check_output(tmux_env_cmd.split()).decode().split("\n")
+        )
+
+        for line in tmux_env_lines:
+            commands = line.split(";")
+            # the relevant line is something like:
+            # "SSH_AUTH_SOCK='/tmp/ssh_blah/agent.1234'; export SSH_AUTH_SOCK"
+            if commands[0].startswith("SSH_AUTH_SOCK"):
+                key, ssh_auth_sock_str = commands[0].split("=")
+                ssh_auth_sock = ssh_auth_sock_str.replace('"', "")  # no quotes
+                print(f"choose {ssh_auth_sock}")
+
+        os.environ["SSH_AUTH_SOCK"] = ssh_auth_sock
+        print(f"choose {ssh_auth_sock}")
+        print("new env var:", os.environ["SSH_AUTH_SOCK"])
+
+        ssh_auth_sock_path = Path(ssh_auth_sock)
+        if ssh_auth_sock_path.exists():
+            logger.info("newly set $SSH_AUTH_SOCK exists!")
+        else:
+            msg = "something went wrong - new $SSH_AUTH_SOCK does not exist..."
+            logger.warning(msg)
 
     def publish(self, t_ref=None):
         git_add_cmd = f"git -C {self.local_www_path} add --all"
@@ -269,5 +345,10 @@ class GitWebpageManager:
         except subprocess.CalledProcessError as e:
             print(e)
 
+        self.refresh_tmux_ssh_auth_sock()
+
         git_push_cmd = f"git -C {self.local_www_path} push --set-upstream {self.remote_name} {self.git_branch} --force"
-        push_output = subprocess.check_output(git_push_cmd.split()).decode("utf-8")
+        try:
+            push_output = subprocess.check_output(git_push_cmd.split()).decode("utf-8")
+        except subprocess.CalledProcessError as e:
+            print(e)

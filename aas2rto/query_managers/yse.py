@@ -141,7 +141,7 @@ def get_object_updates(
     if len(updates) > 0:
         updates_df = pd.DataFrame(updates)
         updates_df.sort_values("name")
-        return
+        return updates_df
     else:
         return None
 
@@ -322,6 +322,8 @@ class YseQueryManager(BaseQueryManager):
                 msg = f"updates from {query_name} is type {type(updates)}, not pd.DF!"
                 warnings.warn(Warning(msg))
                 continue
+
+            logger.info("{len(updates)} for {query_nae}")
 
             query_pattern = self.object_queries[query_name]
             coordinate_cols = query_pattern.get("coordinate_cols")
@@ -592,7 +594,11 @@ class YseQueryManager(BaseQueryManager):
                 self.query_for_updates(t_ref=t_ref)
             except Exception as e:
                 return e
-            updated_targets = self.get_updated_targets()
+
+            try:
+                updated_targets = self.get_updated_targets()
+            except Exception as e:
+                return e
             self.reset_query_updates()
 
             if updated_targets:
@@ -604,10 +610,10 @@ class YseQueryManager(BaseQueryManager):
             to_query = self.get_lightcurves_to_query(t_ref=t_ref)
             success, failed = self.perform_lightcurve_queries(to_query, t_ref=t_ref)
 
-            to_query = self.get_transient_parameters_to_query(t_ref=t_ref)
-            success, failed = self.perform_transient_parameters_queries(
-                to_query, t_ref=t_ref
-            )
+            # to_query = self.get_transient_parameters_to_query(t_ref=t_ref)
+            # success, failed = self.perform_transient_parameters_queries(
+            #    to_query, t_ref=t_ref
+            # )
 
         self.update_yse_ids()
         loaded, missing = self.load_transient_parameters(t_ref=t_ref)

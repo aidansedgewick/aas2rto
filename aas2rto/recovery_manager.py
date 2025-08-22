@@ -90,7 +90,7 @@ class RecoveryManager:
     #         rank_history_file = self.path_manager.get_rank_history_file(target_id)
     #         rank_history_df.to_csv(rank_history_file, index=False)
 
-    def write_rank_histories(self, obs_name, t_ref: Time = None):
+    def write_rank_histories(self, obs_name="no_observatory", t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
         data = {}
@@ -98,7 +98,7 @@ class RecoveryManager:
             data[target_id] = target.rank_history[obs_name]
 
         rank_history_file = self.path_manager.get_current_rank_history_file(t_ref=t_ref)
-        with open(rank_history_file, "f") as f:
+        with open(rank_history_file, "w+") as f:
             json.dump(data, f)
 
         existing_rank_history_files = (
@@ -151,7 +151,7 @@ class RecoveryManager:
                 logger.info("no files to recover rank history")
             else:
                 logger.info("also load rank history")
-                rank_history_file = recovered_rank_history_files[:-1]
+                rank_history_file = recovered_rank_history_files[-1]
                 t_start = time.perf_counter()
                 with open(rank_history_file) as f:
                     recovered_rank_history = json.load(f)

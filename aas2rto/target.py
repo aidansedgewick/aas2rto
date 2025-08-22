@@ -329,9 +329,9 @@ class Target:
         broker_name = self.alt_ids.get("ztf", None)
         if broker_name is not None:
             broker_lines = [
-                f"    FINK: fink-portal.org/{self.target_id}",
-                f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.target_id}",
-                f"    ALeRCE: alerce.online/object/{self.target_id}",
+                f"    FINK: fink-portal.org/{broker_name}",
+                f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{broker_name}",
+                f"    ALeRCE: alerce.online/object/{broker_name}",
             ]
             info_lines.extend(broker_lines)
 

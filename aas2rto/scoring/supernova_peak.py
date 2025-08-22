@@ -49,6 +49,54 @@ def calc_rising_fraction(band_det: pd.DataFrame, single_point_value: float = 0.5
     return max(rising_fraction, 0.05)
 
 
+def calc_chisq_factor(chisq_nu):
+    if chisq_nu < 5 and (1.0 / chisq_nu < 5):
+        chisq_factor = 1.0
+    elif chisq_nu < 10 and (1.0 / chisq_nu < 10.0):
+        chisq_factor = 0.5
+    else:
+        chisq_factor = 0.1
+    return chisq_factor
+
+
+def calc_cv_prob_penalty(detections, ulim, model, cv_cand_detections=3, mag_thresh=1.0):
+    """
+    For upperlimits data before the model peak:
+
+    if the detection limit is significantly below the model mag, penalise that data point
+    """
+
+    t0 = model["t0"]
+
+    det_pre_t0 = detections[detections["mjd"] < t0]
+
+    if len(det_pre_t0) < cv_cand_detections:
+        return 1.0, ["no cv candidate penalty"]
+
+    penalties = []
+    comments = []
+
+    for band, band_det in detections.groupby("band"):
+
+        t0_mask = t0 - ulim["mjd"] < 15.0
+        band_ulim = ulim[ulim["band"] == band & t0_mask]
+        try:
+            modelmag = model.bandmag(band)
+        except Exception as e:
+            continue
+
+        diff = band_ulim["diffmaglim"] - modelmag
+
+        pen_values = np.minimum(1.0, np.exp(diff - mag_thresh))
+        band_penalty = np.product(pen_values)
+        penalties.extend(band_penalty)
+        if band_penalty < 0.99:
+            comments.append(f"cv-candidate penalty {band_penalty:.3f} for {band}")
+
+    cv_penalty = np.product(penalties)
+    return cv_penalty, comments
+
+
 def tuned_interest_function(x):
     return logistic(x, 10.0, -1.0 / 2.0, -6.0) + gauss(x, 4.0, 0.0, 1.0)
 
@@ -92,7 +140,7 @@ class SupernovaPeakScore:
         characteristic_timespan: float = 20.0,
         min_rising_fraction: float = 0.4,
         min_detections: int = 3,
-        min_lc_length: float = 0.5,
+        min_lc_length: float = 0.75,
         default_color_factor: float = 0.1,
         max_chisq_nu: float = 10.0,
         min_bulge_sep=15.0,
@@ -239,9 +287,9 @@ class SupernovaPeakScore:
 
         f_rising_strings = [f"{b}={f:.2f}" for b, f in f_rising_data.items()]
 
-        n_items = 4
+        n_items = 3
         for ii in range(0, len(f_rising_strings), n_items):
-            f_rising_comm = "f_rise:" + " ".join(f_rising_strings[ii : ii + n_items])
+            f_rising_comm = "f_rise: " + " ".join(f_rising_strings[ii : ii + n_items])
             scoring_comments.append(f_rising_comm)
 
         ###===== How many observations =====###
@@ -293,12 +341,7 @@ class SupernovaPeakScore:
                     # TODO how to use chisq_nu properly?
 
             if chisq_nu is not None and chisq_nu > 0:
-                if chisq_nu < 5 and (1.0 / chisq_nu < 5):
-                    chisq_factor = 1.0
-                elif chisq_nu < 10 and (1.0 / chisq_nu < 10.0):
-                    chisq_factor = 0.5
-                else:
-                    chisq_factor = 0.1
+                chisq_factor = calc_chisq_factor(chisq_nu)
                 factors["chisq_factor"] = chisq_factor
                 scoring_comments.append(
                     f"chisq factor {chisq_factor:.2f} from chisq_nu{chisq_nu:.2f}"

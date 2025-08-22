@@ -75,7 +75,7 @@ class MessagingManager:
         no_updates = []
         sent = []
 
-        minimum_score = self.selector_parameters.get("minimum_score")
+        minimum_score = 0.0  # TODO rework messaging config
         logger.info("perform messaging tasks")
         for target_id, target in self.target_lookup.items():
             logger.debug(f"messaging for {target_id}")
