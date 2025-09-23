@@ -4,18 +4,46 @@ import subprocess
 from logging import getLogger
 from pathlib import Path
 
+from astropy import units as u
 from astropy.time import Time
 
 from aas2rto.target import Target
+from aas2rto.target_lookup import TargetLookup
 
 logger = getLogger(__name__.split(".")[-1])
 
 
 class GitWebpageManager:
 
-    def __init__(self, www_config, local_www_path):
+    def __init__(
+        self, www_config: dict, local_www_path: Path, target_lookup: TargetLookup
+    ):
         self.www_config = www_config
 
+        self.check_git_config()
+
+        if local_www_path is None:
+            msg = (
+                f"In config, if `git_web: use: True`, must provide "
+                f"Must provide path for 'www_path' in config_file/paths !"
+            )
+            raise ValueError(msg)
+
+        self.local_www_path = Path(local_www_path).absolute()
+        self.prepare_git_repo()
+
+        self.target_lookup = target_lookup
+
+        self.index_path = self.local_www_path / "index.html"
+
+        self.im_path = self.local_www_path / "im"
+        self.im_path.mkdir(exist_ok=True, parents=True)
+        self.list_pages_path = self.local_www_path / "list"
+        self.list_pages_path.mkdir(exist_ok=True, parents=True)
+        self.target_pages_path = self.local_www_path / "target"
+        self.target_pages_path.mkdir(exist_ok=True, parents=True)
+
+    def check_git_config(self):
         self.remote_url = self.www_config.get("remote_url", None)
         if self.remote_url is None:
             raise ValueError("must provide 'remote_url' in git_www config.")
@@ -33,25 +61,6 @@ class GitWebpageManager:
         if self.git_branch is None:
             logger.info("no git branch provided for www. Choose 'main'")
             self.git_branch = "main"
-
-        if local_www_path is None:
-            msg = (
-                f"In config, if `git_web: use: True`, must provide "
-                f"Must provide path for 'www_path' in config_file/paths !"
-            )
-            raise ValueError(msg)
-
-        self.local_www_path = Path(local_www_path).absolute()
-        self.prepare_git_repo()
-
-        self.index_path = self.local_www_path / "index.html"
-
-        self.im_path = self.local_www_path / "im"
-        self.im_path.mkdir(exist_ok=True, parents=True)
-        self.list_pages_path = self.local_www_path / "list"
-        self.list_pages_path.mkdir(exist_ok=True, parents=True)
-        self.target_pages_path = self.local_www_path / "target"
-        self.target_pages_path.mkdir(exist_ok=True, parents=True)
 
     def prepare_git_repo(self):
 
@@ -170,28 +179,39 @@ class GitWebpageManager:
         t_ref = t_ref or Time.now()
         t_str = t_ref.strftime("%a, %d-%b-%Y, %H:%M")
 
+        if ranked_lists is None:
+            logger.info("ranked_lists is None!")
+            return
+
         for rl_name, ranked_list in ranked_lists.items():
-            header_lines = [f"<header><h1>targets for {rl_name}</header>"]
+            header_lines = [f"<header><h1>targets for {rl_name}</h1></header>"]
+
+            col_names = (
+                "rank name RA Dec. hhmmss ddmmss last_mag band last_obs dt0".split()
+            )
 
             table_lines = ["<table>"]
             header_row = [
                 "<tr>",
-                "<td>rank</td> <td>name</td> <td>RA</td><td>Dec.</td>",
+                " ".join(f"<td>{x}</td>" for x in col_names),
                 "</tr>",
             ]
             table_lines.extend(header_row)
 
+            if ranked_list is None:
+                logger.warning(f"no ranked list for {rl_name}!")
+                continue
+
             for ii, row in ranked_list.iterrows():
                 target_id = row["target_id"]
-                target_page_path = self._get_target_page_path(target_id)
-                table_row = [
-                    "<tr>",
-                    f"<td>{ii+1}</td>",
-                    f"<td><a href='../target/{target_page_path.name}'>{target_id}</a></td>",
-                    f"<td>{row['ra']:.5f}",
-                    f"<td>{row['dec']:.4f}",
-                    f"</tr>",
-                ]
+
+                table_data = self.table_data_from_target_id(target_id, t_ref=t_ref)
+
+                table_row = ["<tr>", f"<td>{ii+1}</td>"]
+                for dat in table_data:
+                    table_row.append(f"<td>{dat}</td>")
+
+                table_row.append("</tr>")
                 table_lines.extend(table_row)
             table_lines.append(f"</table>")
 
@@ -214,6 +234,43 @@ class GitWebpageManager:
             with open(rl_path, "w+") as f:
                 for line in page_lines:
                     f.write(line + "\n")
+
+    def table_data_from_target_id(self, target_id, t_ref: Time = None):
+        t_Ref = t_ref or Time.now()
+
+        target_page_path = self._get_target_page_path(target_id)
+
+        target = self.target_lookup.get(target_id)
+
+        lc = target.compiled_lightcurve
+        last_mag, last_band, last_mjd = "-", "-", "-"
+        if lc is not None:
+            valid = lc[lc["tag"] == "valid"]
+            if len(valid) > 0:
+                last_mag = valid.iloc[-1]["mag"]
+                last_band = valid.iloc[-1]["band"]
+                last_mjd = Time(valid.iloc[-1]["mjd"], format="mjd")
+
+        model = target.models.get("sncosmo_salt", None)
+        if model is not None:
+            t0 = model["t0"]
+            dt = t_ref.mjd - t0
+            dt_str = f"{dt:.1f}d"  #
+        else:
+            dt_str = "-"
+
+        table_data = [
+            f"<a href='../target/{target_page_path.name}'>{target_id}</a>",
+            f"{target.ra:.5f}",
+            f"{target.dec:+.4f}",
+            f"{target.coord.ra.to_string(u.hour, precision=2, pad=True)}",
+            f"{target.coord.dec.to_string(u.degree, alwayssign=True, precision=2, pad=True)}",
+            f"{last_mag:.2f}",
+            f"{last_band}",
+            f"{last_mjd.iso}",
+            f"{dt_str}",
+        ]
+        return table_data
 
     def build_target_pages(self, target_lookup, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -243,9 +300,52 @@ class GitWebpageManager:
 
         header_lines = [f"<header>", f"<h1>{target_id}</h1>", "</header>"]
 
-        target_info = target.get_info_lines(t_ref)
+        # target_info = target.get_info_lines(t_ref)
+        info_lines = []
+
+        info_lines.append("<h2>links</h2>")
+        broker_name = target.alt_ids.get("ztf", None)
+        if broker_name is not None:
+            broker_lines = [
+                f"    FINK: <a href='http://fink-portal.org/{broker_name}'>{broker_name}</a>",
+                f"    Lasair: <a href='http://lasair-ztf.lsst.ac.uk/objects/{broker_name}'>{broker_name}</a>",
+                f"    ALeRCE: <a href='http://alerce.online/object/{broker_name}'>{broker_name}</a>",
+            ]
+            info_lines.extend(broker_lines)
+
+        tns_name = target.alt_ids.get("tns", None)
+        if tns_name is not None:
+            tns_url = f"http://wis-tns.org/object/{tns_name}"
+            info_lines.append(f"    TNS: <a href='{tns_url}'>{tns_name}</a>")
+
+        yse_name = target.alt_ids.get("yse", None)
+        if yse_name is not None:
+            yse_url = f"http://ziggy.ucolick.org/yse/transient_detail/{yse_name}"
+            info_lines.append(f"    YSE: <a href='{yse_url}'>{yse_name}</a>")
+
+        alt_rev = {}
+        for source, alt_name in target.alt_ids.items():
+            if alt_name not in alt_rev:
+                alt_rev[alt_name] = [source]
+            else:
+                alt_rev[alt_name].append(source)
+
+        info_lines.append("<h2>alt names</h2>")
+        for name, source_list in alt_rev.items():
+            l = f"    {name} (" + ",".join(source_list) + ")"
+            info_lines.append(l)
+
+        info_lines.append("<h2>coordinates</h2>")
+        if target.ra is not None and target.dec is not None:
+            eq_line = f"    equatorial (ra, dec) = ({target.ra:.4f},{target.dec:+.5f})"
+            info_lines.append(eq_line)
+        if target.coord is not None:
+            gal = target.coord.galactic
+            gal_line = f"    galactic (l, b) = ({gal.l.deg:.4f},{gal.b.deg:+.5f})"
+            info_lines.append(gal_line)
+
         body_lines = []
-        for line in target_info:
+        for line in info_lines:
             body_lines.append(f"<p>{line}</p>")
 
         if target.lc_fig_path is not None:
@@ -253,8 +353,45 @@ class GitWebpageManager:
             shutil.copy2(target.lc_fig_path, www_fig_path)
             www_fig_url = www_fig_path.relative_to(self.local_www_path)
             body_lines.append(
-                f"<img src='../im/{www_fig_path.name}' alt='{target_id} LC'>"
+                f"<p><img src='../im/{www_fig_path.name}' alt='{target_id} LC'></p>"
             )
+
+        for fig_name, fig_path in target.additional_fig_paths.items():
+            www_extra_fig_path = self.im_path / f"{target_id}_{fig_name}.png"
+            shutil.copy2(fig_path, www_extra_fig_path)
+            www_fig_url = www_fig_path.relative_to(self.local_www_path)
+            body_lines.append(
+                f"<p><img src='../im/{www_extra_fig_path.name}' alt='{target_id} {fig_name}'></p>"
+            )
+
+        phot_lines = []
+        if target.compiled_lightcurve is not None:
+            phot_lines.append("<h2>photometry</h2>")
+            ndet = {}
+            last_mag = {}
+            if "band" in target.compiled_lightcurve.columns:
+                for band, band_history in target.compiled_lightcurve.groupby("band"):
+                    if "tag" in band_history.columns:
+                        detections = band_history[band_history["tag"] == "valid"]
+                    else:
+                        detections = band_history
+                    if len(detections) > 0:
+                        ndet[band] = len(detections)
+                        last_mag[band] = detections["mag"].iloc[-1]
+            if len(last_mag) > 0:
+                magvals_str = ", ".join(f"{k}={v:.2f}" for k, v in last_mag.items())
+                mag_line = "    last " + magvals_str
+                phot_lines.append(mag_line)
+            if len(ndet) > 0:
+                l = (
+                    "    "
+                    + ", ".join(f"{v} {k}" for k, v in ndet.items())
+                    + " detections"
+                )
+                phot_lines.append(l)
+
+        for line in phot_lines:
+            body_lines.append(f"<p>{line}</p>")
 
         body_lines.append("</body>")
         footer_lines = [

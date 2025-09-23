@@ -8,6 +8,7 @@ from astropy.time import Time
 from aas2rto import TargetSelector
 from aas2rto.modeling import empty_modeling, SncosmoSaltModeler
 from aas2rto.plotting import plot_default_lightcurve, plot_sncosmo_lightcurve
+from aas2rto.plotting.salt_param_plotter import SaltParamPlotter
 from aas2rto.scoring import (
     example_functions,
     SupernovaPeakScore,
@@ -44,17 +45,22 @@ if __name__ == "__main__":
     config_file = Path(args.config)
     selector = TargetSelector.from_config(config_file)
 
+    extra_plotting_functions = []
     lc_plotting_function = plot_default_lightcurve
     if "supernovae" in config_file.stem or "sne" in config_file.stem:
         scoring_function = SupernovaPeakScore(
             use_compiled_lightcurve=True
         )  # This is a class - initialise it!
 
-        models_path = None  # selector.project_path / "models"
+        models_path = None  # selector.path_manager.project_path / "sncosmo_salt_models"
         modeling_function = SncosmoSaltModeler(
             existing_models_path=models_path, use_emcee=False, show_traceback=False
         )
         lc_plotting_function = plot_sncosmo_lightcurve
+
+        salt_param_plotter = SaltParamPlotter()
+        extra_plotting_functions.append(salt_param_plotter)
+
     elif "atlas_test" in config_file.stem:
         scoring_function = example_functions.latest_flux_atlas_requirement
         modeling_function = empty_modeling
@@ -76,6 +82,7 @@ if __name__ == "__main__":
             scoring_function=scoring_function,
             modeling_function=modeling_function,
             lc_plotting_function=lc_plotting_function,
+            extra_plotting_functions=extra_plotting_functions,
             iterations=args.iterations,
             recovery_file=args.recovery_file,
             skip_tasks=args.skip_tasks,

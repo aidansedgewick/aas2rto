@@ -108,6 +108,7 @@ class Target:
         # Paths to scratch figures
         self.lc_fig_path = None
         self.vis_fig_paths = {}
+        self.additional_fig_paths = {}
 
         # Is this source known by any other names?
         self.alt_ids = alt_ids or {}
@@ -259,7 +260,11 @@ class Target:
             if obs not in obs_name:
                 continue
             for data_tuple in obs_rank_history:
-                data = dict(observatory=obs, mjd=data_tuple[1], ranking=data_tuple[0])
+                data = dict(
+                    observatory=obs,
+                    mjd=float(data_tuple[1]),
+                    ranking=int(data_tuple[0]),
+                )
                 row_list.append(data)
         if len(row_list) == 0:
             return

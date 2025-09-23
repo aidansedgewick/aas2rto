@@ -70,30 +70,46 @@ def calc_cv_prob_penalty(detections, ulim, model, cv_cand_detections=3, mag_thre
 
     det_pre_t0 = detections[detections["mjd"] < t0]
 
-    if len(det_pre_t0) < cv_cand_detections:
-        return 1.0, ["no cv candidate penalty"]
+    if len(ulim) == 0 or "diffmaglim" not in ulim.columns:
+        return 1.0, [f"no CV-penalty (no 'diffmaglim' data)"]
+
+    if len(det_pre_t0) > cv_cand_detections:
+        return 1.0, ["no CV-candid. penalty"]
 
     penalties = []
-    comments = []
+    # comments = []
 
+    penalty_strings = []
     for band, band_det in detections.groupby("band"):
 
         t0_mask = t0 - ulim["mjd"] < 15.0
-        band_ulim = ulim[ulim["band"] == band & t0_mask]
+        band_ulim = ulim[(ulim["band"] == band) & t0_mask]
         try:
-            modelmag = model.bandmag(band)
+            modelmag = model.bandmag(band, "ab", band_ulim["mjd"].values)
         except Exception as e:
             continue
 
         diff = band_ulim["diffmaglim"] - modelmag
 
-        pen_values = np.minimum(1.0, np.exp(diff - mag_thresh))
-        band_penalty = np.product(pen_values)
-        penalties.extend(band_penalty)
+        meas_penalties = np.minimum(1.0, np.exp(mag_thresh - diff))
+        band_penalty = min(np.prod(meas_penalties), 0.001)
+        penalties.append(band_penalty)
         if band_penalty < 0.99:
-            comments.append(f"cv-candidate penalty {band_penalty:.3f} for {band}")
+            penalty_strings.append(f"{band}={band_penalty:.3f}")
+            # comments.append(f"CV penalty {band_penalty:.3f} for {band}")
 
-    cv_penalty = np.product(penalties)
+    cv_penalty = np.prod(penalties)
+
+    comments = []
+    if cv_penalty < 1.0:
+        comments.append(f"CV penalty: {cv_penalty:.3e}")
+        n_items = 3
+        for ii in range(0, len(penalty_strings), n_items):
+            bands_comm = "CV-pen: " + " ".join(penalty_strings[ii : ii + n_items])
+            comments.append(bands_comm)
+    else:
+        comments.append("no CV penalty")
+
     return cv_penalty, comments
 
 
@@ -111,7 +127,7 @@ def calc_color_factor(gmag, rmag):
     return color_factor
 
 
-DEFAULT_SCORING_SOURCES = ["ztf", "yse"]
+DEFAULT_SCORING_SOURCES = ["ztf", "yse", "atlas"]
 DEFAULT_SCORING_BANDS = "ztfg ztfr ztfi".split() + "ps1::g ps1::r ps1::i ps1::z".split()
 gal_center = SkyCoord(frame="galactic", l=0.0, b=0.0, unit="deg")
 
@@ -188,13 +204,20 @@ class SupernovaPeakScore:
             return -1.0, ["no compiled lightcurve"]
 
         clc = target.compiled_lightcurve
-        mask_list = []
+        det_mask_list = []
+        ulim_mask_list = []
         for source in self.scoring_sources:
-            source_mask = (clc["source"] == source) & (clc["tag"] == "valid")
-            mask_list.append(source_mask.values)
+            source_det_mask = (clc["source"] == source) & (clc["tag"] == "valid")
+            det_mask_list.append(source_det_mask.values)
 
-        detections_mask = sum(mask_list).astype(bool)
+            source_ulim_mask = (clc["source"] == source) & (clc["tag"] == "upperlim")
+            ulim_mask_list.append(source_ulim_mask.values)
+
+        detections_mask = sum(det_mask_list).astype(bool)
         detections = clc[detections_mask]
+
+        ulim_mask = sum(ulim_mask_list).astype(bool)
+        upperlimits = clc[ulim_mask]
 
         if len(detections) == 0:
             return -1.0, ["no detections"]
@@ -337,23 +360,24 @@ class SupernovaPeakScore:
                         msg = f"model chisq={chisq:.3f} with ndof={ndof}"
                         scoring_comments.append(msg)
                     except ZeroDivisionError as e:
-                        scoring_comments.append(f"model has ndof=0")
-                    # TODO how to use chisq_nu properly?
+                        scoring_comments.append(f"model has ndof={ndof} ?")
 
-            if chisq_nu is not None and chisq_nu > 0:
-                chisq_factor = calc_chisq_factor(chisq_nu)
-                factors["chisq_factor"] = chisq_factor
-                scoring_comments.append(
-                    f"chisq factor {chisq_factor:.2f} from chisq_nu{chisq_nu:.2f}"
-                )
+            if isinstance(chisq_nu, float):
+                if chisq_nu > 0.0:
+                    f_chisq = calc_chisq_factor(chisq_nu)
+                    factors["chisq_factor"] = f_chisq
+                    chisq_comm = f"chisq factor {f_chisq:.2f} (chisq_nu={chisq_nu:.3f})"
+                else:
+                    chisq_comm = f"no factor based on chisq_nu={chisq_nu:.3f}"
             else:
-                scoring_comments.append(f"no factor based on chisq_nu={chisq_nu}")
+                chisq_comm = f"no f_chisq: non-float chisq_nu={chisq_nu})"
+            scoring_comments.append(chisq_comm)
 
             ###===== Time from peak?
             t0 = sncosmo_model["t0"]
             peak_dt = t_ref.mjd - sncosmo_model["t0"]
             if not np.isfinite(peak_dt):
-                interest_factor = 1.0
+                f_interest = 1.0
                 msg = (
                     f"{target_id} interest_factor not finite:\n    "
                     f"dt={peak_dt:.2f}, mjd={t_ref.mjd:.2f}, t0={t0:.2f}"
@@ -362,15 +386,15 @@ class SupernovaPeakScore:
                 logger.warning(msg)
                 scoring_comments.append(msg)
             else:
-                interest_factor = peak_only_interest_function(peak_dt)
+                f_interest = peak_only_interest_function(peak_dt)
 
-            if chisq_nu is not None and chisq_nu < self.max_chisq_nu and chisq_nu > 0:
-
-                factors["interest_factor"] = interest_factor
-                interest_comment = (
-                    f"interest {interest_factor:.2f} from peak_dt={peak_dt:+.2f}d"
-                )
-                scoring_comments.append(interest_comment)
+            if isinstance(chisq_nu, float):
+                if (0.0 < chisq_nu) and chisq_nu < self.max_chisq_nu:
+                    factors["interest_factor"] = f_interest
+                    comm = f"interest {f_interest:.2f} from peak_dt={peak_dt:+.2f}d"
+                    scoring_comments.append(comm)
+                else:
+                    comm = f"ignore interest {f_interest:.2f}/peak_dt={peak_dt:+.2f}d because chisq_nu={chisq_nu:.3f}"
 
                 if peak_dt > self.max_timespan:
                     reject = True
@@ -378,14 +402,15 @@ class SupernovaPeakScore:
                     reject_comments.append(comm)
 
             else:
-                chisq_str = f"{chisq_nu:.2f}" if chisq_nu else chisq_nu
-                comm = (
-                    f"ignore interest {interest_factor:.2f} from chisq_nu {chisq_str}"
-                )
+                comm = f"ignore interest as non-float chisq_nu {chisq_nu}"
                 scoring_comments.append(comm)
 
-            ###===== Blue colour?
+            ###===== Penalty for likely CVs?
+            cv_penalty, cv_comms = calc_cv_prob_penalty(detections, upperlimits, model)
+            factors["cv_penalty"] = cv_penalty
+            scoring_comments.extend(cv_comms)
 
+            ###===== Blue colour?
             # ztfg_mag = sncosmo_model.bandmag("ztfg", "ab", t_ref.mjd)
             # ztfr_mag = sncosmo_model.bandmag("ztfr", "ab", t_ref.mjd)
 
@@ -407,7 +432,7 @@ class SupernovaPeakScore:
         scoring_factors = np.array(list(factors.values()))
         if not all(scoring_factors > 0):
             print(detections)
-            neg_factors = "REJECT:\n" + "\n".join(
+            neg_factors = "EXCLUDE:\n" + "\n".join(
                 f"    {k}={v}" for k, v in factors.items() if not v > 0
             )
             reject_comments.append(neg_factors)

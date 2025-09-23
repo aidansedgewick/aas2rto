@@ -801,6 +801,7 @@ class TargetSelector:
         modeling_function: Callable = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
+        extra_plotting_functions: List[Callable] = None,
         skip_tasks: list = None,
         startup: bool = False,
         t_ref: Time = None,
@@ -949,6 +950,14 @@ class TargetSelector:
                 self.plotting_manager.plot_all_target_visibilities(
                     observatory, t_ref=t_ref
                 )
+
+            # self.plotting_manager.plot_rank_histories(t_ref=t_ref)
+            if extra_plotting_functions is not None:
+                for plotting_func in extra_plotting_functions:
+                    self.plotting_manager.plot_additional_figures(
+                        plotting_func, t_ref=t_ref
+                    )
+
         else:
             logger.info("skip plotting")
         perf_times["plotting"] = time.perf_counter() - t1
@@ -967,7 +976,7 @@ class TargetSelector:
             self.recovery_manager.write_recovery_file(t_ref=t_ref)
             # self.write_score_histories(t_ref=t_ref)
             self.recovery_manager.write_rank_histories(t_ref=t_ref)
-        perf_times["recovery_files"] = time.perf_counter() - t1
+        perf_times["recovery"] = time.perf_counter() - t1
 
         # ====================== Broadcast any messages ====================== #
         t1 = time.perf_counter()
@@ -990,7 +999,7 @@ class TargetSelector:
 
         print(
             f"time summary:\n    "
-            + f"\n    ".join(f"{k}={v:.5e}" for k, v in perf_times.items())
+            + f"\n    ".join(f"{k:10} = {v: 6.2f}s" for k, v in perf_times.items())
         )
 
         return None
@@ -1002,6 +1011,7 @@ class TargetSelector:
         modeling_function: List[Callable] = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
+        extra_plotting_functions: List[Callable] = None,
         recovery_file=False,
         skip_tasks=None,
         iterations=None,
@@ -1134,6 +1144,7 @@ class TargetSelector:
                     modeling_function=modeling_function,
                     lightcurve_compiler=lightcurve_compiler,
                     lc_plotting_function=lc_plotting_function,
+                    extra_plotting_functions=extra_plotting_functions,
                     skip_tasks=loop_skip_tasks,
                     startup=startup,
                     t_ref=t_ref,

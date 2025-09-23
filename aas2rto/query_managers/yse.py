@@ -140,7 +140,8 @@ def get_object_updates(
                 )
     if len(updates) > 0:
         updates_df = pd.DataFrame(updates)
-        updates_df.sort_values("name")
+        updates_df.sort_values("name", "ndetections")
+        updates_df.drop_duplicates("name", keep="last")
         return updates_df
     else:
         return None
@@ -296,6 +297,7 @@ class YseQueryManager(BaseQueryManager):
                 existing_results = self.query_results.get(query_name)
 
                 new_results = YseQuery.query_explorer(query_id, self.auth)
+
                 new_results.to_csv(query_results_file, index=False)
 
                 if new_results.empty:
@@ -323,7 +325,7 @@ class YseQueryManager(BaseQueryManager):
                 warnings.warn(Warning(msg))
                 continue
 
-            logger.info("{len(updates)} for {query_nae}")
+            logger.info(f"{len(updates)} for {query_name}")
 
             query_pattern = self.object_queries[query_name]
             coordinate_cols = query_pattern.get("coordinate_cols")
@@ -610,10 +612,10 @@ class YseQueryManager(BaseQueryManager):
             to_query = self.get_lightcurves_to_query(t_ref=t_ref)
             success, failed = self.perform_lightcurve_queries(to_query, t_ref=t_ref)
 
-            # to_query = self.get_transient_parameters_to_query(t_ref=t_ref)
-            # success, failed = self.perform_transient_parameters_queries(
-            #    to_query, t_ref=t_ref
-            # )
+            to_query = self.get_transient_parameters_to_query(t_ref=t_ref)
+            success, failed = self.perform_transient_parameters_queries(
+                to_query, t_ref=t_ref
+            )
 
         self.update_yse_ids()
         loaded, missing = self.load_transient_parameters(t_ref=t_ref)

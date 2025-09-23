@@ -296,7 +296,11 @@ class TnsQueryManager(BaseQueryManager):
                 self.tns_results.sort_values(["name", "mjdmod"], inplace=True)
                 self.tns_results.drop_duplicates(inplace=True, keep="last")
 
-        self.match_tns_results_by_coordinates()
+        try:
+            self.match_tns_results_by_coordinates()
+        except Exception as e:
+            logger.error("e")
+            return e
 
 
 def build_tns_headers(tns_user, tns_uid):

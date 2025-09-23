@@ -825,7 +825,7 @@ class FinkQueryManager(BaseQueryManager):
 
             cutouts_are_None = [im is None for k, im in fink_data.cutouts.items()]
             for candid in fink_data.detections["candid"][::-1]:
-                cutouts_filepath = self.get_cutouts_file(target_id, candid)
+                cutouts_filepath = self.get_cutouts_file(fink_id, candid)
                 if cutouts_filepath.exists():
                     cutouts_candid = fink_data.meta.get("cutouts_candid", None)
                     if cutouts_candid == candid:

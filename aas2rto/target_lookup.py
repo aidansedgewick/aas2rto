@@ -154,19 +154,20 @@ class TargetLookup:
 
         for group in target_groups:
             if len(group) == 1:
+                # don't bother with merge of one target alone.
                 continue
             targets_to_merge = []
+            ids_to_merge = []
             for target_id in group:
+                if target_id in ids_to_merge:
+                    logger.warning(f"have already prepared {target_id} for merge!")
+                    continue
                 target_ii = self.pop(target_id)
                 if target_ii is None:
-<<<<<<< HEAD
                     logger.warning(f"{target_id} popped target is None!")
-=======
-                    logger.warning(f"In consolidate_targets:{target_id} RETURNED NONE!")
                     continue
-
->>>>>>> origin/refactor/aug
                 targets_to_merge.append(target_ii)
+                ids_to_merge.append(target_id)
             merged = merge_targets(
                 targets_to_merge, sort=sort, warn_overwrite=warn_overwrite
             )

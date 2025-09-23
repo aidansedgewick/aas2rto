@@ -408,7 +408,9 @@ class AlerceQueryManager(BaseQueryManager):
         t_ref = t_ref or Time.now()
 
         to_update = []
-        for oid, target in self.target_lookup.items():
+        for target_id, target in self.target_lookup.items():
+
+            oid = alerce_id_from_target(target)
             lightcurve_file = self.get_lightcurve_file(oid)
             lightcurve_file_age = calc_file_age(
                 lightcurve_file, t_ref, allow_missing=True
@@ -462,55 +464,6 @@ class AlerceQueryManager(BaseQueryManager):
             logger.info(f"lightcurve queries in {t_end - t_start:.1f}s")
             logger.info(f"{N_success} successful, {N_failed} failed lc queries")
         return success, failed
-
-    # def load_target_lightcurves(self, oid_list: List[str] = None, t_ref: Time = None):
-    #     t_ref = t_ref or Time.now()
-
-    #     loaded = []
-    #     missing = []
-    #     skipped = []
-    #     t_start = time.perf_counter()
-
-    #     if oid_list is None:
-    #         oid_list = list(self.target_lookup.keys())
-    #         logger.info(f"try loading all {len(oid_list)} lcs in target_lookup")
-    #     else:
-    #         logger.info(f"try loading {len(oid_list)} lcs")
-
-    #     for oid in oid_list:
-    #         # TODO: not optimum to read every time... but not a bottleneck for now.
-    #         lightcurve = self.load_single_lightcurve(oid)
-    #         if lightcurve is None:
-    #             missing.append(oid)
-    #             logger.info(f"{oid} lightcurve is bad")
-    #             continue
-
-    #         target = self.target_lookup.get(oid, None)
-    #         if target is None:
-    #             logger.warning(f"load_lightcurve: {oid} not in target_lookup!")
-    #             missing.append(oid)
-    #             continue
-    #         else:
-    #             alerce_data = target.get_target_data("alerce")
-    #             existing_lightcurve = alerce_data.lightcurve
-    #             if existing_lightcurve is not None:
-    #                 if len(lightcurve) <= len(existing_lightcurve):
-    #                     skipped.append(oid)
-    #                     continue
-    #         loaded.append(oid)
-    #         lightcurve = lightcurve[lightcurve["jd"] < t_ref.jd]
-    #         alerce_data.add_lightcurve(lightcurve)
-    #         target.updated = True
-    #     t_end = time.perf_counter()
-
-    #     N_loaded = len(loaded)
-    #     N_missing = len(missing)
-    #     N_skipped = len(skipped)
-    #     # if N_loaded > 0:
-    #     logger.info(
-    #         f"loaded {N_loaded}, missing {N_missing} lightcurves in {t_end-t_start:.1f}s"
-    #     )
-    #     return loaded, missing
 
     def load_single_lightcurve(self, oid: str, t_ref=None):
         lightcurve_file = self.get_lightcurve_file(oid)
@@ -579,13 +532,17 @@ class AlerceQueryManager(BaseQueryManager):
         t_ref = t_ref or Time.now()
 
         to_query = []
-        for oid, target in self.target_lookup.items():
+        for target_id, target in self.target_lookup.items():
             alerce_data = target.get_target_data("alerce")
             if alerce_data.detections is None:
                 continue
+            if len(alerce_data.detections) == 0:
+                continue
+
             candid = alerce_data.detections.candid.iloc[-1]
 
             # If the cutouts file for our latest candid exists, we don't need to requery...
+            oid = alerce_id_from_target(target)
             cutout_file = self.get_cutouts_file(oid, candid, fmt="fits")
             cutout_file_age = calc_file_age(cutout_file, t_ref, allow_missing=True)
             if cutout_file_age > self.query_parameters["lightcurve_update_interval"]:
@@ -651,13 +608,14 @@ class AlerceQueryManager(BaseQueryManager):
         loaded_cutouts = []
         missing_cutouts = []
         t_start = time.perf_counter()
-        for oid, target in self.target_lookup.items():
+        for target_id, target in self.target_lookup.items():
             alerce_data = target.target_data.get("alerce", None)
             if alerce_data is None:
                 continue
             if alerce_data.detections is None:
                 continue
 
+            oid = alerce_id_from_target(target)
             cutouts = {}
             cutouts_candid = alerce_data.meta.get("cutouts_candid", None)
             for candid in alerce_data.detections["candid"][::-1]:
@@ -690,15 +648,17 @@ class AlerceQueryManager(BaseQueryManager):
 
         # self.load_existing_query_results(t_ref=t_ref)
 
-        queries_to_rerun = self.get_queries_to_rerun()
-        updated_objects = self.query_for_object_updates(
-            to_requery=queries_to_rerun, t_ref=t_ref
-        )
-        new_targets = self.new_targets_from_updates(updated_objects, t_ref=t_ref)
+        if not startup:
+            queries_to_rerun = self.get_queries_to_rerun()
+            updated_objects = self.query_for_object_updates(
+                to_requery=queries_to_rerun, t_ref=t_ref
+            )
+            new_targets = self.new_targets_from_updates(updated_objects, t_ref=t_ref)
 
-        # Lightcurves
-        lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
-        success, failed = self.perform_lightcurve_queries(lcs_to_query, t_ref=t_ref)
+            # Lightcurves
+            lcs_to_query = self.get_lightcurves_to_query(t_ref=t_ref)
+            success, failed = self.perform_lightcurve_queries(lcs_to_query, t_ref=t_ref)
+
         loaded_lcs, missing_lcs = self.load_target_lightcurves(
             id_from_target_function=alerce_id_from_target, t_ref=t_ref
         )
@@ -706,6 +666,7 @@ class AlerceQueryManager(BaseQueryManager):
         # Query probabilities of targets we've just updated.
 
         # Cutouts
-        # missing_cutouts = self.get_cutouts_to_query(t_ref=t_ref)
-        # success, failed = self.perform_cutouts_queries(missing_cutouts)
-        # self.load_cutouts()
+        if not startup:
+            missing_cutouts = self.get_cutouts_to_query(t_ref=t_ref)
+            success, failed = self.perform_cutouts_queries(missing_cutouts)
+            self.load_cutouts()

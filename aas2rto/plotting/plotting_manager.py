@@ -64,7 +64,7 @@ class PlottingManager:
             fig_path = self.path_manager.get_lightcurve_plot_path(target_id)
             target.lc_fig_path = fig_path  # useful to attach fig path to target
             fig_age = utils.calc_file_age(fig_path, t_ref, allow_missing=True)
-            if lazy_plotting and (fig_age < interval):
+            if lazy_plotting and (fig_age < interval) and not target.updated:
                 skipped.append(target_id)
                 msg = f"skip {target_id} lc: age {fig_age:.2f} < {interval:.2f}"
                 logger.debug(msg)
@@ -130,14 +130,87 @@ class PlottingManager:
 
         for target_id, target in self.target_lookup.items():
             rank_history = target.get_rank_history(obs_name="no_observatory")
+            if len(rank_history) == 0:
+                continue
+
             if all(rank_history > minimum_rank):
                 continue
 
             recent_mask = t_ref.mjd - rank_history["mjd"] < rank_lookback
             recent_history = rank_history[recent_mask]
 
-            ax.plot(recent_history["mjd"], recent_history["rank"], label=target_id)
+            ax.step(
+                recent_history["mjd"],
+                recent_history["rank"],
+                label=target_id,
+                where="pre",
+            )
 
         ax.set_ylim(minimum_rank + 0.5, 0.5)
-        ax.set_yaxis("Rank")
-        ax.set_xlabel("")
+        ax.set_ylabel("Rank")
+        ax.set_xlabel("Time [mjd]")
+
+        fig_path = self.path_manager.scratch_path / "rank_histories.png"
+        fig.savefig(fig_path)
+        plt.close(fig)
+
+    def plot_additional_figures(self, func, t_ref=None):
+        t_ref = t_ref or Time.now()
+
+        plot_name = getattr(func, "plot_name", None)
+        if plot_name is None:
+            plot_name = func.__name__
+
+        default_interval = self.config["plotting_interval"]
+        default_lazy_plotting = self.config["lazy_plotting"]
+
+        lazy_plotting = getattr(func, "lazy_plotting", None)
+        if lazy_plotting is None:
+            lazy_plotting = default_lazy_plotting
+            # TODO or not: warning here?
+
+        interval = getattr(func, "plotting_interval", None)
+        if interval is None:
+            interval = default_interval
+            # TODO or not: raise warining here?
+
+        output_dir = self.path_manager.scratch_path / "extra_plots" / plot_name
+        output_dir.mkdir(exist_ok=True, parents=True)
+
+        plotted = []
+        skipped = []
+        returned_none = []
+        failed = []
+        for target_id, target in self.target_lookup.items():
+            fig_path = output_dir / f"{target_id}.png"
+            fig_age = utils.calc_file_age(fig_path, t_ref, allow_missing=True)
+            if lazy_plotting and (fig_age < interval) and not target.updated:
+                skipped.append(target_id)
+                msg = (
+                    f"skip {target_id} {plot_name}: age {fig_age:.2f} < {interval:.2f}"
+                )
+                logger.debug(msg)
+                continue
+
+            # try:
+            fig = func(target, t_ref=t_ref)
+            # except Exception as e:
+            #    logger.error(type(e), e)
+            #    failed.append(target_id)
+            #    continue
+            if fig is None:
+                returned_none.append(target_id)
+                continue
+
+            plotted.append(target_id)
+            target.additional_fig_paths[plot_name] = fig_path
+
+            fig.savefig(fig_path)
+            plt.close(fig)
+
+        if len(failed) > 0:
+            logger.error(f"{len(failed)} failed to plot!")
+
+        logger.info(
+            f"{len(plotted)} plotted, {len(skipped)} skipped, {len(returned_none)} returned 'None'"
+        )

@@ -47,7 +47,9 @@ class MessagingManager:
                 self.slack_messenger = msgr
             elif msgr_name == "git_web":
                 msgr = GitWebpageManager(
-                    msgr_config, self.path_manager.lookup.get("www_path", None)
+                    msgr_config,
+                    self.path_manager.lookup.get("www_path", None),
+                    self.target_lookup,
                 )
                 self.git_webpage_manager = msgr
             else:
@@ -110,15 +112,22 @@ class MessagingManager:
                 vis_fig_paths.append(vis_fig_path)
 
             if self.telegram_messenger is not None:
-                self.telegram_messenger.message_users(texts=message_text)
-                self.telegram_messenger.message_users(img_paths=lc_fig_path)
-                self.telegram_messenger.message_users(
-                    texts="visibilities", img_paths=vis_fig_paths
-                )
+                try:
+                    self.telegram_messenger.message_users(texts=message_text)
+                    self.telegram_messenger.message_users(img_paths=lc_fig_path)
+                    self.telegram_messenger.message_users(
+                        texts="visibilities", img_paths=vis_fig_paths
+                    )
+                except Exception as e:
+                    logger.error(f"error in telegram messaging {e}")
+
             if self.slack_messenger is not None:
-                self.slack_messenger.send_messages(
-                    texts=message_text, img_paths=lc_fig_path
-                )
+                try:
+                    self.slack_messenger.send_messages(
+                        texts=message_text, img_paths=lc_fig_path
+                    )
+                except Exception as e:
+                    logger.error(f"error in slack messaging, {e}")
             sent.append(target_id)
             time.sleep(0.5)
 

@@ -61,7 +61,7 @@ class AtlasQueryManager(BaseQueryManager):
         "max_submitted": 20,
         "max_query_time": 180.0,
         "timeout": 20.0,
-        "submit_faint_limit": 20.0,
+        "submit_faint_limit": 22.0,
         "submit_stale_time": 7.0,
         "alt_id_priority": ("tns", "lsst", "ztf", "yse", "ls4"),
     }
@@ -398,6 +398,9 @@ class AtlasQueryManager(BaseQueryManager):
             if lc is None:
                 continue
             valid_lc = lc[lc["tag"] == "valid"]
+            if len(valid_lc) == 0:
+                continue
+
             if valid_lc["mag"].min() > faint_limit:
                 too_faint = too_faint + 1
                 continue
