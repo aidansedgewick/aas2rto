@@ -74,27 +74,32 @@ def calc_cv_prob_penalty(detections, ulim, model, cv_cand_detections=3, mag_thre
         return 1.0, [f"no CV-penalty (no 'diffmaglim' data)"]
 
     if len(det_pre_t0) > cv_cand_detections:
-        return 1.0, ["no CV-candid. penalty"]
+        return 1.0, [f"no CV penalty ({len(det_pre_t0)} det pre-t0)"]
 
     penalties = []
     # comments = []
 
     penalty_strings = []
-    for band, band_det in detections.groupby("band"):
+    for band, band_ulim in ulim.groupby("band"):
 
-        t0_mask = t0 - ulim["mjd"] < 15.0
-        band_ulim = ulim[(ulim["band"] == band) & t0_mask]
+        if band not in detections["band"]:
+            continue
+
+        t0_mask = band_ulim["mjd"] > t0 - 15.0  # anything after t0-15
+        pre_t0_ulim = band_ulim[t0_mask]
         try:
-            modelmag = model.bandmag(band, "ab", band_ulim["mjd"].values)
+            modelmag = model.bandmag(band, "ab", pre_t0_ulim["mjd"].values)
         except Exception as e:
             continue
 
-        diff = band_ulim["diffmaglim"] - modelmag
+        diff = pre_t0_ulim["diffmaglim"] - modelmag  # diff > 0? ulim fainter than model
+        large_diff_mask = diff > mag_thresh
 
-        meas_penalties = np.minimum(1.0, np.exp(mag_thresh - diff))
-        band_penalty = min(np.prod(meas_penalties), 0.001)
+        # meas_penalties = np.minimum(1.0, np.exp(mag_thresh - diff))
+        meas_penalties = np.exp(mag_thresh - diff[large_diff_mask])
+        band_penalty = max(np.prod(meas_penalties), 0.01)
         penalties.append(band_penalty)
-        if band_penalty < 0.99:
+        if band_penalty < 0.9999:
             penalty_strings.append(f"{band}={band_penalty:.3f}")
             # comments.append(f"CV penalty {band_penalty:.3f} for {band}")
 

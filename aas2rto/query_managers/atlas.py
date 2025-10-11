@@ -551,5 +551,5 @@ class AtlasQuery:
             textdata = photom_data.text
         else:
             textdata = photom_data
-        lightcurve = pd.read_csv(io.StringIO(textdata.replace("###", "")), sep="\s+")
+        lightcurve = pd.read_csv(io.StringIO(textdata.replace("###", "")), sep=r"\s+")
         return lightcurve

@@ -1,379 +1,697 @@
 import pytest
+from pathlib import Path
 
 import numpy as np
 
 import pandas as pd
 
-import matplotlib.pyplot as plt
-
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord
-from astropy.table import Table, vstack
+from astropy import units as u
+from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time
 
-from astroplan import FixedTarget, Observer
+from astroplan import Observer
 
-from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
-from aas2rto.obs_info import ObservatoryInfo
+from aas2rto.exc import UnknownObservatoryWarning
 from aas2rto.target import Target
-from aas2rto.target_data import TargetData, SettingLightcurveDirectlyWarning
+from aas2rto.target_data import TargetData
 
 
 @pytest.fixture
-def mock_lc_rows():
-    return [
-        (60000.0, 1, 20.5, 0.1, "upperlim"),
-        (60001.0, 2, 20.4, 0.1, "upperlim"),
-        (60002.0, 3, 20.3, 0.1, "nondet"),
-        (60003.0, 4, 20.2, 0.1, "nondet"),
-        (60004.0, 5, 20.1, 0.2, "badquality"),
-        (60005.0, 6, 20.1, 0.2, "badqual"),
-        (60006.0, 7, 20.1, 0.2, "dubious"),
-        (60007.0, 8, 20.0, 0.1, "valid"),
-        (60008.0, 9, 20.0, 0.1, "valid"),
-        (60009.0, 10, 20.0, 0.1, "valid"),
-    ]
+def t_ref():
+    return Time(60000.0, format="mjd")
 
 
 @pytest.fixture
-def mock_lc(mock_lc_rows):
-    return pd.DataFrame(mock_lc_rows, columns="mjd obsId mag magerr tag".split())
+def mock_coord():
+    return SkyCoord(ra=180.0, dec=0.0, unit=u.deg)
 
 
 @pytest.fixture
-def mock_lc_astropy(mock_lc_rows):
-    return Table(rows=mock_lc_rows, names="mjd obsId mag magerr tag".split())
+def obs_lasilla():
+    return Observer.at_site("lasilla")
 
 
 @pytest.fixture
-def mock_lc_updates_rows():
-    return [
-        (60010.0, 11, 19.9, 0.05, "valid"),
-        (60011.0, 12, 19.8, 0.05, "valid"),
-        (60012.0, 13, 19.7, 0.2, "badqual"),
-    ]
+def obs_lapalma():
+    return Observer.at_site("lapalma")
 
 
 @pytest.fixture
-def mock_lc_updates(mock_lc_updates_rows):
-    return pd.DataFrame(
-        mock_lc_updates_rows, columns="mjd obsId mag magerr tag".split()
-    )
+def mock_target(mock_coord, t_ref):
+    return Target("T001", mock_coord, t_ref=t_ref)
 
 
 @pytest.fixture
-def mock_lc_updates_astropy(mock_lc_updates_rows):
-    return Table(rows=mock_lc_updates_rows, names="mjd obsId mag magerr tag".split())
+def mock_target_data():
+    return TargetData(parameters={"redshift": 1.0, "salt_x1": 0.0, "salt_c": 0.1})
 
 
 @pytest.fixture
-def mock_target():
-    return Target("T101", ra=45.0, dec=60.0)
+def mock_target_with_data(mock_target: Target, mock_target_data: TargetData):
+    mock_target.target_data["src01"] = mock_target_data
+    return mock_target
 
 
 @pytest.fixture
-def test_observer():
-    location = EarthLocation(lat=55.6802, lon=12.5724, height=0.0)
-    return Observer(location, name="ucph")
+def mock_target_with_history(
+    mock_target: Target, obs_lasilla: Observer, obs_lapalma: Observer, t_ref: Time
+):
+    t_later = Time(60001.0, format="mjd")
 
+    # Add data for
+    mock_target.update_score_history(10.0, t_ref=t_ref)
+    mock_target.update_score_history(8.0, t_ref=t_later)
 
-def basic_lc_compiler(target: Target, t_ref: Time):
-    lc = target.target_data["ztf"].detections.copy()
-    lc.loc[:, "flux"] = 3631.0 * 10 ** (-0.4 * lc["mag"])
-    lc.loc[:, "fluxerr"] = lc["flux"] * lc["magerr"]
-    lc.loc[:, "band"] = "ztf-w"
-    return lc
+    mock_target.update_rank_history(1, t_ref=t_ref)
+    mock_target.update_rank_history(2, t_ref=t_later)
+
+    mock_target.update_score_history(5.0, observatory=obs_lasilla, t_ref=t_ref)
+    mock_target.update_score_history(4.0, observatory=obs_lasilla, t_ref=t_later)
+
+    mock_target.update_rank_history(11, observatory=obs_lasilla, t_ref=t_ref)
+    mock_target.update_rank_history(12, observatory=obs_lasilla, t_ref=t_later)
+
+    mock_target.update_score_history(2.5, observatory=obs_lapalma, t_ref=t_ref)
+    mock_target.update_score_history(2.0, observatory=obs_lapalma, t_ref=t_later)
+
+    mock_target.update_rank_history(21, observatory=obs_lapalma, t_ref=t_ref)
+    mock_target.update_rank_history(22, observatory=obs_lapalma, t_ref=t_later)
+    return mock_target
 
 
 class Test__TargetInit:
-    def test__target_init(self):
-        t_create = Time(60000.0, format="mjd")
-        t = Target("T101", ra=45.0, dec=60.0, t_ref=t_create)
 
-        assert t.target_id == "T101"
-        assert np.isclose(t.ra, 45.0)
-        assert np.isclose(t.dec, 60.0)
-        assert isinstance(t.coord, SkyCoord)
-        assert isinstance(t.astroplan_target, FixedTarget)
-        assert np.isclose(t.base_score, 1.0)
-        assert t.compiled_lightcurve is None
+    def test__basic_init(self, mock_coord, t_ref):
+        # Act
+        target = Target("mock_target", mock_coord, t_ref=t_ref)
 
-        assert isinstance(t.target_data, dict)
-        assert len(t.target_data) == 0
-        assert isinstance(t.observatory_info, dict)
-        assert set(t.observatory_info.keys()) == set(["no_observatory"])
+        # Assert
+        assert isinstance(target, Target)  # sort of important...
+        assert np.isclose(target.coord.ra.deg, 180.0)
+        assert np.isclose(target.coord.dec.deg, 0.0)
 
-        assert isinstance(t.models, dict)
-        assert len(t.models) == 0
-        assert isinstance(t.models_t_ref, dict)
-        assert len(t.models) == 0
+        assert isinstance(target.coord, SkyCoord)
 
-        assert isinstance(t.score_history, dict)
-        assert set(t.score_history.keys()) == set(["no_observatory"])
-        assert isinstance(t.score_history["no_observatory"], list)
-        assert len(t.score_history["no_observatory"]) == 0
-        assert isinstance(t.score_comments, dict)
-        assert set(t.score_comments.keys()) == set(["no_observatory"])
-        assert set(t.score_comments["no_observatory"]) == set()
-        assert isinstance(t.rank_history, dict)
-        assert set(t.rank_history.keys()) == set(["no_observatory"])
-        assert isinstance(t.rank_history["no_observatory"], list)
-        assert len(t.rank_history["no_observatory"]) == 0
+        assert isinstance(target.observatory_info, dict)
+        assert len(target.observatory_info) == 1
+        assert set(target.observatory_info.keys()) == set(["no_observatory"])
+        assert target.observatory_info["no_observatory"] is None
 
-        assert isinstance(t.creation_time, Time)
-        assert np.isclose(t.creation_time.mjd, 60000.0)
-        assert t.target_of_opportunity is False
-        assert t.updated is False
-        assert t.to_reject is False
-        assert t.send_updates is False
-        assert isinstance(t.update_messages, list)
-        assert len(t.update_messages) == 0
-        assert isinstance(t.sudo_messages, list)
-        assert len(t.sudo_messages) == 0
+        assert isinstance(target.models, dict)
+        assert len(target.models) == 0
+        assert isinstance(target.models_t_ref, dict)
+        assert len(target.models_t_ref) == 0
 
-    def test__init_with_target_data(self, mock_lc):
-        td = TargetData(lightcurve=mock_lc)
-        t = Target("T101", ra=45.0, dec=60.0, target_data={"data_source": td})
+        assert isinstance(target.target_data, dict)
+        assert len(target.target_data) == 0
 
-        assert set(t.target_data.keys()) == set(["data_source"])
-        assert isinstance(t.target_data["data_source"], TargetData)
-        assert len(t.target_data["data_source"].lightcurve) == 10
+        assert isinstance(target.alt_ids, dict)
+        assert set(target.alt_ids.keys()) == set(["<unknown>"])
+        assert target.alt_ids["<unknown>"] == "mock_target"
 
-    def test__modify_base_score(self):
-        t = Target("T101", ra=45.0, dec=60.0, base_score=1000.0)
+        assert np.isclose(target.creation_time.mjd, 60000.0)
 
-        assert np.isclose(t.base_score, 1000.0)
+        assert target.target_of_opportunity is False
+        assert target.updated is False
+        assert target.to_reject is False
 
-    def test__set_target_of_opportunity(self):
-        t = Target("T101", ra=45.0, dec=60.0, target_of_opportunity=True)
+        assert isinstance(target.update_messages, list)
+        assert isinstance(target.sudo_messages, list)
 
-        assert t.target_of_opportunity is True
+    def test__init_with_source(self):
+        # Arrange
+        alt_ids = {"src02": "target_A"}
 
-    def test__with_source(self):
-        t = Target("T101", ra=45.0, dec=60.0, source="cool_survey")
-        assert set(t.alt_ids.keys()) == set(["cool_survey"])
+        # Act
+        target = Target("T001", 180.0, 0.0, source="src01", alt_ids=alt_ids)
 
-    def test__with_alt_ids(self):
-        alt_ids = {"cool_src": "T101", "other_src": "AAA"}
-        t = Target("T101", ra=45.0, dec=60.0, alt_ids=alt_ids)
-        assert set(t.alt_ids) == set(["cool_src", "other_src"])
+        # Assert
+        assert set(target.alt_ids.keys()) == set(["src01", "src02"])
+        assert target.alt_ids["src01"] == "T001"
+        assert target.alt_ids["src02"] == "target_A"
 
-    def test__no_source(self):
-        t = Target("T101", ra=45.0, dec=60.0)
-        assert set(t.alt_ids.keys()) == set(["<unknown>"])
+    def test__init_no_source(self):
+        # Arrange
+        alt_ids = {"src01": "T001", "src02": "target_A"}
 
-    def test__no_source_but_alts(self):
-        alt_ids = {"other_src": "AAA"}
-        t = Target("T101", ra=45.0, dec=60.0, alt_ids=alt_ids)
-        assert set(t.alt_ids.keys()) == set(["<unknown>", "other_src"])
+        # Act
+        target = Target("T001", 180.0, 0.0, alt_ids=alt_ids)
+
+        # Assert
+        assert set(target.alt_ids.keys()) == set(["src01", "src02"])
+        assert target.alt_ids["src01"] == "T001"
+        assert target.alt_ids["src02"] == "target_A"
 
 
-class Test__TargetConvenienceMethods:
-    def test__update_coordinate(self, mock_target):
-        mock_target.update_coordinates(60.0, 70.0)
+# class Test__CoordinatesMethods:
+#    def test__update_coordinates(self, mock_target):
+#        pass
 
-        assert np.isclose(mock_target.ra, 60.0)
-        assert np.isclose(mock_target.dec, 70.0)
-        assert isinstance(mock_target.coord, SkyCoord)
-        assert np.isclose(mock_target.coord.ra.deg, 60.0)
-        assert np.isclose(mock_target.coord.dec.deg, 70.0)
-        assert isinstance(mock_target.astroplan_target, FixedTarget)
 
-    def test__get_target_data_create_missing(self, mock_target):
-        assert isinstance(mock_target.target_data, dict)
-        assert "my_source" not in mock_target.target_data
-        result = mock_target.get_target_data("my_source")
-        assert isinstance(result, TargetData)
-        assert result.lightcurve is None
+class Test__TargetDataMethods:
+    def test__get_missing_data(self, mock_target: Target):
+        # Arrange
+        assert "src01" not in mock_target.target_data
 
-    def test__get_target_data_existing(self, mock_target):
-        td = TargetData(parameters=dict(a=1, b=10, c=100))
-        mock_target.target_data["test_data"] = td
+        # Act
+        target_data = mock_target.get_target_data("src01")
 
-        result = mock_target.get_target_data("test_data")
-        assert result.parameters["b"] == 10
+        # Assert
+        assert isinstance(target_data, TargetData)
+        assert "src01" in mock_target.target_data
 
-    def test__update_score_history(self, mock_target):
-        t_ref = Time(60000.0, format="mjd")
-        mock_target.update_score_history(1000.0, None, t_ref=t_ref)
+    def test__get_existing_data(self, mock_target_with_data: Target):
+        # Act
+        t_data = mock_target_with_data.get_target_data("src01")
 
-        hist = mock_target.score_history
-        assert len(hist["no_observatory"]) == 1
-        assert isinstance(hist["no_observatory"][0], tuple)
-        assert np.isclose(hist["no_observatory"][0][0], 1000.0)
-        assert isinstance(hist["no_observatory"][0][1], Time)
-        assert np.isclose(hist["no_observatory"][0][1].mjd, 60000.0)  # Correctly set.
+        # Assert
+        assert t_data.lightcurve is None
+        assert isinstance(t_data.parameters, dict)
+        assert set(t_data.parameters.keys()) == set(["redshift", "salt_x1", "salt_c"])
 
-    def test__update_score_history_new_observatory(self, mock_target, test_observer):
-        t_ref = Time(60000.0, format="mjd")
+    def test__updating_target_data(self, mock_target: Target):
+        # Act
+        t_data = mock_target.get_target_data("src02")
+        t_data.parameters["m0"] = -19.6
+
+        # Assert
+        assert np.isclose(mock_target.target_data["src02"].parameters["m0"], -19.6)
+
+
+class Test__ScoreHistoryMethods:
+    def test__update_score_history_no_observatory(
+        self, mock_target: Target, t_ref: Time
+    ):
+        # Arrange
+        assert len(mock_target.score_history["no_observatory"]) == 0
+
+        # Act
+        mock_target.update_score_history(1.0, t_ref=t_ref)
+
+        # Assert
+        assert len(mock_target.score_history["no_observatory"]) == 1
+        score_hist0 = mock_target.score_history["no_observatory"][0]
+
+        assert isinstance(score_hist0, tuple)
+        assert len(score_hist0) == 2
+        assert np.isclose(score_hist0[0], 1.0)
+        assert np.isclose(score_hist0[1], 60000.0)
+
+    def test__update_score_history_observer_class(
+        self, mock_target: Target, obs_lasilla: Observer, t_ref: Time
+    ):
+        # Arrange
         assert set(mock_target.score_history.keys()) == set(["no_observatory"])
 
-        mock_target.update_score_history(1000.0, test_observer, t_ref=t_ref)
+        # Act
+        mock_target.update_score_history(1.0, observatory=obs_lasilla, t_ref=t_ref)
 
-        assert set(mock_target.score_history.keys()) == set(["no_observatory", "ucph"])
-        assert len(mock_target.score_history["ucph"]) == 1
-        assert isinstance(mock_target.score_history["ucph"][0], tuple)
-        assert np.isclose(mock_target.score_history["ucph"][0][0], 1000.0)
-        assert isinstance(mock_target.score_history["ucph"][0][1], Time)
-        assert np.isclose(
-            mock_target.score_history["ucph"][0][1].mjd, 60000.0
-        )  # Correctly set.
+        # Assert
+        expected_keys = ["no_observatory", "lasilla"]
+        assert set(mock_target.score_history.keys()) == set(expected_keys)
 
-    def test__get_last_score_no_obs(self, mock_target, test_observer):
-        t_ref_01 = Time(60000.0, format="mjd")
-        mock_target.update_score_history(50.0, None, t_ref=t_ref_01)
-        mock_target.update_score_history(60.0, test_observer, t_ref=t_ref_01)
-        t_ref_02 = Time(60010.0, format="mjd")
-        mock_target.update_score_history(25.0, None, t_ref=t_ref_02)
-        mock_target.update_score_history(35.0, test_observer, t_ref=t_ref_02)
-
-        result = mock_target.get_last_score()  # No args means obs=None
-        assert np.isclose(result, 25.0)
-
-        assert np.isclose(mock_target.get_last_score(None), 25.0)
-        assert np.isclose(mock_target.get_last_score("no_observatory"), 25.0)
-
-        result_with_time = mock_target.get_last_score(return_time=True)
-        assert isinstance(result_with_time, tuple)
-        assert np.isclose(result_with_time[0], 25.0)
-        assert isinstance(result_with_time[1], Time)
-        assert np.isclose(result_with_time[1].mjd, 60010.0)
-
-    def test__get_last_score_observatory(self, mock_target, test_observer):
-        t_ref_01 = Time(60000.0, format="mjd")
-        mock_target.update_score_history(50.0, None, t_ref=t_ref_01)
-        mock_target.update_score_history(60.0, test_observer, t_ref=t_ref_01)
-        t_ref_02 = Time(60010.0, format="mjd")
-        mock_target.update_score_history(25.0, None, t_ref=t_ref_02)
-        mock_target.update_score_history(35.0, test_observer, t_ref=t_ref_02)
-
-        result = mock_target.get_last_score(test_observer)
-        assert np.isclose(result, 35.0)
-        assert np.isclose(mock_target.get_last_score("ucph"), 35.0)
-
-        result_with_time = mock_target.get_last_score(test_observer, return_time=True)
-        assert isinstance(result_with_time, tuple)
-        assert np.isclose(result_with_time[0], 35.0)
-        assert isinstance(result_with_time[1], Time)
-        assert np.isclose(result_with_time[1].mjd, 60010.0)
-
-    def test__no_exception_on_missing_score(self, mock_target):
         assert len(mock_target.score_history["no_observatory"]) == 0
-        result = mock_target.get_last_score()
-        assert result is None
+        assert len(mock_target.score_history["lasilla"]) == 1
+        score_hist0 = mock_target.score_history["lasilla"][0]
 
-        result_with_time = mock_target.get_last_score(return_time=True)
-        assert result_with_time[0] is None
-        assert result_with_time[1] is None
+        assert isinstance(score_hist0, tuple)
+        assert len(score_hist0) == 2
+        assert np.isclose(score_hist0[0], 1.0)
+        assert np.isclose(score_hist0[1], 60000.0)
 
-    def test__get_last_score_warn_on_missing(self, mock_target, test_observer):
-        assert "ucph" not in mock_target.score_history.keys()
+    def test__update_score_history_str_observer(
+        self, mock_target: Target, obs_lasilla: Observer, t_ref: Time
+    ):
+        # Arrange
+        assert set(mock_target.score_history.keys()) == set(["no_observatory"])
 
+        # Act
+        mock_target.update_score_history(1.0, observatory=obs_lasilla, t_ref=t_ref)
+
+        # Assert
+        expected_keys = ["no_observatory", "lasilla"]
+        assert set(mock_target.score_history.keys()) == set(expected_keys)
+
+        assert len(mock_target.score_history["no_observatory"]) == 0
+        assert len(mock_target.score_history["lasilla"]) == 1
+        score_hist0 = mock_target.score_history["lasilla"][0]
+
+        assert isinstance(score_hist0, tuple)
+        assert len(score_hist0) == 2
+        assert np.isclose(score_hist0[0], 1.0)
+        assert np.isclose(score_hist0[1], 60000.0)
+
+    def test__get_score_history_empty_no_fail(self, mock_target: Target):
+        # Act
+        score_hist = mock_target.get_score_history()
+
+        # Assert
+        assert isinstance(score_hist, pd.DataFrame)
+        assert score_hist.empty
+        assert set(score_hist.columns) == set(["score", "mjd", "observatory"])
+
+    def test__get_rank_history_missing_obs_no_fail(self, mock_target: Target):
+        # Act
         with pytest.warns(UnknownObservatoryWarning):
-            result = mock_target.get_last_score(test_observer)
-        assert result is None
+            score_hist = mock_target.get_score_history(observatory="palomar")
 
+        # Assert
+        assert isinstance(score_hist, pd.DataFrame)
+        assert score_hist.empty
+        assert set(score_hist.columns) == set(["score", "mjd", "observatory"])
+
+    def test__get_score_history_no_obs(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        score_hist = target.get_score_history()
+
+        # Assert
+        assert isinstance(score_hist, pd.DataFrame)
+        assert len(score_hist) == 6
+        assert set(score_hist.columns) == set(["score", "mjd", "observatory"])
+
+        expected_obs_names = ["no_observatory", "lasilla", "lapalma"]
+        assert set(score_hist["observatory"].values) == set(expected_obs_names)
+
+        # result should be sorted in (obs, mjd) - lasilla first alphabetically
+        assert np.isclose(score_hist["score"].iloc[0], 2.5)
+        assert np.isclose(score_hist["mjd"].iloc[0], 60000.0)
+        assert score_hist["observatory"].iloc[0] == "lapalma"
+
+        assert np.isclose(score_hist["score"].iloc[1], 2.0)
+        assert np.isclose(score_hist["mjd"].iloc[1], 60001.0)
+        assert score_hist["observatory"].iloc[1] == "lapalma"
+
+        assert np.isclose(score_hist["score"].iloc[3], 4.0)
+        assert np.isclose(score_hist["mjd"].iloc[3], 60001.0)
+        assert score_hist["observatory"].iloc[3] == "lasilla"
+
+        assert np.isclose(score_hist["score"].iloc[4], 10.0)
+        assert np.isclose(score_hist["mjd"].iloc[4], 60000.0)
+        assert score_hist["observatory"].iloc[4] == "no_observatory"
+
+    def test__get_score_history_obs_name(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history
+
+        # Act
+        score_hist = target.get_score_history(observatory="lasilla")
+
+        # Assert
+        assert len(score_hist) == 2
+        assert set(score_hist["observatory"]) == set(["lasilla"])
+
+    def test__get_score_history_obs_none(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history
+
+        # Act
+        score_hist = target.get_score_history(observatory=None)
+
+        # Assert
+        assert len(score_hist) == 2
+        assert set(score_hist["observatory"]) == set(["no_observatory"])
+        assert np.allclose(score_hist["score"].values, np.array([10.0, 8.0]))
+
+    def test__get_score_hist_observer_object(
+        self, mock_target_with_history: Target, obs_lasilla: Observer
+    ):
+        # Arrange
+        target = mock_target_with_history
+
+        # Act
+        score_hist = target.get_score_history(observatory=obs_lasilla)
+
+        # Assert
+        assert len(score_hist) == 2
+        assert set(score_hist["observatory"]) == set(["lasilla"])
+        assert np.allclose(score_hist["score"].values, np.array([5.0, 4.0]))
+
+    def test__get_score_history_limit_t_ref(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history
+        t_mid = Time(60000.5, format="mjd")
+
+        # Act
+        score_hist = target.get_score_history(t_ref=t_mid)
+
+        # Assert
+        assert len(score_hist) == 3
+
+        # only keep the ones before mjd=60000.5
+        assert np.allclose(score_hist["mjd"], 60000.0)
+
+    def test__get_last_score_no_obs(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        no_obs_score = target.get_last_score()
+
+        # Assert
+        assert np.isclose(no_obs_score, 8.0)
+
+    def test__get_last_score_str_observer(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        lasilla_score = target.get_last_score(observatory="lasilla")
+
+        # Assert
+        assert np.isclose(lasilla_score, 4.0)
+
+    def test__get_last_score_observer_obj(
+        self, mock_target_with_history: Target, obs_lasilla: Observer
+    ):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        lasilla_score = target.get_last_score(observatory=obs_lasilla)
+
+        # Assert
+        assert np.isclose(lasilla_score, 4.0)
+
+    def test__get_last_score_returns_time(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        last_score, mjd = target.get_last_score(return_time=True)
+
+        # Assert
+        assert np.isclose(last_score, 8.0)
+        assert np.isclose(mjd, 60001.0)
+
+    def test__get_last_score_missing_obs_no_fail(
+        self, mock_target_with_history: Target
+    ):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
         with pytest.warns(UnknownObservatoryWarning):
-            result = mock_target.get_last_score("ucph")
-        assert result is None
+            palomar_score = target.get_last_score(observatory="palomar")
+
+        assert palomar_score is None
 
 
-class Test__TargetStringMethods:
-    def test__dunder_str(self, mock_target):
-        s = str(mock_target)
-        assert isinstance(s, str)
+class Test__RankHistoryMethods:
+    def test__update_rank_history_no_observatory(
+        self, mock_target: Target, t_ref: Time
+    ):
+        # Arrange
+        assert len(mock_target.rank_history["no_observatory"]) == 0
 
-    def test__get_info_string(self, mock_target):
-        t_ref = Time(60000.0, format="mjd")
+        # Act
+        mock_target.update_rank_history(1, t_ref=t_ref)
 
-        info_str = mock_target.get_info_string(t_ref=t_ref)
+        # Assert
+        assert len(mock_target.rank_history["no_observatory"]) == 1
+        rank_hist0 = mock_target.rank_history["no_observatory"][0]
 
-        assert "2023-02-25" in info_str
-        assert "FINK" in info_str
-        assert "Lasair" in info_str
-        assert "coordinates" in info_str
-        assert "equatorial" in info_str
-        assert "galactic" in info_str
+        assert isinstance(rank_hist0, tuple)
+        assert len(rank_hist0) == 2
+        assert np.isclose(rank_hist0[0], 1)
+        assert np.isclose(rank_hist0[1], 60000.0)
 
-    def test__get_info_str_with_detections(self, mock_target, mock_lc):
-        t_ref = Time(60000.0, format="mjd")
-        td = TargetData(lightcurve=mock_lc)
-        mock_target.target_data["ztf"] = td
-        mock_target.compiled_lightcurve = basic_lc_compiler(mock_target, t_ref)
-        print(mock_target.compiled_lightcurve)
+    def test__update_rank_history_observer_class(
+        self, mock_target: Target, obs_lasilla: Observer, t_ref: Time
+    ):
+        # Arrange
+        assert set(mock_target.rank_history.keys()) == set(["no_observatory"])
 
-        info_str = mock_target.get_info_string()
-        assert "detections" in info_str
-        assert "3 ztf-w" in info_str
+        # Act
+        mock_target.update_rank_history(1.0, observatory=obs_lasilla, t_ref=t_ref)
 
-    def test_get_alt_names(self):
-        alt_ids = {"ztf": "T101", "other_src": "AAA", "tns": "2025abc"}
-        t = Target("T101", 45.0, 30.0, source="fink", alt_ids=alt_ids)
-        info_str = t.get_info_string()
+        # Assert
+        expected_keys = ["no_observatory", "lasilla"]
+        assert set(mock_target.rank_history.keys()) == set(expected_keys)
+
+        assert len(mock_target.rank_history["no_observatory"]) == 0
+        assert len(mock_target.rank_history["lasilla"]) == 1
+        rank_hist0 = mock_target.rank_history["lasilla"][0]
+
+        assert isinstance(rank_hist0, tuple)
+        assert len(rank_hist0) == 2
+        assert np.isclose(rank_hist0[0], 1)
+        assert np.isclose(rank_hist0[1], 60000.0)
+
+    def test__update_rank_history_str_observer(self, mock_target: Target, t_ref: Time):
+        # Arrange
+        assert set(mock_target.rank_history.keys()) == set(["no_observatory"])
+
+        # Act
+        mock_target.update_rank_history(99, observatory="lasilla", t_ref=t_ref)
+
+        # Assert
+        expected_keys = ["no_observatory", "lasilla"]
+        assert set(mock_target.rank_history.keys()) == set(expected_keys)
+
+        assert len(mock_target.rank_history["no_observatory"]) == 0
+        assert len(mock_target.rank_history["lasilla"]) == 1
+        rank_hist0 = mock_target.rank_history["lasilla"][0]
+
+        assert isinstance(rank_hist0, tuple)
+        assert len(rank_hist0) == 2
+        assert np.isclose(rank_hist0[0], 99)
+        assert np.isclose(rank_hist0[1], 60000.0)
+
+    def test__get_rank_history_empty_no_fail(self, mock_target: Target):
+        # Act
+        rank_hist = mock_target.get_rank_history()
+
+        # Assert
+        assert isinstance(rank_hist, pd.DataFrame)
+        assert rank_hist.empty
+        assert set(rank_hist.columns) == set(["ranking", "mjd", "observatory"])
+
+    def test__get_rank_history_missing_obs_no_fail(self, mock_target: Target):
+        # Act
+        with pytest.warns(UnknownObservatoryWarning):
+            rank_hist = mock_target.get_rank_history(observatory="palomar")
+
+        # Assert
+        assert isinstance(rank_hist, pd.DataFrame)
+        assert rank_hist.empty
+        assert set(rank_hist.columns) == set(["ranking", "mjd", "observatory"])
+
+    def test__get_rank_history_no_obs(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        rank_hist = target.get_rank_history()
+
+        # Assert
+        assert isinstance(rank_hist, pd.DataFrame)
+        assert len(rank_hist) == 6
+        assert set(rank_hist.columns) == set(["ranking", "mjd", "observatory"])
+
+        expected_obs_names = ["no_observatory", "lasilla", "lapalma"]
+        assert set(rank_hist["observatory"].values) == set(expected_obs_names)
+
+        # result should be sorted in (obs, mjd) - lasilla first alphabetically
+        assert np.isclose(rank_hist["ranking"].iloc[0], 21)
+        assert np.isclose(rank_hist["mjd"].iloc[0], 60000.0)
+        assert rank_hist["observatory"].iloc[0] == "lapalma"
+
+        assert np.isclose(rank_hist["ranking"].iloc[1], 22)
+        assert np.isclose(rank_hist["mjd"].iloc[1], 60001.0)
+        assert rank_hist["observatory"].iloc[1] == "lapalma"
+
+        assert np.isclose(rank_hist["ranking"].iloc[3], 12)
+        assert np.isclose(rank_hist["mjd"].iloc[3], 60001.0)
+        assert rank_hist["observatory"].iloc[3] == "lasilla"
+
+        assert np.isclose(rank_hist["ranking"].iloc[4], 1)
+        assert np.isclose(rank_hist["mjd"].iloc[4], 60000.0)
+        assert rank_hist["observatory"].iloc[4] == "no_observatory"
+
+    def test__get_rank_history_obs_name(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history
+
+        # Act
+        rank_hist = target.get_rank_history(observatory="lasilla")
+
+        # Assert
+        assert len(rank_hist) == 2
+        assert set(rank_hist["observatory"]) == set(["lasilla"])
+
+    def test__get_rank_history_obs_none(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history
+
+        # Act
+        rank_hist = target.get_rank_history(observatory=None)
+
+        # Assert
+        assert len(rank_hist) == 2
+        assert set(rank_hist["observatory"]) == set(["no_observatory"])
+        assert np.allclose(rank_hist["ranking"].values, np.array([1, 2]))
+
+    def test__get_rank_hist_observer_object(
+        self, mock_target_with_history: Target, obs_lasilla: Observer
+    ):
+        # Arrange
+        target = mock_target_with_history
+
+        # Act
+        rank_hist = target.get_rank_history(observatory=obs_lasilla)
+
+        # Assert
+        assert len(rank_hist) == 2
+        assert set(rank_hist["observatory"]) == set(["lasilla"])
+        assert np.allclose(rank_hist["ranking"].values, np.array([11, 12]))
+
+    def test__get_rank_history_limit_t_ref(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history
+        t_mid = Time(60000.5, format="mjd")
+
+        # Act
+        rank_hist = target.get_rank_history(t_ref=t_mid)
+
+        # Assert
+        assert len(rank_hist) == 3
+
+        # only keep the ones before mjd=60000.5
+        assert np.allclose(rank_hist["mjd"], 60000.0)
+
+    def test__get_last_rank_no_obs(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        no_obs_rank = target.get_last_rank()
+
+        # Assert
+        assert no_obs_rank == 2
+
+    def test__get_last_rank_str_observer(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        lasilla_rank = target.get_last_rank(observatory="lasilla")
+
+        # Assert
+        assert lasilla_rank == 12
+
+    def test__get_last_rank_observer_obj(
+        self, mock_target_with_history: Target, obs_lasilla: Observer
+    ):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        lasilla_rank = target.get_last_rank(observatory=obs_lasilla)
+
+        # Assert
+        assert lasilla_rank == 12
+
+    def test__get_last_rank_returns_time(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        last_rank, mjd = target.get_last_rank(return_time=True)
+
+        # Assert
+        assert last_rank == 2
+        assert np.isclose(mjd, 60001.0)
+
+    def test__get_last_rank_missing_obs_no_fail(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        with pytest.warns(UnknownObservatoryWarning):
+            palomar_rank = target.get_last_rank(observatory="palomar")
+
+        assert palomar_rank is None
+
+
+class Test__InfoLines:
+    # These tests are pretty silly - just check no crash.
+    def test__target_id_lines(self, mock_target: Target):
+        # Arrange
+        mock_target.alt_ids["ztf"] = "ZTF25abc"
+        mock_target.alt_ids["tns"] = "2025xyz"
+        mock_target.alt_ids["yse"] = "fYSE25_001"
+
+        # Act
+        id_lines = mock_target.get_target_id_info_lines()
+        info_str = " ".join(id_lines)
+
+        # Assert
+        assert "Aliases and brokers" in info_str
+        assert "FINK: fink-portal.org/ZTF25abc" in info_str
+        assert "Lasair: lasair-ztf.lsst.ac.uk/objects/ZTF25abc" in info_str
+        assert "ALeRCE: alerce.online/object/ZTF25abc" in info_str
+        assert "TNS: wis-tns.org/object/2025xyz" in info_str
+        assert "YSE: ziggy.ucolick.org/yse/transient_detail/fYSE25_001" in info_str
 
         assert "alt names" in info_str
-        assert "T101 (ztf,fink)" in info_str or "T101 (fink,ztf)" in info_str
-        assert "AAA (other_src)" in info_str
-        assert "2025abc (tns)" in info_str
+
+    def test__coordinate_info_lines(self, mock_target: Target):
+        # Act
+        info_lines = mock_target.get_coordinate_info_lines()
+        info_str = " ".join(info_lines)
+
+        # Assert
+        assert "equatorial (ra, dec)" in info_str
+        assert "galactic (l, b)" in info_str
 
 
 class Test__WriteComments:
-    def test__write_comments_no_comms(self, mock_target, tmp_path):
-        t_ref = Time(60000.0, format="mjd")
-        exp_comments_path = tmp_path / "T101_comments.txt"
+    def test__no_available_comments(
+        self, mock_target: Target, tmp_path: Path, t_ref: Time
+    ):
+        # Arrange
+        expected_comms_path = tmp_path / "T001_comments.txt"
+        assert not expected_comms_path.exists()
 
+        # Act
         mock_target.write_comments(tmp_path, t_ref=t_ref)
 
-        assert exp_comments_path.exists()
-        with open(exp_comments_path, "r") as f:
-            lines = f.readlines()
-        comments = " ".join(lines)
+        # Assert
+        assert expected_comms_path.exists()
+        with open(expected_comms_path) as f:
+            comms = f.readlines()
+        comm_str = " ".join(comms)
 
-        assert "no_observatory" in comments
-        assert "no score_comments provided" in comments
+        assert "Target T001 at " in comm_str
+        assert "Aliases and brokers" in comm_str
+        assert "Coordinates" in comm_str
+        assert "Photometry" in comm_str
 
-    def test__write_comments(self, mock_target, tmp_path):
-        t_ref = Time(60000.0, format="mjd")
-        exp_comments_path = tmp_path / "T101_comments.txt"
-        mock_target.score_comments["no_observatory"] = ["some comment"]
+        assert "no score_comments provided" in comm_str
+
+    def test__more_comments_available(
+        self, mock_target: Target, tmp_path: Path, t_ref: Time
+    ):
+        # Arrange
+        expected_comms_path = tmp_path / "T001_comments.txt"
+        mock_target.update_score_history(1.0)
+        mock_target.score_comments["no_observatory"] = ["the score is 1.0"]
+        mock_target.update_score_history(0.5, observatory="lasilla")
+        mock_target.score_comments["lasilla"] = ["lasilla score is 0.5"]
+
+        # Act
         mock_target.write_comments(tmp_path)
 
-        assert exp_comments_path.exists()
-        with open(exp_comments_path, "r") as f:
-            lines = f.readlines()
-        comments = " ".join(lines)
+        # Assert
+        assert expected_comms_path.exists()
+        with open(expected_comms_path) as f:
+            comms = f.readlines()
+        comm_str = " ".join(comms)
 
-        assert "some comment" in comments
-
-
-# class Test__TargetPlottingMethods:
-#     def test__plot_lightcurve_no_data(self, mock_target, tmp_path):
-#         t_ref = Time(60000.0, format="mjd")
-#         fig_path = tmp_path / "target_func_no_data.pdf"
-#         assert not fig_path.exists()
-
-#         mock_target.plot_lightcurve(t_ref=t_ref, fig_path=fig_path)
-
-#         assert fig_path.exists()
-#         assert mock_target.lamock_lc_fig_path == fig_path
-
-#     def test__plot_lightcurve_with_data(
-#         self, mock_target, ext_mock_lc, mock_cutouts, tmp_path
-#     ):
-#         t_ref = Time(60000.0, format="mjd")
-#         fig_path = tmp_path / "target_func_with_data.pdf"
-
-#         mock_target.target_data["fink"] = TargetData(lightcurve=ext_mock_lc)
-#         mock_target.plot_lightcurve(t_ref=t_ref, fig_path=fig_path)
-
-#         assert fig_path.exists()
-#         assert mock_target.lamock_lc_fig_path == fig_path
-
-#     def test__plot_observing_chart(self, mock_target, test_observer, tmp_path):
-#         t_ref = Time(60000.0, format="mjd")
-#         fig_path = tmp_path / "target_func_obs_chart.pdf"
-#         assert not fig_path.exists()
-
-#         mock_target.plot_observing_chart(test_observer, fig_path=fig_path)
-
-#         assert mock_target.latest_oc_fig_paths["ucph"] == fig_path
-#         assert fig_path.exists()
+        assert "Target T001 at " in comm_str
+        assert "Aliases and brokers" in comm_str
+        assert "Coordinates" in comm_str
+        assert "Photometry" in comm_str

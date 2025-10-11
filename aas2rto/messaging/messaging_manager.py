@@ -4,14 +4,12 @@ from logging import getLogger
 
 from astropy.time import Time
 
-
 from aas2rto.path_manager import PathManager
 from aas2rto.target_lookup import TargetLookup
 
-
 from aas2rto.messaging.telegram_messenger import TelegramMessenger
 from aas2rto.messaging.slack_messenger import SlackMessenger
-from aas2rto.messaging.git_webpage_manager import GitWebpageManager
+from aas2rto.messaging.html_webpage_manager import HtmlWebpageManager
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -25,8 +23,10 @@ class MessagingManager:
         path_manager: PathManager,
     ):
         self.messengers_config = messengers_config
+
         self.target_lookup = target_lookup
         self.path_manager = path_manager
+
         self.initialize_messengers()
 
     def initialize_messengers(self):
@@ -45,13 +45,13 @@ class MessagingManager:
             elif msgr_name == "slack":
                 msgr = SlackMessenger(msgr_config)
                 self.slack_messenger = msgr
-            elif msgr_name == "git_web":
-                msgr = GitWebpageManager(
+            elif msgr_name == "html_web":
+                msgr = HtmlWebpageManager(
                     msgr_config,
                     self.path_manager.lookup.get("www_path", None),
                     self.target_lookup,
                 )
-                self.git_webpage_manager = msgr
+                self.html_webpage_manager = msgr
             else:
                 raise NotImplementedError(f"No messenger {msgr_name}")
             self.messengers[msgr_name] = msgr

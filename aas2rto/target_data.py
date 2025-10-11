@@ -18,7 +18,7 @@ from aas2rto.exc import (
 class TargetData:
     default_valid_tags = ("valid", "detection", "det")
     default_badqual_tags = ("badquality", "badqual", "dubious")
-    default_nondet_tags = ("upperlim", "nondet")
+    default_nondet_tags = ("nondet", "upperlim", "ulimit", "ulim")
 
     date_columns = ("jd", "mjd", "JD", "MJD")
 
@@ -34,9 +34,12 @@ class TargetData:
         badqual_tags: tuple = default_badqual_tags,
         nondet_tags: tuple = default_nondet_tags,
     ):
-        self.meta = dict()
-        meta = meta or {}
-
+        if isinstance(valid_tags, str):
+            valid_tags = [valid_tags]
+        if isinstance(badqual_tags, str):
+            badqual_tags = [badqual_tags]
+        if isinstance(nondet_tags, str):
+            nondet_tags = [nondet_tags]
         self.valid_tags = tuple(valid_tags)
         self.badqual_tags = tuple(badqual_tags)
         self.nondet_tags = tuple(nondet_tags)
@@ -44,7 +47,9 @@ class TargetData:
         if lightcurve is not None:
             self.add_lightcurve(lightcurve.copy(), include_badqual=include_badqual)
         else:
-            self.remove_lightcurve()
+            self.remove_lightcurve()  # set everything to None
+
+        self.meta = meta or {}
         self.probabilities = probabilities or {}
         self.parameters = parameters or {}
 
@@ -67,11 +72,12 @@ class TargetData:
         self,
         lightcurve: Union[pd.DataFrame, Table],
         tag_col="tag",
+        date_col=None,
         include_badqual=False,
     ):
         lightcurve = lightcurve.copy()
 
-        date_col = self.get_date_column(lightcurve)
+        date_col = date_col or self.get_date_column(lightcurve)
         if isinstance(lightcurve, pd.DataFrame):
             lightcurve.sort_values(date_col, inplace=True)
         if isinstance(lightcurve, Table):
@@ -90,15 +96,14 @@ class TargetData:
         nondet_tags = self.nondet_tags
         all_tags = detection_tags + badqual_tags + nondet_tags
         if tag_col in self.lightcurve.columns:
-            self.detections = self.lightcurve[
-                np.isin(self.lightcurve[tag_col], detection_tags)
-            ]
-            self.badqual = self.lightcurve[
-                np.isin(self.lightcurve[tag_col], badqual_tags)
-            ]
-            self.non_detections = self.lightcurve[
-                np.isin(self.lightcurve[tag_col], nondet_tags)
-            ]
+            det_mask = np.isin(self.lightcurve[tag_col], detection_tags)
+            self.detections = self.lightcurve[det_mask]
+
+            badqual_mask = np.isin(self.lightcurve[tag_col], badqual_tags)
+            self.badqual = self.lightcurve[badqual_mask]
+
+            nondet_mask = np.isin(self.lightcurve[tag_col], nondet_tags)
+            self.non_detections = self.lightcurve[nondet_mask]
 
             known_tag_mask = np.isin(lightcurve[tag_col], all_tags)
             if not all(known_tag_mask):
@@ -111,16 +116,15 @@ class TargetData:
                 )
                 warnings.warn(UnknownPhotometryTagWarning(msg))
         else:
-            self.detections = self.lightcurve.copy()
+            self.detections = None  # self.lightcurve.copy()
             self.badqual = None
             self.non_detections = None
         return
 
     def remove_lightcurve(self):
         with warnings.catch_warnings():
-            warnings.simplefilter(
-                "ignore", category=SettingLightcurveDirectlyWarning
-            )  # TODO on 3.1
+            warnings.simplefilter("ignore", category=SettingLightcurveDirectlyWarning)
+            # Here we're allowed
             self.lightcurve = None
         self.detections = None
         self.badqual = None
@@ -141,63 +145,12 @@ class TargetData:
     def empty_cutouts(self) -> Dict[str, np.ndarray]:
         return {}
 
-    # def integrate_lightcurve_updates(
-    #     self,
-    #     updates: pd.DataFrame,
-    #     column: str = "candid",
-    #     continuous=False,
-    #     keep_updates=True,
-    #     **kwargs,
-    # ):
-    #     """
-    #     combine updates into a lightcurve.
-
-    #     Parameters
-    #     ----------
-    #     updates : pd.DataFrame or astropy.table.Table
-    #         pd.DataFrame, the updates you want to include in your updated lightcurve.
-    #     column : str, default="candid"
-    #         the column to check for matches, and remove repeated rows
-    #     continuous : bool, default=False
-    #         If True, remove any rows in existing LC after the first value in updates
-    #             eg. if column="mjd", and existing LC has rows mjd=60000, 60010,
-    #             and updates has mjd rows = 60005, 60009, 60012:
-    #             if keep_updates is True:
-    #                 all existing LC rows with mjd>60005 will be discarded
-    #             if keep_updates is False:
-    #                 all updates rows mjd<60010 will be discarded.
-
-    #         If continuous=False, then rows with exact matching
-
-    #     **kwargs
-    #         keyword arguments are passed to add_lightcurve
-    #     """
-    #     if updates is None:
-    #         logger.warning("updates is None")
-    #         return None
-
-    #     print(updates)
-
-    #     if self.lightcurve is None:
-    #         self.add_lightcurve(updates, **kwargs)
-    #     if column not in self.lightcurve.columns:
-    #         raise ValueError(f"{column} not in both lightcurve columns")
-    #     if column not in updates.columns:
-    #         raise ValueError(f"{column} not in both updates columns")
-    #     if continuous:
-    #         updated_lightcurve = self.integrate_continuous(
-    #             updates, column, keep_updates=keep_updates
-    #         )
-    #     else:
-    #         updated_lightcurve = self.integrate_equality(
-    #             updates, column, keep_updates=keep_updates
-    #         )
-
-    #     print(updated_lightcurve)
-    #     self.add_lightcurve(updated_lightcurve, **kwargs)
-
-    def integrate_lightcurve_updates_continuous(
-        self, updates: pd.DataFrame, column="mjd", keep_updates=True, ignore_values=None
+    def update_lc_continuous(
+        self,
+        updates: pd.DataFrame,
+        column="mjd",
+        keep_updates=False,
+        **kwargs,
     ):
         """
         Parameters
@@ -208,36 +161,40 @@ class TargetData:
 
         """
 
-        if not (isinstance(updates, pd.DataFrame) or isinstance(updates, Table)):
-            raise TypeError(
-                f"updates should be `pd.DataFrame` or `astropy.table.Table, "
-                f"not {type(updates)}"
+        if self.lightcurve is None:
+            self.add_lightcurve(updates, **kwargs)
+            return updates
+
+        if type(self.lightcurve) != type(updates):
+            msg = (
+                f"Both existing lightcurve (type={type(self.lightcurve)}) "
+                f"and updates (type={type(updates)}) should be the same type."
             )
+            raise TypeError(msg)
 
         if keep_updates:
             existing_mask = self.lightcurve[column] < updates[column].min()
-            existing = self.lightcurve[
-                existing_mask
-            ]  # Keep everything before updates start.
+            existing = self.lightcurve[existing_mask]
             # updates = updates # Obvious!
         else:
             existing = self.lightcurve
             updates_mask = updates[column] > self.lightcurve[column].max()
             updates = updates[updates_mask]
 
-        updated_lightcurve = None
         if isinstance(updates, pd.DataFrame):
-            return pd.concat([self.lightcurve, updates], ignore_index=True)
+            updated_lc = pd.concat([self.lightcurve, updates], ignore_index=True)
         if isinstance(updates, Table):
-            return vstack([self.lightcurve, updates])
-        raise ValueError("should not have made it here!")
+            updated_lc = vstack([self.lightcurve, updates])
 
-    def integrate_lightcurve_updates_equality(
+        self.add_lightcurve(updated_lc, **kwargs)
+        return updated_lc
+
+    def update_lc_exact_match(
         self,
         updates: pd.DataFrame,
-        column="candid",
+        column: str,
+        sort_column=None,
         keep_updates=True,
-        ignore_values=None,
         **kwargs,
     ):
         """
@@ -252,16 +209,15 @@ class TargetData:
             Which column to look for duplicates
         ignore_values : list or tuple, optional
             If provided, do not discard duplicate rows with these values.
-
-
-        Example
-        -------
         """
 
         keep = "last" if keep_updates else "first"
-        updated_lightcurve = None
 
-        if self.lightcurve is not None and type(self.lightcurve) != type(updates):
+        if self.lightcurve is None:
+            self.add_lightcurve(updates, **kwargs)
+            return updates
+
+        if type(self.lightcurve) != type(updates):
             msg = (
                 f"Both existing lightcurve (type={type(self.lightcurve)}) "
                 f"and updates (type={type(updates)}) should be the same type."
@@ -270,25 +226,20 @@ class TargetData:
 
         if isinstance(updates, pd.DataFrame):
             if updates is None:
-                updated_lightcurve = self.lightcurve
+                updated_lc = self.lightcurve
             else:
-                updated_lightcurve = pd.concat(
-                    [self.lightcurve, updates], ignore_index=True
-                )
+                updated_lc = pd.concat([self.lightcurve, updates], ignore_index=True)
 
-            unique_rows_mask = ~updated_lightcurve.duplicated(column, keep=keep)
-            if ignore_values is not None:
-                relevant_mask = ~updated_lightcurve[column].isin(ignore_values)
-            else:
-                relevant_mask = np.full(len(updated_lightcurve), True)
-            updated_lightcurve = updated_lightcurve[unique_rows_mask | ~relevant_mask]
+            unique_mask = ~updated_lc.duplicated(column, keep=keep)
+            null_mask = updated_lc[column].isnull()
+            updated_lc = updated_lc[unique_mask | null_mask]
+            if sort_column is not None:
+                updated_lc.sort_values(sort_column, ignore_index=True, inplace=True)
+        elif isinstance(updates, Table):
+            concat_lc = vstack([self.lightcurve, updates])
+            updated_lc = unique_table(concat_lc, keys=column, keep=keep)
+            if sort_column is not None:
+                updated_lc.sort(sort_column)
 
-        if isinstance(updates, Table):
-            concat_lightcurve = vstack([self.lightcurve, updates])
-            updated_lightcurve = unique_table(concat_lightcurve, keys=column, keep=keep)
-        if updated_lightcurve is None:
-            raise TypeError(
-                f"updates should be `pd.DataFrame` or `astropy.table.Table, not {type(updates)}"
-            )
-        self.add_lightcurve(updated_lightcurve, **kwargs)
-        return updated_lightcurve
+        self.add_lightcurve(updated_lc, **kwargs)
+        return updated_lc

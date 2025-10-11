@@ -4,6 +4,7 @@ from typing import Callable
 import matplotlib.pyplot as plt
 from astropy.time import Time
 
+from aas2rto.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting.default_plotter import plot_default_lightcurve
 from aas2rto.plotting.visibility_plotter import plot_visibility
@@ -28,6 +29,7 @@ class PlottingManager:
         plotting_config: dict,
         target_lookup: TargetLookup,
         path_manager: PathManager,
+        observatory_manager: ObservatoryManager,
     ):
         self.config = self.default_config.copy()
         self.config.update(plotting_config)
@@ -39,6 +41,7 @@ class PlottingManager:
 
         self.target_lookup = target_lookup
         self.path_manager = path_manager
+        self.observatory_manager = observatory_manager
 
     def plot_all_target_lightcurves(
         self,
@@ -79,6 +82,17 @@ class PlottingManager:
         return plotted, skipped
 
     def plot_all_target_visibilities(
+        self, lazy_plotting=None, plotting_interval=None, t_ref=None
+    ):
+        for obs_name, observatory in self.observatory_manager.sites.items():
+            self.plot_all_target_visibilities_for_observatory(
+                observatory,
+                lazy_plotting=lazy_plotting,
+                plotting_interval=plotting_interval,
+                t_ref=t_ref,
+            )
+
+    def plot_all_target_visibilities_for_observatory(
         self,
         observatory,
         lazy_plotting=None,
@@ -192,12 +206,12 @@ class PlottingManager:
                 logger.debug(msg)
                 continue
 
-            # try:
-            fig = func(target, t_ref=t_ref)
-            # except Exception as e:
-            #    logger.error(type(e), e)
-            #    failed.append(target_id)
-            #    continue
+            try:
+                fig = func(target, t_ref=t_ref)
+            except Exception as e:
+                logger.error(f"{target_id}: {type(e)}, {e}")
+                failed.append(target_id)
+                continue
             if fig is None:
                 returned_none.append(target_id)
                 continue

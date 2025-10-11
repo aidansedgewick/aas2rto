@@ -35,7 +35,7 @@ from aas2rto.utils import check_unexpected_config_keys
 
 from aas2rto import paths
 
-logger = getLogger("sncosmo_model")
+logger = getLogger(__name__.split(".")[-1])
 
 
 try:
@@ -86,27 +86,37 @@ def get_detections(
         return lc
 
 
+def who_is_calling(*args, **kwargs):
+    print("who is calling?! {len(args)} args, {len(kwargs)} kwargs")
+    print(args)
+    print(kwargs)
+
+
 class PickleableF99Dust(sncosmo.PropagationEffect):
 
     _minwave = 909.09
     _maxwave = 60000.0
 
     def __init__(self, r_v=3.1):
-        raise NotImplementedError
         self._param_names = ["ebv"]
         self.param_names_latex = ["E(B-V)"]
         self._parameters = np.array([0.0])
         self._r_v = r_v
-        self._f = F99(Rv=r_v)
+        self._f = who_is_calling
 
     def propagate(self, wave, flux, phase=None):
         ebv = self._parameters[0]
-        ext = self._f.extinguish(wave * u.AA, Ebv=ebv)
-        return flux * ext
+
+        inv_wave = 1e4 / wave  # per micron
+        axav = F99.evaluate(inv_wave, self._r_v)
+
+        av = self._r_v * ebv
+        ext = np.power(10.0, -0.4 * axav * av)
+        return ext * flux
 
 
 def initialise_model() -> sncosmo.Model:
-    dust = sncosmo.F99Dust()
+    dust = PickleableF99Dust()  # sncosmo.F99Dust()  #
     model = sncosmo.Model(
         source="salt3", effects=[dust], effect_names=["mw"], effect_frames=["obs"]
     )
@@ -318,7 +328,10 @@ class SncosmoSaltModeler:
             errname = type(e).__name__
             msg = f"{target.target_id} lsq: {errname}\n    {e}"
             logger.warning(msg)
-            if self.show_traceback:
+            if self.show_traceback and type(e).__name__ not in [
+                "DataQualityError",
+                "LinAlgError",
+            ]:
                 tr = traceback.format_exc()
                 print(tr)
             fitted_model = None

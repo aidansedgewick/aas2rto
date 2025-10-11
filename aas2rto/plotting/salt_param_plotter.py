@@ -29,7 +29,7 @@ def load_x1_datasets():
     for label, filename in filename_lookup.items():
         filepath = litdat_path / filename
         if filepath.exists():
-            df = pd.read_csv(filepath, sep="\s+")
+            df = pd.read_csv(filepath, sep=r"\s+")
             data[label] = df
         else:
             logger.warning(f"NO '{label}' x1 data found at:\n   {filepath}")
@@ -48,7 +48,7 @@ def load_c_datasets():
     for label, filename in filename_lookup.items():
         filepath = litdat_path / filename
         if filepath.exists():
-            df = pd.read_csv(filepath, sep="\s+")
+            df = pd.read_csv(filepath, sep=r"\s+")
             data[label] = df
         else:
             logger.warning(f"NO '{label}' c data found at:\n   {filepath}")

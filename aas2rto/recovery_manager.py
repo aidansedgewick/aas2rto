@@ -8,8 +8,10 @@ import numpy as np
 
 import pandas as pd
 
+from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
+from aas2rto import utils
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
@@ -25,10 +27,16 @@ class RecoveryManager:
     }
 
     def __init__(
-        self, recovery_config, target_lookup: TargetLookup, path_manager: PathManager
+        self,
+        recovery_config: dict,
+        target_lookup: TargetLookup,
+        path_manager: PathManager,
     ):
         self.config = self.default_config.copy()
         self.config.update(recovery_config)
+        utils.check_unexpected_config_keys(
+            self.config, self.default_config, name="recovery"
+        )
 
         self.target_lookup = target_lookup
         self.path_manager = path_manager
@@ -41,24 +49,19 @@ class RecoveryManager:
             return
 
         data = {}
-        # rows = []
         for target_id, target in self.target_lookup.items():
             target_info = dict(
                 target_id=target_id,
-                ra=target.ra,
-                dec=target.dec,
+                ra=target.coord.ra.deg,
+                dec=target.coord.dec.deg,
                 base_score=target.base_score,
                 alt_ids=target.alt_ids,
             )
-            # rows.append(target_info)
             data[target_id] = target_info
-        # existing_targets_df = pd.DataFrame(rows)
 
         recovery_file = self.path_manager.get_current_recovery_file(t_ref=t_ref)
         with open(recovery_file, "w+") as f:
             json.dump(data, f, indent=2)
-        # existing_targets_file = self.existing_targets_path / f"{filename}.csv"
-        # existing_targets_df.to_csv(existing_targets_file, index=False)
         try:
             print_path = recovery_file.relative_to(
                 self.path_manager.project_path.parent
@@ -72,23 +75,6 @@ class RecoveryManager:
         targets_files_to_remove = existing_recovery_files[:-N]
         for filepath in targets_files_to_remove:
             os.remove(filepath)
-
-    # def write_indiv_score_histories(self, t_ref: Time = None):
-    #     for target_id, target in self.target_lookup.items():
-    #         score_history_df = target.get_score_history()
-    #         if score_history_df is None:
-    #             continue
-    #         score_history_file = self.path_manager.get_score_history_file(target_id)
-    #         score_history_df.to_csv(score_history_file, index=False)
-
-    # def write_indiv_rank_histories(self, t_ref: Time = None):
-
-    #     for target_id, target in self.target_lookup.items():
-    #         rank_history_df = target.get_rank_history()
-    #         if rank_history_df is None:
-    #             continue
-    #         rank_history_file = self.path_manager.get_rank_history_file(target_id)
-    #         rank_history_df.to_csv(rank_history_file, index=False)
 
     def write_rank_histories(self, obs_name="no_observatory", t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -161,10 +147,11 @@ class RecoveryManager:
         recovered_targets = []
         missing_rank_history = []
         for target_id, target_info in known_targets.items():
+            ra = target_info.pop("ra")
+            dec = target_info.pop("dec")
             target = Target(
                 target_id,
-                ra=target_info["ra"],
-                dec=target_info["dec"],
+                coord=coord,
                 base_score=target_info["base_score"],
                 alt_ids=target_info.get("alt_ids", {}),
             )
@@ -182,15 +169,15 @@ class RecoveryManager:
             logger.info(f"{len(missing_rank_history)} are missing rank history")
         return recovered_targets
 
-    def recover_score_history(self, target: Target):
-        score_history_file = self.path_manager.get_score_history_file(target.target_id)
-        if not score_history_file.exists():
-            return
-        score_history = pd.read_csv(score_history_file)
-        for obs_name, history in score_history.groupby("observatory"):
-            for ii, row in history.iterrows():
-                score_t_ref = Time(row.mjd, format="mjd")
-                target.update_score_history(row.score, obs_name, t_ref=score_t_ref)
+    # def recover_score_history(self, target: Target):
+    #     score_history_file = self.path_manager.get_score_history_file(target.target_id)
+    #     if not score_history_file.exists():
+    #         return
+    #     score_history = pd.read_csv(score_history_file)
+    #     for obs_name, history in score_history.groupby("observatory"):
+    #         for ii, row in history.iterrows():
+    #             score_t_ref = Time(row.mjd, format="mjd")
+    #             target.update_score_history(row.score, obs_name, t_ref=score_t_ref)
 
     # def recover_rank_history(self, target: Target):
     #     rank_history_file = self.path_manager.get_rank_history_file(target.target_id)

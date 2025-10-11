@@ -12,11 +12,13 @@ from astropy.time import Time
 
 from astroplan import Observer
 
+from aas2rto import utils
+from aas2rto.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting.visibility_plotter import plot_visibility
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
-from aas2rto import utils
+
 import matplotlib.pyplot as plt
 
 
@@ -37,6 +39,7 @@ class OutputsManager:
         outputs_config,
         target_lookup: TargetLookup,
         path_manager: PathManager,
+        observatory_manager: ObservatoryManager,
     ):
         self.config = self.default_config.copy()
         self.config.update(outputs_config)
@@ -46,6 +49,10 @@ class OutputsManager:
 
         self.target_lookup = target_lookup
         self.path_manager = path_manager
+        self.observatory_manager = observatory_manager
+
+        self.ranked_lists = {}
+        self.visible_lists = {}
 
     def write_target_comments(
         self, target_list: List[Target] = None, outdir: Path = None, t_ref: Time = None
@@ -62,6 +69,18 @@ class OutputsManager:
 
         for target_id, target in self.target_lookup.items():
             target.write_comments(outdir, t_ref=t_ref)
+
+    def build_ranked_target_lists(
+        self, plots=True, write_list=True, t_ref: Time = None
+    ):
+        t_ref = t_ref or Time.now()
+
+        logger.info("build ranked target lists")
+        for obs_name, observatory in self.observatory_manager.sites.items():
+            ranked_list = self.build_ranked_target_list_at_observatory(
+                observatory, plots=plots, write_list=write_list, t_ref=t_ref
+            )
+            self.ranked_lists[obs_name] = ranked_list
 
     def build_ranked_target_list_at_observatory(
         self, observatory: Observer, plots=True, write_list=True, t_ref: Time = None
@@ -93,7 +112,12 @@ class OutputsManager:
 
         data_list = []
         for target_id, target in self.target_lookup.items():
-            data = target.get_target_summary_data(obs_name)
+            data = dict(
+                target_id=target_id,
+                score=target.get_last_score(obs_name),
+                ra=target.coord.ra.deg,
+                dec=target.coord.dec.deg,
+            )
             data_list.append(data)
 
         if len(data_list) == 0:

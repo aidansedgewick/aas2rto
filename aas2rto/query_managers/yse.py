@@ -701,7 +701,7 @@ class YseQuery:
         if len(data) == 1:
             lightcurve = pd.DataFrame([], columns=columns)
         else:
-            lightcurve = pd.read_csv(io.StringIO("\n".join(data)), sep="\s+")
+            lightcurve = pd.read_csv(io.StringIO("\n".join(data)), sep=r"\s+")
         if return_header:
             return lightcurve, header
         return lightcurve

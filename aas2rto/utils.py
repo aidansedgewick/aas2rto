@@ -48,7 +48,7 @@ def print_header(s: str) -> None:
     s [str]
 
     eg. if your string s="Hello!", print:\n
-    \#\#\# ============ Hello! ============ \#\#\#
+    `### ============ Hello! ============ ###`
     """
     try:
         tsize = shutil.get_terminal_size()

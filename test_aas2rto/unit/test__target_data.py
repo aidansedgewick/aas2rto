@@ -1,380 +1,605 @@
 import pytest
+from pathlib import Path
 
 import numpy as np
 
 import pandas as pd
 
-import matplotlib.pyplot as plt
-
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord
 from astropy.table import Table, vstack
-from astropy.time import Time
 
-from astroplan import FixedTarget, Observer
-
-from aas2rto.exc import (
-    MissingDateError,
-    UnknownObservatoryWarning,
-    SettingLightcurveDirectlyWarning,
-)
-from aas2rto.obs_info import ObservatoryInfo
+from aas2rto.exc import SettingLightcurveDirectlyWarning, UnknownPhotometryTagWarning
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 
 
 @pytest.fixture
-def mock_lc_rows():
-    return [
-        (60000.0, 1, 20.5, 0.1, "upperlim"),
-        (60001.0, 2, 20.4, 0.1, "upperlim"),
-        (60002.0, 3, 20.3, 0.1, "nondet"),
-        (60003.0, 4, 20.2, 0.1, "nondet"),
-        (60004.0, 5, 20.1, 0.2, "badquality"),
-        (60005.0, 6, 20.1, 0.2, "badqual"),
-        (60006.0, 7, 20.1, 0.2, "dubious"),
-        (60007.0, 8, 20.0, 0.1, "valid"),
-        (60008.0, 9, 20.0, 0.1, "valid"),
-        (60009.0, 10, 20.0, 0.1, "valid"),
-    ]
+def tdata():
+    return TargetData()
 
 
 @pytest.fixture
-def mock_lc(mock_lc_rows):
-    return pd.DataFrame(mock_lc_rows, columns="mjd obsId mag magerr tag".split())
+def updates_rows(det_rows, extra_det_rows):
+    rows = det_rows[2:4] + extra_det_rows
+    for row in rows:
+        row[-2] = row[-2] + 2  #
+    return rows
 
 
 @pytest.fixture
-def mock_lc_astropy(mock_lc_rows):
-    return Table(rows=mock_lc_rows, names="mjd obsId mag magerr tag".split())
+def updates_pandas(updates_rows, lc_col_names):
+    df = pd.DataFrame(updates_rows, columns=lc_col_names)
+    assert len(df) == 6
+    return df
 
 
 @pytest.fixture
-def mock_lc_updates_rows():
-    return [
-        (60010.0, 11, 19.9, 0.05, "valid"),
-        (60011.0, 12, 19.8, 0.05, "valid"),
-        (60012.0, 13, 19.7, 0.2, "badqual"),
-    ]
+def updates_astropy(updates_rows, lc_col_names):
+    tab = Table(rows=updates_rows, names=lc_col_names)
+    assert len(tab) == 6
+    return tab
 
 
-@pytest.fixture
-def mock_lc_updates(mock_lc_updates_rows):
-    return pd.DataFrame(
-        mock_lc_updates_rows, columns="mjd obsId mag magerr tag".split()
-    )
-
-
-@pytest.fixture
-def mock_lc_updates_astropy(mock_lc_updates_rows):
-    return Table(rows=mock_lc_updates_rows, names="mjd obsId mag magerr tag".split())
-
-
-@pytest.fixture
-def mock_target():
-    return Target("T101", ra=45.0, dec=60.0)
-
-
-@pytest.fixture
-def test_observer():
-    location = EarthLocation(lat=55.6802, lon=12.5724, height=0.0)
-    return Observer(location, name="ucph")
-
-
-def basic_lc_compiler(target: Target, t_ref: Time):
-    lc = target.target_data["ztf"].detections.copy()
-    lc.loc[:, "flux"] = 3631.0 * 10 ** (-0.4 * lc["mag"])
-    lc.loc[:, "fluxerr"] = lc["flux"] * lc["magerr"]
-    lc.loc[:, "band"] = "ztf-w"
-    return lc
-
-
-class Test__TargetData:
-    def test__target_data_init(self):
+class Test__TargetDataInit:
+    def test__empty_init(self):
+        # Act
         td = TargetData()
 
-        assert isinstance(td.meta, dict)
-        assert len(td.meta) == 0
+        # Assert
+        assert set(td.valid_tags) == set(["valid", "detection", "det"])
+        assert set(td.badqual_tags) == set(["badqual", "badquality", "dubious"])
+        assert set(td.nondet_tags) == set(["nondet", "upperlim", "ulimit", "ulim"])
+
         assert td.lightcurve is None
         assert td.detections is None
         assert td.badqual is None
         assert td.non_detections is None
 
+        assert isinstance(td.meta, dict)
+        assert len(td.meta) == 0
+
         assert isinstance(td.probabilities, dict)
         assert len(td.probabilities) == 0
+
         assert isinstance(td.parameters, dict)
         assert len(td.parameters) == 0
+
         assert isinstance(td.cutouts, dict)
-        assert len(td.cutouts) == 0
+        assert len(td.parameters) == 0
 
-        assert set(td.valid_tags) == set(["valid", "detection", "det"])
-        assert set(td.badqual_tags) == set(["badquality", "badqual", "dubious"])
-        assert set(td.nondet_tags) == set(["upperlim", "nondet"])
 
-    def test__change_tags(self):
-        td = TargetData(valid_tags=(["valid"]))
-        assert set(td.valid_tags) == set(["valid"])
+class Test__AddLightcurvePandas:
+    def test__default_behaviour(self, tdata: TargetData, lc_pandas: pd.DataFrame):
+        # Act
+        tdata.add_lightcurve(lc_pandas)
 
-    def test__init_with_lc_no_tag(self, mock_lc):
-        mock_lc.drop("tag", axis=1, inplace=True)
-        assert not "tag" in mock_lc.columns
+        # Assert
+        assert isinstance(tdata.lightcurve, pd.DataFrame)
+        assert len(tdata.lightcurve) == 14
 
-        td = TargetData(lightcurve=mock_lc)
-        assert len(td.lightcurve) == 10
-        assert len(td.detections) == 10
-        assert td.badqual is None
-        assert td.non_detections is None
+        assert isinstance(tdata.detections, pd.DataFrame)
+        assert len(tdata.detections) == 6
+        assert np.isclose(tdata.detections["mjd"].iloc[0], 60004.0)
 
-    def test__init_with_tag(self, mock_lc):
-        td = TargetData(lightcurve=mock_lc, include_badqual=False)  # default False
+        assert isinstance(tdata.badqual, pd.DataFrame)
+        assert len(tdata.badqual) == 4
+        assert np.isclose(tdata.badqual["mjd"].iloc[0], 60002.0)
 
-        assert len(td.lightcurve) == 10
-        assert len(td.detections) == 3
-        assert len(td.badqual) == 3
-        assert len(td.non_detections) == 4
+        assert isinstance(tdata.non_detections, pd.DataFrame)
+        assert len(tdata.non_detections) == 4
+        assert np.isclose(tdata.non_detections["mjd"].iloc[0], 60000.0)
 
-        assert set(td.detections["obsId"]) == set([8, 9, 10])
-        assert set(td.badqual["obsId"]) == set([5, 6, 7])
-        assert set(td.non_detections["obsId"]) == set([1, 2, 3, 4])
+    def test__det_with_badqual(self, tdata: TargetData, lc_pandas: pd.DataFrame):
+        # Act
+        tdata.add_lightcurve(lc_pandas, include_badqual=True)
 
-    def test__init_badqual_true(self, mock_lc):
-        td = TargetData(lightcurve=mock_lc, include_badqual=True)
+        # Assert
+        assert isinstance(tdata.lightcurve, pd.DataFrame)
+        assert len(tdata.lightcurve) == 14
 
-        assert len(td.lightcurve) == 10
-        assert len(td.detections) == 6
-        assert len(td.badqual) == 0
-        assert len(td.non_detections) == 4
+        assert isinstance(tdata.detections, pd.DataFrame)
+        assert len(tdata.detections) == 10
+        assert np.isclose(tdata.detections["mjd"].iloc[0], 60002.0)
 
-        assert set(td.detections["obsId"]) == set([5, 6, 7, 8, 9, 10])
-        assert set(td.badqual["obsId"]) == set()  # Test the column name is there.
-        assert set(td.non_detections["obsId"]) == set([1, 2, 3, 4])
+        assert isinstance(tdata.badqual, pd.DataFrame)
+        assert len(tdata.badqual) == 0
 
-    def test__no_date_column_raises_error(self, mock_lc):
-        mock_lc.drop("mjd", axis=1, inplace=True)
+        assert isinstance(tdata.non_detections, pd.DataFrame)
+        assert len(tdata.non_detections) == 4
+        assert np.isclose(tdata.non_detections["mjd"].iloc[0], 60000.0)
 
-        td = TargetData()
-        with pytest.raises(MissingDateError):
-            td.add_lightcurve(mock_lc)
+    def test__new_tags(self, lc_pandas: pd.DataFrame):
+        # Arrange
+        lc = lc_pandas
+        lc.loc[lc["tag"] == "valid", "tag"] = "ok"
+        lc.loc[lc["tag"] == "badqual", "tag"] = "bq"
+        lc.loc[lc["tag"] == "ulim", "tag"] = "ndet"
+        td = TargetData(valid_tags="ok", badqual_tags="bq", nondet_tags="ndet")
 
-    def test__set_lc_directly_raises_warning(self, mock_lc):
-        td = TargetData()
-        with pytest.warns(SettingLightcurveDirectlyWarning):
-            td.lightcurve = mock_lc
+        # Act
+        td.add_lightcurve(lc)
 
+        # Assert
         assert isinstance(td.lightcurve, pd.DataFrame)
-        assert len(td.lightcurve) == 10
+        assert len(td.lightcurve) == 14
 
-    def test__empty_cutouts(self):
-        td = TargetData()
-        result = td.empty_cutouts()
-        assert isinstance(result, dict)
-        assert len(result) == 0
+        assert isinstance(td.detections, pd.DataFrame)
+        assert len(td.detections) == 6
+        assert np.isclose(td.detections["mjd"].iloc[0], 60004.0)
 
-
-class Test__IntegratingUpdates:
-    def test__integrate_equality_no_lightcurve(self, mock_lc_updates):
-        td = TargetData()
-        assert td.lightcurve is None
-
-        result = td.integrate_lightcurve_updates_equality(
-            mock_lc_updates, column="obsId"
-        )
-        assert len(result) == 3
-        assert len(td.lightcurve) == 3
-        assert len(td.detections) == 2
-        assert len(td.badqual) == 1
-
-    def test__integrate_equality(self, mock_lc, mock_lc_updates):
-        td = TargetData(lightcurve=mock_lc)
-
-        result = td.integrate_lightcurve_updates_equality(
-            mock_lc_updates, column="obsId"
-        )
-        assert len(result) == 13
-        assert set(result["obsId"]) == set(range(1, 14))
-
-    def test__integrate_equality_keep_updated(self, mock_lc, mock_lc_updates):
-        updates = pd.concat([mock_lc[7:], mock_lc_updates], ignore_index=True)
-        assert len(updates) == 6
-        updates["source"] = "updates"
-        mock_lc["source"] = "original"
-
-        td = TargetData(lightcurve=mock_lc)
-        result = td.integrate_lightcurve_updates_equality(updates, column="obsId")
-        assert len(result) == 13
-        assert all(result.iloc[:7].source == "original")
-        assert all(result.iloc[7:].source == "updates")
-        assert len(result[result["source"] == "original"]) == 7
-        assert len(result[result["source"] == "updates"]) == 6
-
-    def test__integrate_equality_keep_original(self, mock_lc, mock_lc_updates):
-        updates = pd.concat([mock_lc[7:], mock_lc_updates], ignore_index=True)
-        assert len(updates) == 6
-        updates["source"] = "updates"
-        mock_lc["source"] = "original"
-
-        td = TargetData(lightcurve=mock_lc)
-        result = td.integrate_lightcurve_updates_equality(
-            updates, column="obsId", keep_updates=False
-        )
-        assert len(result) == 13
-        assert all(result.iloc[:10].source == "original")
-        assert all(result.iloc[10:].source == "updates")
-        assert len(result[result["source"] == "original"]) == 10
-        assert len(result[result["source"] == "updates"]) == 3
-
-    def test__integrate_updates(self, mock_lc, mock_lc_updates):
-        td = TargetData(lightcurve=mock_lc)
-        td.integrate_lightcurve_updates_equality(mock_lc_updates, column="obsId")
-
-        assert len(td.lightcurve) == 13
-        assert len(td.detections) == 5
+        assert isinstance(td.badqual, pd.DataFrame)
         assert len(td.badqual) == 4
-        assert len(td.non_detections) == 4
+        assert np.isclose(td.badqual["mjd"].iloc[0], 60002.0)
 
-        assert set(td.detections["obsId"]) == set([8, 9, 10, 11, 12])
-        assert set(td.badqual["obsId"]) == set([5, 6, 7, 13])
-        assert set(td.non_detections["obsId"]) == set([1, 2, 3, 4])
-
-    def test__integrate_updates_badqual_true(self, mock_lc, mock_lc_updates):
-        td = TargetData(lightcurve=mock_lc)
-        td.integrate_lightcurve_updates_equality(
-            mock_lc_updates, column="obsId", include_badqual=True
-        )
-
-        assert len(td.lightcurve) == 13
-        assert len(td.detections) == 9
-        assert len(td.badqual) == 0
-        assert len(td.non_detections) == 4
-
-        assert set(td.detections["obsId"]) == set([5, 6, 7, 8, 9, 10, 11, 12, 13])
-        assert set(td.badqual["obsId"]) == set()  # Test the column name is there.
-        assert set(td.non_detections["obsId"]) == set([1, 2, 3, 4])
-
-    def test__integrate_updates_drop_repeated_rows(self, mock_lc, mock_lc_updates):
-        mock_lc.loc[mock_lc["tag"] == "upperlim", "obsId"] = -1
-        mock_lc.loc[mock_lc["tag"] == "nondet", "obsId"] = -1
-
-        assert all(mock_lc["obsId"].iloc[:3].values == -1)
-
-        td = TargetData(lightcurve=mock_lc)
-        assert len(td.non_detections) == 4
-        assert len(td.badqual) == 3
-        assert len(td.detections) == 3
-
-        td.integrate_lightcurve_updates_equality(mock_lc_updates, column="obsId")
-
-        assert len(td.lightcurve) == 10  # 4 rows with obsId==-1 -- drop all but last!
-        assert len(td.non_detections) == 1
-        assert np.isclose(td.non_detections["mjd"].iloc[0], 60003.0)
-        assert len(td.badqual) == 4
-        assert len(td.detections) == 5
-
-    def test__integrate_updates_keep_repeated_rows(self, mock_lc, mock_lc_updates):
-        mock_lc.loc[mock_lc["tag"] == "upperlim", "obsId"] = -1
-        mock_lc.loc[mock_lc["tag"] == "nondet", "obsId"] = -1
-
-        assert all(mock_lc["obsId"].iloc[:3].values == -1)
-
-        td = TargetData(lightcurve=mock_lc)
-        assert len(td.non_detections) == 4
-        assert len(td.badqual) == 3
-        assert len(td.detections) == 3
-
-        td.integrate_lightcurve_updates_equality(
-            mock_lc_updates, column="obsId", ignore_values=[-1]
-        )
-
-        assert len(td.lightcurve) == 13
+        assert isinstance(td.non_detections, pd.DataFrame)
         assert len(td.non_detections) == 4
         assert np.isclose(td.non_detections["mjd"].iloc[0], 60000.0)
-        assert np.isclose(td.non_detections["mjd"].iloc[3], 60003.0)
-        assert len(td.badqual) == 4
-        assert len(td.detections) == 5
+
+    def test__unknown_tags_warns(self, tdata: TargetData, lc_pandas: pd.DataFrame):
+        # Arrange
+        lc_pandas.loc[-2:, "tag"] = "ok"
+
+        # Act
+        with pytest.warns(UnknownPhotometryTagWarning):
+            tdata.add_lightcurve(lc_pandas)
+
+    def test__no_tag_no_fail(self, tdata: TargetData, lc_pandas: pd.DataFrame):
+        # Arrange
+        lc_pandas.drop("tag", axis=1, inplace=True)
+
+        # Act
+        tdata.add_lightcurve(lc_pandas)
+
+        # Assert
+        assert len(tdata.lightcurve) == 14
+        assert tdata.detections is None
+        assert tdata.badqual is None
+        assert tdata.non_detections is None
+
+    def test__setting_directly_warns(self, tdata: TargetData, lc_pandas: pd.DataFrame):
+        # Act
+        with pytest.warns(SettingLightcurveDirectlyWarning):
+            tdata.lightcurve = lc_pandas
+
+        # Assert
+        assert len(tdata.lightcurve) == 14
+        assert tdata.detections is None
+        assert tdata.badqual is None
+        assert tdata.non_detections is None
+
+    def test__remove_method_works(self, tdata_lc_pandas: TargetData):
+        # Act
+        tdata_lc_pandas.remove_lightcurve()
+
+        # Assert
+        assert tdata_lc_pandas.lightcurve is None
+        assert tdata_lc_pandas.detections is None
+        assert tdata_lc_pandas.badqual is None
+        assert tdata_lc_pandas.non_detections is None
 
 
-class Test__TargetDataAstropyTableCompatibility:
-    def test__init_with_table_no_tag(self, mock_lc_astropy):
-        mock_lc_astropy.remove_column("tag")
-        assert "tag" not in mock_lc_astropy.columns
+class Test__AddLightcurveAstropy:
+    def test__default_behaviour(self, tdata: TargetData, lc_astropy: Table):
+        # Act
+        tdata.add_lightcurve(lc_astropy)
 
-        td = TargetData(lightcurve=mock_lc_astropy)
+        # Assert
+        assert isinstance(tdata.lightcurve, Table)
+        assert len(tdata.lightcurve) == 14
 
-        assert len(td.lightcurve) == 10
-        # assert td.detections is None
-        assert len(td.detections) == 10
-        assert td.badqual is None
-        assert td.non_detections is None
+        assert isinstance(tdata.detections, Table)
+        assert len(tdata.detections) == 6
+        assert np.isclose(tdata.detections["mjd"][0], 60004.0)
 
-    def test__init_with_table_with_tag(self, mock_lc_astropy):
-        td = TargetData(mock_lc_astropy, include_badqual=False)
+        assert isinstance(tdata.badqual, Table)
+        assert len(tdata.badqual) == 4
+        assert np.isclose(tdata.badqual["mjd"][0], 60002.0)
 
-        assert len(td.lightcurve) == 10
-        assert len(td.detections) == 3
-        assert len(td.badqual) == 3
-        assert len(td.non_detections) == 4
+        assert isinstance(tdata.non_detections, Table)
+        assert len(tdata.non_detections) == 4
+        assert np.isclose(tdata.non_detections["mjd"][0], 60000.0)
 
-        assert set(td.detections["obsId"]) == set([8, 9, 10])
-        assert set(td.badqual["obsId"]) == set([5, 6, 7])
-        assert set(td.non_detections["obsId"]) == set([1, 2, 3, 4])
+    def test__new_tags(self, lc_astropy: Table):
+        # Arrange
+        lc = lc_astropy
+        lc["tag"][lc["tag"] == "valid"] = "ok"
+        lc["tag"][lc["tag"] == "badqual"] = "bq"
+        lc["tag"][lc["tag"] == "ulim"] = "ndet"
+        td = TargetData(valid_tags="ok", badqual_tags="bq", nondet_tags="ndet")
 
-    def test__init_with_table_badqual_true(self, mock_lc_astropy):
-        td = TargetData(lightcurve=mock_lc_astropy, include_badqual=True)
+        # Act
+        td.add_lightcurve(lc)
 
-        assert len(td.lightcurve) == 10
+        # Assert
+        assert isinstance(td.lightcurve, Table)
+        assert len(td.lightcurve) == 14
+
+        assert isinstance(td.detections, Table)
         assert len(td.detections) == 6
-        assert len(td.badqual) == 0
+        assert np.isclose(td.detections["mjd"][0], 60004.0)
+
+        assert isinstance(td.badqual, Table)
+        assert len(td.badqual) == 4
+        assert np.isclose(td.badqual["mjd"][0], 60002.0)
+
+        assert isinstance(td.non_detections, Table)
         assert len(td.non_detections) == 4
+        assert np.isclose(td.non_detections["mjd"][0], 60000.0)
 
-        assert set(td.detections["obsId"]) == set([5, 6, 7, 8, 9, 10])
-        assert set(td.badqual["obsId"]) == set()
-        assert set(td.non_detections["obsId"]) == set([1, 2, 3, 4])
+    def test__setting_directly_warns(self, tdata: TargetData, lc_astropy: Table):
+        # Act
+        with pytest.warns(SettingLightcurveDirectlyWarning):
+            tdata.lightcurve = lc_astropy
 
-    def test__equality_no_lc_astropy(self, mock_lc_updates):
-        td = TargetData()
-        result = td.integrate_lightcurve_updates_equality(
-            mock_lc_updates, column="obsId"
-        )
-        assert len(result) == 3
+        # Assert
+        assert len(tdata.lightcurve) == 14
+        assert tdata.detections is None
+        assert tdata.badqual is None
+        assert tdata.non_detections is None
 
-    def test__integrate_equality(self, mock_lc, mock_lc_updates):
-        td = TargetData(lightcurve=mock_lc)
+    def test__unknown_tags_warns(self, tdata: TargetData, lc_astropy: Table):
+        # Arrange
+        lc_astropy["tag"][-2:] = "ok"
+        # Act
+        with pytest.warns(UnknownPhotometryTagWarning):
+            tdata.add_lightcurve(lc_astropy)
 
-        result = td.integrate_lightcurve_updates_equality(
-            mock_lc_updates, column="obsId"
-        )
-        assert len(result) == 13
-        assert set(result["obsId"]) == set(range(1, 14))
+    def test__no_tag_no_fail(self, tdata: TargetData, lc_astropy: Table):
+        # Arrange
+        lc_astropy.remove_column("tag")
 
-    def test__equality_keep_updated_astropy(
-        self, mock_lc_astropy, mock_lc_updates_astropy
+        # Act
+        tdata.add_lightcurve(lc_astropy)
+
+        # Assert
+        assert len(tdata.lightcurve) == 14
+        assert tdata.detections is None
+        assert tdata.badqual is None
+        assert tdata.non_detections is None
+
+    def test__remove_method_works(self, tdata_lc_astropy: TargetData):
+        # Act
+        tdata_lc_astropy.remove_lightcurve()
+
+        # Assert
+        assert tdata_lc_astropy.lightcurve is None
+        assert tdata_lc_astropy.detections is None
+        assert tdata_lc_astropy.badqual is None
+        assert tdata_lc_astropy.non_detections is None
+
+
+class Test__UpdatesLCExactPandas:
+    def test__no_duplicate_values(
+        self, tdata: TargetData, lc_pandas: pd.DataFrame, extra_det_pandas: pd.DataFrame
     ):
-        updates = vstack([mock_lc_astropy[7:], mock_lc_updates_astropy])
-        assert len(updates) == 6
-        updates["source"] = "updates"
-        mock_lc_astropy["source"] = "original"
+        # Arrange
+        tdata.add_lightcurve(lc_pandas)
 
-        td = TargetData(lightcurve=mock_lc_astropy)
-        result = td.integrate_lightcurve_updates_equality(updates, column="obsId")
-        assert len(result) == 13
-        assert all(result[:7]["source"] == "original")
-        assert all(result[7:]["source"] == "updates")
-        assert len(result[result["source"] == "original"]) == 7
-        assert len(result[result["source"] == "updates"]) == 6
+        # Act
+        tdata.update_lc_exact_match(extra_det_pandas, column="obsid")
 
-    def test__integrate_equality_keep_original(
-        self, mock_lc_astropy, mock_lc_updates_astropy
+        # Assert
+        assert len(tdata.lightcurve) == 18  # 14 + 4 new ones
+
+        # check all NaNs are preserved
+        assert len(tdata.non_detections) == 4
+        expected_ndet_mjds = 60000.0 + np.array([0.0, 0.1, 1.0, 1.1])
+        assert np.allclose(tdata.non_detections["mjd"], expected_ndet_mjds)
+
+        assert len(tdata.badqual) == 4
+        assert len(tdata.detections) == 10
+
+    def test__dup_values_keep_updates(
+        self,
+        tdata: TargetData,
+        lc_pandas: pd.DataFrame,
+        det_rows: list,
+        extra_det_rows: list,
     ):
-        updates = vstack([mock_lc_astropy[7:], mock_lc_updates_astropy])
+        # Arrange
+        tdata.add_lightcurve(lc_pandas)
+        updates_rows = det_rows[2:4] + extra_det_rows
+        updates = pd.DataFrame(updates_rows, columns=lc_pandas.columns)
+        updates.loc[:, "band"] = updates.loc[:, "band"] + 2  # check mod values kept.
         assert len(updates) == 6
-        updates["source"] = "updates"
-        mock_lc_astropy["source"] = "original"
 
-        td = TargetData(lightcurve=mock_lc_astropy)
-        result = td.integrate_lightcurve_updates_equality(
-            updates, column="obsId", keep_updates=False
+        # Act
+        tdata.update_lc_exact_match(
+            updates,
+            column="obsid",
+            keep_updates=True,  # Make sure we keep 'updates' rows where clash.
         )
-        assert len(result) == 13
-        assert all(result[:10]["source"] == "original")
-        assert all(result[10:]["source"] == "updates")
-        assert len(result[result["source"] == "original"]) == 10
-        assert len(result[result["source"] == "updates"]) == 3
+
+        # Assert
+        assert len(tdata.lightcurve) == 18  # Duplicates removed
+
+        assert len(tdata.detections) == 10  # same as before, ok...
+
+        #                              o n o o n n u u u u
+        expected_band_vals = np.array([1, 2, 3, 4, 1, 2, 3, 4, 3, 4])
+        assert np.allclose(tdata.detections["band"], expected_band_vals)
+
+        assert len(tdata.non_detections) == 4
+        assert len(tdata.badqual) == 4
+
+    def test__dup_values_keep_original(
+        self,
+        tdata: TargetData,
+        lc_pandas: pd.DataFrame,
+        det_rows: list,
+        extra_det_rows: list,
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_pandas)
+        updates_rows = det_rows[2:4] + extra_det_rows
+        updates = pd.DataFrame(updates_rows, columns=lc_pandas.columns)
+        updates.loc[:, "band"] = updates.loc[:, "band"] + 2  # check mod values kept.
+        assert len(updates) == 6
+
+        # Act
+        tdata.update_lc_exact_match(
+            updates,
+            column="obsid",
+            keep_updates=False,  # Keep existing lc where rows clash.
+        )
+
+        # Assert
+        assert len(tdata.lightcurve) == 18  # Duplicates removed
+
+        assert len(tdata.detections) == 10  # same as before, ok...
+
+        #                              o  o  o  o  o  o  u  u  u  u
+        expected_band_vals = np.array([1, 2, 1, 2, 1, 2, 3, 4, 3, 4])
+        assert np.allclose(tdata.detections["band"], expected_band_vals)
+
+        assert len(tdata.non_detections) == 4
+        assert len(tdata.badqual) == 4
+
+    def test__no_existing_lightcurve(
+        self, tdata: TargetData, extra_det_pandas: pd.DataFrame
+    ):
+        # Act
+        tdata.update_lc_exact_match(extra_det_pandas, column="obsid")
+
+        # Assert
+        assert len(tdata.lightcurve) == 4
+        assert len(tdata.detections) == 4
+        assert tdata.badqual.empty
+        assert tdata.non_detections.empty
+
+    def test__type_mismatch_fails(
+        self,
+        tdata: TargetData,
+        lc_pandas: pd.DataFrame,
+        extra_det_astropy: Table,  # Not a typo!!!
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_pandas)
+
+        # Act
+        with pytest.raises(TypeError):
+            tdata.update_lc_exact_match(extra_det_astropy, column="obsid")
+
+
+class Test__UpdateLCExactAstropy:
+    def test__no_duplicate_values(
+        self, tdata: TargetData, lc_astropy: Table, extra_det_astropy: Table
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_astropy)
+
+        # Act
+        tdata.update_lc_exact_match(
+            extra_det_astropy, column="obsid", sort_column="mjd"
+        )
+
+        # Assert
+        assert len(tdata.lightcurve) == 18  # 14 + 4 new ones
+
+        # check all NaNs are preserved
+        assert len(tdata.non_detections) == 4
+        expected_ndet_mjds = 60000.0 + np.array([0.0, 0.1, 1.0, 1.1])
+        assert np.allclose(tdata.non_detections["mjd"], expected_ndet_mjds)
+
+        assert len(tdata.badqual) == 4
+        assert len(tdata.detections) == 10
+
+    def test__dup_values_keep_updates(
+        self, tdata: TargetData, lc_astropy: Table, updates_astropy: Table
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_astropy)
+
+        # Act
+        tdata.update_lc_exact_match(
+            updates_astropy,
+            column="obsid",
+            sort_column="mjd",
+            keep_updates=True,  # Make sure we keep 'updates' rows where clash.
+        )
+
+        # Assert
+        assert len(tdata.lightcurve) == 18  # Duplicates removed
+
+        assert len(tdata.detections) == 10  # same as before, ok...
+
+        #                              o  o  n  n  o  o  u  u  u  u
+        expected_band_vals = np.array([1, 2, 3, 4, 1, 2, 3, 4, 3, 4])
+        assert np.allclose(tdata.detections["band"], expected_band_vals)
+
+        assert len(tdata.non_detections) == 4
+        assert len(tdata.badqual) == 4
+
+    def test__dup_values_keep_original(
+        self, tdata: TargetData, lc_astropy: Table, updates_astropy: Table
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_astropy)
+
+        # Act
+        tdata.update_lc_exact_match(
+            updates_astropy,
+            column="obsid",
+            sort_column="mjd",
+            keep_updates=False,  # Keep existing lc where rows clash.
+        )
+
+        # Assert
+        assert len(tdata.lightcurve) == 18  # Duplicates removed
+
+        assert len(tdata.detections) == 10  # same as before, ok...
+
+        #                              o  o  o  o  o  o  u  u  u  u
+        expected_band_vals = np.array([1, 2, 1, 2, 1, 2, 3, 4, 3, 4])
+        assert np.allclose(tdata.detections["band"], expected_band_vals)
+
+        assert len(tdata.non_detections) == 4
+        assert len(tdata.badqual) == 4
+
+    def test__no_existing_lightcurve(self, tdata: TargetData, extra_det_astropy: Table):
+        # Act
+        tdata.update_lc_exact_match(extra_det_astropy, column="obsid")
+
+        # Assert
+        assert len(tdata.lightcurve) == 4
+        assert len(tdata.detections) == 4
+        assert len(tdata.badqual) == 0
+        assert len(tdata.non_detections) == 0
+
+    def test__type_mismatch_fails(
+        self,
+        tdata: TargetData,
+        lc_astropy: Table,
+        extra_det_pandas: pd.DataFrame,  # Not a typo!!!
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_astropy)
+
+        # Act
+        with pytest.raises(TypeError):
+            tdata.update_lc_exact_match(extra_det_pandas, column="obsid")
+
+
+class Test__UpdateLCContinuousPandas:
+    def test__no_conflits(
+        self, tdata: TargetData, lc_pandas: pd.DataFrame, extra_det_pandas: pd.DataFrame
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_pandas)
+
+        # Act
+        tdata.update_lc_continuous(extra_det_pandas)
+
+        # Assert
+        assert len(tdata.lightcurve) == 18  # 14 + 4 new ones
+
+        # check all NaNs are preserved
+        assert len(tdata.non_detections) == 4
+        expected_ndet_mjds = 60000.0 + np.array([0.0, 0.1, 1.0, 1.1])
+        assert np.allclose(tdata.non_detections["mjd"], expected_ndet_mjds)
+
+        assert len(tdata.badqual) == 4
+        assert len(tdata.detections) == 10
+
+    def test__conflicting_rows_resolved(
+        self, tdata: TargetData, lc_pandas: pd.DataFrame, updates_pandas: pd.DataFrame
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_pandas)
+
+        # Act
+        tdata.update_lc_continuous(updates_pandas)
+
+        # Assert
+        # Removed first updates        o  o  o  o  o  o  u  u  u  u
+        expected_band_vals = np.array([1, 2, 1, 2, 1, 2, 3, 4, 3, 4])
+        assert np.allclose(tdata.detections["band"], expected_band_vals)
+
+        assert len(tdata.non_detections) == 4
+        assert len(tdata.badqual) == 4
+
+    def test__no_existing_lightcurve(
+        self, tdata: TargetData, extra_det_pandas: pd.DataFrame
+    ):
+        # Act
+        tdata.update_lc_continuous(extra_det_pandas)
+
+        # Assert
+        assert len(tdata.lightcurve) == 4
+        assert len(tdata.detections) == 4
+        assert tdata.badqual.empty
+        assert tdata.non_detections.empty
+
+    def test__type_mismatch_fails(
+        self,
+        tdata: TargetData,
+        lc_pandas: pd.DataFrame,
+        extra_det_astropy: Table,  # Not a typo!!!
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_pandas)
+
+        # Act
+        with pytest.raises(TypeError):
+            tdata.update_lc_continuous(extra_det_astropy)
+
+
+class Test__UpdateLCContinuousAstropy:
+    def test__no_conflits(
+        self, tdata: TargetData, lc_astropy: Table, extra_det_astropy: Table
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_astropy)
+
+        # Act
+        tdata.update_lc_continuous(extra_det_astropy)
+
+        # Assert
+        assert len(tdata.lightcurve) == 18  # 14 + 4 new ones
+
+        # check all NaNs are preserved
+        assert len(tdata.non_detections) == 4
+        expected_ndet_mjds = 60000.0 + np.array([0.0, 0.1, 1.0, 1.1])
+        assert np.allclose(tdata.non_detections["mjd"], expected_ndet_mjds)
+
+        assert len(tdata.badqual) == 4
+        assert len(tdata.detections) == 10
+
+    def test__conflicting_rows_resolved(
+        self, tdata: TargetData, lc_astropy: Table, updates_astropy: Table
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_astropy)
+
+        # Act
+        tdata.update_lc_continuous(updates_astropy)
+
+        # Assert
+        # Removed first updates        o  o  o  o  o  o  u  u  u  u
+        expected_band_vals = np.array([1, 2, 1, 2, 1, 2, 3, 4, 3, 4])
+        assert np.allclose(tdata.detections["band"], expected_band_vals)
+
+        assert len(tdata.non_detections) == 4
+        assert len(tdata.badqual) == 4
+
+    def test__no_existing_lightcurve(self, tdata: TargetData, extra_det_astropy: Table):
+        # Act
+        tdata.update_lc_continuous(extra_det_astropy)
+
+        # Assert
+        assert len(tdata.lightcurve) == 4
+        assert len(tdata.detections) == 4
+        assert len(tdata.badqual) == 0
+        assert len(tdata.non_detections) == 0
+
+    def test__type_mismatch_fails(
+        self,
+        tdata: TargetData,
+        lc_astropy: Table,
+        extra_det_pandas: pd.DataFrame,  # Not a typo!!!
+    ):
+        # Arrange
+        tdata.add_lightcurve(lc_astropy)
+
+        # Act
+        with pytest.raises(TypeError):
+            tdata.update_lc_continuous(extra_det_pandas)

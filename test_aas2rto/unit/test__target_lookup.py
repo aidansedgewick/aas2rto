@@ -1,382 +1,628 @@
+import collections
 import pytest
+import yaml
+from pathlib import Path
 
 import numpy as np
 
 from astropy import units as u
+from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
-from aas2rto.exc import NotATargetError
+from aas2rto.exc import (
+    DuplicateDataWarning,
+    MissingKeysWarning,
+    NotATargetError,
+    UnexpectedKeysWarning,
+)
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
-from aas2rto.target_lookup import TargetLookup, merge_targets
+from aas2rto.target_lookup import TargetLookup, group_nearby_coordinates, merge_targets
 
 
 @pytest.fixture
-def mock_target():
-    return Target("ZTF00abc", 30.0, 45.0)
+def t_ref():
+    return Time(60000.0, format="mjd")
 
 
 @pytest.fixture
-def mock_target_alt_ids():
-    ztf_name = "ZTF01def"
-    alt_names = {"ztf": ztf_name, "tns": "SN2001A"}
-    return Target(ztf_name, 60.0, -30.0, alt_ids=alt_names)
+def empty_tl():
+    return TargetLookup()
 
 
 @pytest.fixture
-def target_lookup_one_target(mock_target):
+def tl(basic_target):
     tl = TargetLookup()
-    tl[mock_target.target_id] = mock_target
+    tl.add_target(basic_target)
     return tl
 
 
-@pytest.fixture
-def target_lookup_two_targets(mock_target, mock_target_alt_ids):
-    t1 = mock_target
-    t2 = mock_target_alt_ids
+class Test__Init:
+    def test__basic_init(self):
+        # Act
+        tl = TargetLookup()
 
-    tl = TargetLookup()
-    tl[t1.target_id] = t1
-    tl[t2.target_id] = t2
-    return tl
-
-
-class Test__MergeTargets:
-    def test__two_targets_sort_true(self):
-        t_ref01 = Time(60000.0, format="mjd")
-        t_ref02 = Time(60010.0, format="mjd")
-        t1_alt_ids = {"alt01": "SN00"}
-        t2_alt_ids = {"alt02": "TR_AAA"}
-
-        t1 = Target(
-            "T001", ra=45.0, dec=30.0, source="src01", alt_ids=t1_alt_ids, t_ref=t_ref01
-        )
-        t2 = Target(
-            "T002", ra=30.0, dec=16.0, source="src02", alt_ids=t2_alt_ids, t_ref=t_ref02
-        )
-
-        output = merge_targets([t2, t1], sort=True)
-
-        assert np.isclose(output.ra, 45.0)  # ie, keep coords from the first one.
-        assert np.isclose(output.dec, 30.0)
-
-        assert output.target_id == "T001"
-
-        assert output.alt_ids["src01"] == "T001"
-        assert output.alt_ids["src02"] == "T002"
+        # Assert
+        assert isinstance(tl.lookup, dict)
+        assert isinstance(tl.id_mapping, dict)
 
 
-class Test__TargetLookupInit:
+class Test__LenMagicMethod:
+    def test__len_zero(self, empty_tl: TargetLookup):
+        # Assert
+        assert len(empty_tl) == 0
 
-    def test__normal_behaviour(self):
-        tlookup = TargetLookup()
+    def test__len_one(self, tl: TargetLookup):
+        # Assert
+        assert len(tl) == 1  # knows there is only one unique target
+        assert len(tl.id_mapping) == 2  # even though there are 2 ids for it.
 
-        assert isinstance(tlookup.lookup, dict)
-        assert isinstance(tlookup.id_mapping, dict)
+
+class Test__ContainsMagicMethod:
+    def test__existing(self, tl: TargetLookup):
+        # Assert
+        assert "T00" in tl
+
+        # because...
+        assert "T00" in tl.lookup
+
+    def test__non_existing(self, tl: TargetLookup):
+        # Assert
+        assert "T01" not in tl
+
+        # because...
+        assert "T01" not in tl.lookup
 
 
-class Test__DunderGetSet:
+class Test__SingleMappingUpdate:
+    def test__alt_ids_are_added(self, tl: TargetLookup, basic_target: Target):
+        # Arrange
+        basic_target.alt_ids["src03"] = "2025aaa"
 
-    def test__dunder_setitem_normal(self, mock_target):
-        tlookup = TargetLookup()
-        tlookup["ZTF00abc"] = mock_target
+        # Act
+        tl.update_id_mapping_single_target(basic_target)
 
-        assert "ZTF00abc" in tlookup.lookup.keys()
-        assert isinstance(tlookup.lookup["ZTF00abc"], Target)
-        assert set(tlookup.id_mapping.keys()) == set(["ZTF00abc"])
-        assert tlookup.id_mapping["ZTF00abc"] == "ZTF00abc"
-        assert len(tlookup.id_mapping) == 1
 
-    def test__dunder_setitem_alt_ids(self, mock_target_alt_ids):
-        tlookup = TargetLookup()
+class Test__SetMagicMethod:
+    def test__normal_behaviour(self, basic_target: Target):
+        # Arrange
+        tl = TargetLookup()
 
-        tlookup["ZTF01def"] = mock_target_alt_ids
+        # Act
+        tl["T00"] = basic_target
 
-        assert set(tlookup.lookup.keys()) == set(["ZTF01def"])
-        assert isinstance(tlookup.lookup["ZTF01def"], Target)
-        assert set(tlookup.id_mapping.keys()) == set(["ZTF01def", "SN2001A"])
+        # Assert
+        assert "T00" in tl.lookup  # The main id
+        assert isinstance(tl.lookup["T00"], Target)
+        assert tl.lookup["T00"].target_id == "T00"
 
-        assert tlookup.id_mapping["ZTF01def"] == "ZTF01def"
-        assert tlookup.id_mapping["SN2001A"] == "ZTF01def"
+        assert "target_A" not in tl.lookup  # alt_id should NOT be in
 
-    def test__dunder_setitem_two_targets(self, mock_target, mock_target_alt_ids):
-        tlookup = TargetLookup()
-        t1 = mock_target
-        t2 = mock_target_alt_ids
+        assert tl.id_mapping["T00"] == "T00"  # target_id also self-refers
+        assert tl.id_mapping["target_A"] == "T00"
 
-        tlookup[t1.target_id] = mock_target
-        tlookup[t2.target_id] = mock_target_alt_ids
-
-        assert set(tlookup.lookup.keys()) == set(["ZTF00abc", "ZTF01def"])
-        assert isinstance(tlookup.lookup["ZTF00abc"], Target)
-        assert isinstance(tlookup.lookup["ZTF01def"], Target)
-        assert tlookup.lookup["ZTF00abc"].target_id == "ZTF00abc"
-        assert tlookup.lookup["ZTF01def"].target_id == "ZTF01def"
-
-        assert set(tlookup.id_mapping.keys()) == set(
-            ["ZTF00abc", "ZTF01def", "SN2001A"]
-        )
-        assert tlookup.id_mapping["ZTF00abc"] == "ZTF00abc"
-        assert tlookup.id_mapping["ZTF01def"] == "ZTF01def"
-        assert tlookup.id_mapping["SN2001A"] == "ZTF01def"
-
-    def test__dunder_set_fails_on_not_target_cls(self):
-        tlookup = TargetLookup()
-
+    def test__fails_for_non_target_obs(self, tl):
+        # Act
         with pytest.raises(NotATargetError):
-            tlookup["should_fail"] = 0
-
-    def test__dunder_get_normal(self, target_lookup_two_targets):
-        tlookup = target_lookup_two_targets
-
-        t1 = tlookup["ZTF00abc"]
-        assert isinstance(t1, Target)
-        assert t1.target_id == "ZTF00abc"
-
-        t2a = tlookup["ZTF01def"]
-        assert t2a.target_id == "ZTF01def"
-        t2b = tlookup["SN2001A"]
-        assert t2b.target_id == "ZTF01def"
-        assert t2a is t2b
+            tl["T01"] = "this_string_is_not_a_target"
 
 
-class Test__OtherDunders:
-    def test__dunder_len(self, target_lookup_one_target, target_lookup_two_targets):
-        tlookup1 = TargetLookup()
-        assert len(tlookup1) == 0
+class Test__GetMagicMethod:
+    def test__get_existing_target(self, tl: TargetLookup):
+        # Act
+        target = tl["T00"]
 
-        assert len(target_lookup_one_target) == 1
-        assert len(target_lookup_one_target.id_mapping) == 1
+        # Assert
+        assert target.target_id == "T00"
+        assert target.alt_ids["src02"] == "target_A"
 
-        assert len(target_lookup_two_targets) == 2
-        assert len(target_lookup_two_targets.id_mapping) == 3
+    def test__get_existing_target_by_alt(self, tl: TargetLookup):
+        # Act
+        target = tl["target_A"]
 
-    def test__dunder_contains(self, target_lookup_two_targets):
-        tlookup = target_lookup_two_targets
-
-        assert "ZTF00abc" in tlookup
-        assert "ZTF01def" in tlookup
-
-        assert "SN2001A" not in tlookup.lookup
-        assert "SN2001A" in tlookup  # Because it's an alt_id of ZTF01def
-
-        assert "made_up_targ" not in tlookup
+        # Assert
+        assert target.target_id == "T00"  # NOT the alt_id!
+        assert target.alt_ids["src02"] == "target_A"
 
 
-class Test__GetMethod:
-    def test__get_method(self, target_lookup_one_target: TargetLookup):
-        tlookup = target_lookup_one_target
+class Test__DictLikeGetMethod:
+    def test__existing_target(self, tl: TargetLookup):
+        # Act
+        target = tl.get("T00")
 
-        t1 = tlookup.get("ZTF00abc")
-        assert isinstance(t1, Target)
+        # Assert
+        assert isinstance(target, Target)
+        assert target.target_id == "T00"
 
-    def test__get_method_with_alt_name(self, target_lookup_two_targets: TargetLookup):
-        tlookup = target_lookup_two_targets
+    def test__existing_target_alt_id(self, tl: TargetLookup):
+        # Act
+        target = tl.get("target_A")
 
-        t1a = tlookup.get("ZTF01def")
-        assert isinstance(t1a, Target)
-        assert t1a.target_id == "ZTF01def"
-        t1b = tlookup.get("SN2001A")
-        assert isinstance(t1b, Target)
-        assert t1b.target_id == "ZTF01def"  # it should be the same target...
-        assert t1a is t1b  # it IS the same target!
+        # Assert
+        assert isinstance(target, Target)
+        assert target.target_id == "T00"
 
-    def test__get_method_missing_target(self):
-        tlookup = TargetLookup()
+    def test__default_value(self, tl: TargetLookup):
+        # Act
+        target = tl.get("nonexisting")
 
-        t1 = tlookup.get("some_target", -1)
-        assert t1 == -1
+        # Assert
+        assert target is None
 
+    def test__default_value_changed(self, tl: TargetLookup):
+        # Act
+        target = tl.get("nonexisting", default="a_string")
 
-class Test__PopMethod:
-    def test__pop_method(self, target_lookup_two_targets: TargetLookup):
-        tlookup = target_lookup_two_targets
-        assert len(tlookup) == 2
-
-        assert "ZTF00abc" in tlookup
-        assert "ZTF01def" in tlookup
-        assert set(tlookup.lookup.keys()) == set(["ZTF00abc", "ZTF01def"])
-        assert "SN2001A" in tlookup
-
-        removed = tlookup.pop("ZTF01def")
-        assert removed.target_id == "ZTF01def"
-
-        assert len(tlookup) == 1
-        assert "ZTF01def" not in tlookup.lookup
-        assert "ZTF01def" not in tlookup
-        assert "SN2001A" not in tlookup
-
-    def test__pop_with_alt_id(sef, target_lookup_two_targets: TargetLookup):
-        tlookup = target_lookup_two_targets
-
-        removed = tlookup.pop("SN2001A")
-        assert len(tlookup) == 1
-        assert "ZTF01def" not in tlookup
-        assert "SN2001A" not in tlookup
-
-        assert removed.target_id == "ZTF01def"
+        # Assert
+        assert target == "a_string"
 
 
-class Test__AddTarget:
+class Test__DictLikePopMethod:
+    def test__existing_target(self, tl: TargetLookup):
+        # Act
+        target = tl.pop("T00")
 
-    def test__add_target(self):
+        # Assert
+        assert target.target_id == "T00"
+        assert "T00" not in tl
+        assert "T00" not in tl.lookup
+        assert "T00" not in tl.id_mapping
 
-        alt_ids = {"datasrc": "02xyz", "othersrc": "AT_001"}
-        new_targ = Target("ZTF02ijk", 45.0, -45.0, alt_ids=alt_ids)
+        # Check the alt_ids are also properly removec
+        assert "target_A" in target.alt_ids.values()
+        assert "target_A" not in tl.id_mapping
 
-        tlookup = TargetLookup()
+    def test__exiting_target_alt_id(self, tl: TargetLookup):
+        # Act
+        target = tl.pop("target_A")
 
-        tlookup.add_target(new_targ)
+        # Assert
+        assert target.target_id == "T00"
+        assert "T00" not in tl.lookup
+        assert "T00" not in tl.id_mapping
 
-        assert len(tlookup) == 1
-        assert "ZTF02ijk" in tlookup
-        assert "02xyz" in tlookup
-        assert "AT_001" in tlookup
+        # Check the alt_ids are also properly removec
+        assert "target_A" in target.alt_ids.values()
+        assert "target_A" not in tl.id_mapping
 
-        assert "datasrc" not in tlookup
-        assert "othersrc" not in tlookup
+    def test__default_value(self, tl: TargetLookup):
+        # Act
+        target = tl.pop("nonexisting")
 
+        # Assert
+        assert target is None
 
-class Test__UpdateIdMappings:
-    def test__update_target_id_mappings(self, mock_target_alt_ids):
+    def test__default_value_changed(self, tl: TargetLookup):
+        # Act
+        target = tl.pop("nonexisting", default="a_string")
 
-        tl = TargetLookup()
-
-        # this is a bad way to update targets!
-        tl.lookup["ZTF01def"] = mock_target_alt_ids
-        assert "ZTF01def" not in tl.id_mapping
-        assert "SN2001A" not in tl.id_mapping
-
-        tl.update_id_mapping_single_target(mock_target_alt_ids)
-        assert set(tl.id_mapping.keys()) == set(["ZTF01def", "SN2001A"])
-        assert tl.id_mapping["ZTF01def"] == "ZTF01def"
-        assert tl.id_mapping["SN2001A"] == "ZTF01def"
-
-    def update_all_target_id_mappings(self, mock_target_alt_ids):
-        tl = TargetLookup()
-        tl.add_target(mock_target_alt_ids)
-
-        assert set(tl.id_mapping.keys()) == set(["ZTF01def", "SN2001A"])
-        assert tl.id_mapping["ZTF01def"] == "ZTF01def"
-        assert tl.id_mapping["SN2001A"] == "ZTF01def"
-
-        mock_target_alt_ids.alt_ids["survey_X"] = "X_001"
-
-        assert tl["ZTF01def"].alt_ids["survey_X"] == "X_001"  # it's there...
-        assert "X_001" not in tl.id_mapping  # but tl doesn't know about it yet!
-        assert "X_001" not in tl  # use __contains__
-
-        tl.update_target_id_mappings()
-
-        # Now TL should know about it!
-        assert "X_001" in tl.id_mapping
-        assert "X_001" in tl
-        assert tl["X_001"].target_id == "ZTF01def"
+        # Assert
+        assert target == "a_string"
 
 
-class Test__ConsolidateTargets:
+class Test__DictLikeKeysMethod:
+    def test__type(self, tl: TargetLookup):
+        # Assert
+        assert isinstance(tl.keys(), collections.abc.KeysView)
 
-    def test__simple(self):
 
-        tl = TargetLookup()
-        t1 = Target("T101", 45.0, 0.0, alt_ids={"src01": "T101"})
-        t2 = Target("AAAA", 45.0, 0.0, alt_ids={"src02": "AAAA"})
+class Test__DictLikeValuesMethod:
+    def test__type(self, tl: TargetLookup):
+        # Assert
+        assert isinstance(tl.values(), collections.abc.ValuesView)
 
-        tl.add_target(t1)
-        tl.add_target(t2)
 
-        assert tl.id_mapping["T101"] == "T101"
-        assert tl.id_mapping["AAAA"] == "AAAA"
+class Test__DictLikeItemsMethod:
+    def test__type(self, tl: TargetLookup):
+        # Assert
+        assert isinstance(tl.items(), collections.abc.ItemsView)
 
-        tl.consolidate_targets()
 
-        assert len(tl) == 1
-        assert len(tl.id_mapping) == 2
-        assert tl["AAAA"].target_id == "T101"
+class Test__AddTargetMethod:
+    def test__normal_behaviour(self, tl: TargetLookup, other_target: Target):
+        # Act
+        tl.add_target(other_target)
 
-        assert "AAAA" not in tl.lookup
-
-        assert tl.id_mapping["T101"] == "T101"
-        assert tl.id_mapping["AAAA"] == "T101"
-
-    def test__not_close_are_not_grouped(self):
-
-        tl = TargetLookup()
-
-        t1 = Target("T101", 45.0, 0.0)
-        t2 = Target("T102", 45.0, 2.0)
-
-        tl.add_target(t1)
-        tl.add_target(t2)
-
-        tl.consolidate_targets(seplimit=1 * u.deg)
+        # Assert
+        assert "T01" in tl
+        assert isinstance(tl["T01"], Target)
+        assert tl["T01"].target_id == "T01"
+        # also check this method updates the id_mapping.
+        assert "T01" in tl.id_mapping
+        assert tl.id_mapping["T01"] == "T01"
+        assert "target_B" in tl.id_mapping
+        assert tl.id_mapping["target_B"] == "T01"
 
         assert len(tl) == 2
 
-    def test__incomplete_graph_still_merge(self):
-        """T1-T2-T3 : if T1 and T2 are 'close', and T2 and T3 are 'close',
-        all three should merge even if T1 and T3 are not 'close'"""
+    def test__reusing_alt_id_raises_err(self, tl: TargetLookup, other_target: Target):
+        # Arrange
+        other_target.alt_ids["src03"] = "T00"
 
-        tl = TargetLookup()
+        # Act
+        with pytest.raises(ValueError):
+            tl.add_target(other_target)
 
-        t1 = Target("T101", 44.3, 0.0, alt_ids={"src01": "T101"})
-        t2 = Target("T102", 45.0, 0.0, alt_ids={"src02": "T102"})
-        t3 = Target("T103", 45.7, 0.0, alt_ids={"src03": "T103"})
 
-        tl.add_target(t1)
-        tl.add_target(t2)
-        tl.add_target(t3)
+class Test__UpdateAllIdMappingsMethod:
+    def test__new_alt_id(self, tl: TargetLookup):
+        # Arrange
+        tl["T00"].alt_ids["src03"] = "2025a"
 
-        assert t1.coord.separation(t3.coord) > 1 * u.deg
-        assert len(tl) == 3
+        # Act
+        tl.update_target_id_mappings()
 
-        tl.consolidate_targets(seplimit=1 * u.deg)
+        # Assert
+        assert "2025a" in tl
+        assert tl.id_mapping["2025a"] == "T00"
 
-        assert len(tl) == 1
+    def test__modified_target_id(self, tl: TargetLookup):
+        # Arrange
+        assert "T00" in tl["T00"].alt_ids.values()  # it's also an alt_id
+        tl["T00"].target_id = "T00_mod"
+        assert "T00_mod" not in tl.lookup
+        assert "T00_mod" not in tl.id_mapping
 
-        assert set(tl["T101"].alt_ids.values()) == set("T101 T102 T103".split())
+        # Act
+        tl.update_target_id_mappings()
 
-    def test__more_complex_merge(self):
+        # Assert
+        assert len(tl.lookup) == 1  # old ref removed from "main" lookup
+        assert "T00" not in tl.lookup  # old ref removed from "main" lookup
+        assert "T00_mod" in tl
+        assert "T00" in tl  # still an at_id
 
-        tl = TargetLookup()
+        assert "T00" in tl.id_mapping  # but still an alt_id...
+        assert tl.id_mapping["T00"] == "T00_mod"  # ...which links correctly.
 
-        # group 1
-        t1 = Target("T101", 45.0, 60.0, alt_ids={"src01": "T101"})
-        t2 = Target("SN001", 45.1, 60.1, alt_ids={"src02": "SN001"})  # mod ra/dec
-        t3 = Target("OBJ_001", 44.9, 59.9, alt_ids={"src03": "OBJ_001"})
+        assert tl.id_mapping["target_A"] == "T00_mod"
+        assert tl["target_A"].target_id == "T00_mod"
 
-        # add some data to check that it's overwritten
-        t1_data = t1.get_target_data("ztf")
-        t1_data.meta["parameter"] = 100
-        t3_data = t3.get_target_data("ztf")
-        t3_data.meta["parameter"] = 10
 
-        # group 2
-        t4 = Target("T102", 90.0, 15.0, alt_ids={"src01": "T102"})
-        t5 = Target("OBJ_002", 90.1, 15.1, alt_ids={"src03": "OBJ_002"})
+class Test__UpdatePreferredIdMethod:
+    def test__normal(self, tl: TargetLookup, other_target: Target):
+        # Arrange
+        other_target.alt_ids["best_src"] = "2025b"
+        tl.add_target(other_target)
+        assert tl.id_mapping["2025b"] == "T01"
+        assert tl["2025b"].target_id == "T01"
+        assert set(tl.lookup.keys()) == set(["T00", "T01"])
 
-        # group 3
-        t6 = Target("T103", 180.0, 30.0, alt_ids={"src01": "T103"})
+        # Act
+        tl.update_to_preferred_target_id(preferred_alt="best_src")
 
-        for target in [t1, t2, t3, t4, t5, t6]:
-            tl.add_target(target)
+        # Assert
+        assert len(tl) == 2
+        assert set(tl.keys()) == set(["T00", "2025b"])
 
-        tl.consolidate_targets(seplimit=1 * u.deg, warn_overwrite=False)
+        assert tl.id_mapping["2025b"] == "2025b"
+        assert tl.id_mapping["T01"] == "2025b"
 
-        assert len(tl) == 3
-        assert set(tl.keys()) == set("T101 T102 T103".split())
-        assert len(tl.id_mapping) == 6
-        assert set(tl.id_mapping.keys()) == set(
-            "T101 SN001 OBJ_001 T102 OBJ_002 T103".split()
-        )
 
-        assert set(tl["T101"].alt_ids.keys()) == set("src01 src02 src03".split())
-        assert tl["SN001"].target_id == "T101"
-        assert tl["OBJ_001"].target_id == "T101"
-        assert tl.id_mapping["T101"] == "T101"
-        assert tl.id_mapping["SN001"] == "T101"
-        assert tl.id_mapping["OBJ_001"] == "T101"
+class Test__AddTargetFromFile:
+    def test__normal(
+        self, tl: TargetLookup, target_config_example: dict, tmp_path: Path
+    ):
+        # Arrange
+        target_config_path = tmp_path / "test_target.yaml"
+        with open(target_config_path, "w+") as f:
+            yaml.dump(target_config_example, f)
 
-        assert tl["T101"].target_data["ztf"].meta["parameter"] == 10  # overwritten!
+        # Act
+        tl.add_target_from_file(target_config_path)
 
-        assert set(tl["T102"].alt_ids.keys()) == set("src01 src03".split())
+        # Assert
+        assert len(tl) == 2
+        assert set(tl.keys()) == set(["T00", "T99"])
+
+        assert "T99" in tl.lookup
+        assert tl["T99"].target_id == "T99"
+        assert tl["target_Z"].target_id == "T99"
+
+        assert np.isclose(tl["T99"].coord.ra.deg, 90.0)
+        assert np.isclose(tl["T99"].coord.dec.deg, -30.0)
+
+        assert np.isclose(tl["T99"].base_score, 100.0)
+
+    def test__sexagismal_interpreted(
+        self, tl: TargetLookup, target_config_example: dict, tmp_path: Path
+    ):
+        # Arrange
+        target_config_example["ra"] = "15:00:00.00"
+        target_config_example["dec"] = "-15:30:00.00"
+        print(target_config_example)
+
+        target_config_path = tmp_path / "test_target.yaml"
+        with open(target_config_path, "w+") as f:
+            yaml.dump(target_config_example, f)
+
+        # Act
+        target = tl.add_target_from_file(target_config_path)
+
+        # Assert
+        assert "T99" in tl.lookup
+        assert np.isclose(target.coord.ra.deg, 225.0)
+        assert np.isclose(target.coord.dec.deg, -15.5)
+
+    def test__malformed_config_returns_none(
+        self, tl: TargetLookup, target_config_example: dict, tmp_path: Path
+    ):
+        # Arrange
+        target_config_path = tmp_path / "test_target.yaml"
+        target_config_example.pop("target_id")
+        with open(target_config_path, "w+") as f:
+            yaml.dump(target_config_example, f)
+
+        # Act
+        with pytest.warns(MissingKeysWarning):
+            target = tl.add_target_from_file(target_config_path)
+
+        # Assert
+        assert target is None
+
+    def test__unexpected_config_returns_none(
+        self, tl: TargetLookup, target_config_example: dict, tmp_path: Path
+    ):
+        # Arrange
+        target_config_example["blah"] = 10.0
+        target_config_path = tmp_path / "test_target.yaml"
+        with open(target_config_path, "w+") as f:
+            yaml.dump(target_config_example, f)
+
+        # Act
+        with pytest.warns(UnexpectedKeysWarning):
+            target = tl.add_target_from_file(target_config_path)
+
+        # Assert
+        assert target is None
+        assert "T99" not in tl
+
+    def test__modify_existing(
+        self, tl: TargetLookup, target_config_example: dict, tmp_path: Path
+    ):
+        # Arrange
+        target_config_example["target_id"] = "T00"
+        target_config_example["alt_ids"] = {"src03": "2025a", "src04": "cool_sn"}
+        target_config_path = tmp_path / "test_target.yaml"
+        with open(target_config_path, "w+") as f:
+            yaml.dump(target_config_example, f)
+
+        # Act
+        target = tl.add_target_from_file(target_config_path)
+
+        # Assert
+        assert set(tl.keys()) == set(["T00"])
+
+        assert np.isclose(tl["T00"].coord.ra.deg, 90.0)  # coord updated!
+        assert np.isclose(tl["T00"].coord.dec.deg, -30.0)
+
+        assert np.isclose(tl["T00"].base_score, 100.0)  # base_score updated!
+
+        assert tl["T00"].target_of_opportunity
+
+
+class Test__RemoveTargetsMethod:
+    def test__remove_non_finite(self, tl: TargetLookup, t_ref: Time):
+        # Arrange
+        tl["T00"].update_score_history(-np.inf, t_ref=t_ref)
+
+        # Act
+        removed = tl.remove_rejected_targets()
+
+        # Assert
+        assert set(tl.keys()) == set()
+        assert set(tl.id_mapping.keys()) == set()  # alt_ids removed
+
+        assert isinstance(removed, list)
+        assert len(removed) == 1
+        assert removed[0].target_id == "T00"
+
+    def test__no_remove_neg_score(self, tl: TargetLookup, t_ref: Time):
+        # Arrange
+        tl["T00"].update_score_history(-100.0, t_ref=t_ref)
+
+        # Act
+        removed = tl.remove_rejected_targets()
+
+        # Assert
+        assert set(tl.keys()) == set(["T00"])
+
+        assert len(removed) == 0
+
+    def test__no_remove_non_score(self, tl: TargetLookup, t_ref: Time):
+        # Act
+        with pytest.warns(UserWarning):
+            removed = tl.remove_rejected_targets()
+
+        # Assert
+        assert len(removed) == 0
+
+    def test__only_subset(self, tl: TargetLookup, other_target: Target, t_ref: Time):
+        # Arrange
+        tl.add_target(other_target)
+        tl["T00"].update_score_history(-np.inf, t_ref=t_ref)
+        tl["T01"].update_score_history(-np.inf, t_ref=t_ref)
+
+        # Act
+        removed = tl.remove_rejected_targets(target_id_list=["T01"])
+
+        # Assert
+        assert len(removed) == 1
+        assert set(tl.keys()) == set(["T00"])
+
+    def test__warns_non_existing(self, tl: TargetLookup):
+        # Act
+        with pytest.warns(UserWarning):
+            removed = tl.remove_rejected_targets(target_id_list=["Txx"])
+
+        # Assert
+        assert len(removed) == 0
+
+
+class Test__GroupTargetsUtil:
+    def test__bundles_grouped(self):
+        # Arrange
+        coord_pairs = [
+            (30.0, +0.0),  # group A
+            (60.0, +0.0),  # group B
+            (30.0, +0.1),  # group A
+            (30.0, -0.1),  # group A
+            (90.0, +0.0),  # group C
+            (60.1, +0.0),  # group B
+        ]
+        coords = SkyCoord(np.array(coord_pairs) * u.deg)
+
+        # Act
+        components = group_nearby_coordinates(coords, seplimit=1 * u.deg)
+
+        # Assert
+        assert isinstance(components, list)
+        assert all([isinstance(x, list) for x in components])  # all sublists
+        flat_components = [idx for grp in components for idx in grp]
+        assert len(flat_components) == 6
+        assert set(flat_components) == set([0, 1, 2, 3, 4, 5])
+
+        assert len(components) == 3
+        assert set([len(x) for x in components]) == set([1, 2, 3])
+
+        expected = set([frozenset([0, 2, 3]), frozenset([1, 5]), frozenset([4])])
+        result = set([frozenset(grp) for grp in components])
+        assert expected == result
+
+    def test__thin_connection(self):
+        # Arrange
+        coord_pairs = [(90.0, 0.0), (89.3, 0.0), (90.7, 0.0)]
+        coords = SkyCoord(np.array(coord_pairs) * u.deg)
+        # here 0-1 and 0-2 are connected <1deg, but 1-2 are not.
+        # but they should still all group, as connected through 1.
+
+        # Act
+        components = group_nearby_coordinates(coords, seplimit=1.0 * u.deg)
+        unconnected = group_nearby_coordinates(coords[1:], seplimit=1.0 * u.deg)
+
+        # Assert
+        assert len(components) == 1
+        assert set(components[0]) == set([0, 1, 2])
+
+        assert len(unconnected) == 2
+        unconn_expected = set([frozenset([0]), frozenset([1])])
+        unconn_result = set([frozenset(grp) for grp in unconnected])
+        assert unconn_result == unconn_expected
+
+
+class Test__MergeTargetsUtil:
+    def test__expected_behaviour(self, basic_target: Target, other_target: Target):
+        # Arrange
+        basic_target.target_data["src01"] = TargetData(parameters={"z": 0.1})
+        basic_target.base_score = 100.0
+        other_target.target_data["src02"] = TargetData(parameters={"p": 1.0})
+        other_target.target_of_opportunity = True
+        other_target.alt_ids = {}
+
+        # Act
+        merged = merge_targets([basic_target, other_target])
+
+        # Assert
+        assert isinstance(merged, Target)
+
+        assert np.isclose(merged.coord.ra.deg, 180.0)
+        assert np.isclose(merged.coord.dec.deg, 0.0)
+
+        assert np.isclose(merged.base_score, 100.0)
+
+        assert merged.target_of_opportunity
+
+        assert set(merged.target_data.keys()) == set(["src01", "src02"])
+        assert np.isclose(merged.target_data["src01"].parameters["z"], 0.1)
+        assert np.isclose(merged.target_data["src02"].parameters["p"], 1.0)
+
+    def test__replaced_alt_ids_warns(self, basic_target: Target, other_target: Target):
+        # Arrange
+        basic_target.alt_ids["src03"] = "2025a"
+        assert "src03" not in other_target.alt_ids  # so merged
+
+        # Act
+        with pytest.warns(DuplicateDataWarning):
+            merged = merge_targets([basic_target, other_target])
+
+        # Assert
+        assert isinstance(merged, Target)
+
+        assert merged.target_id == "T00"
+        assert merged.alt_ids["src01"] == "T01"
+        assert merged.alt_ids["src02"] == "target_B"
+        assert merged.alt_ids["src03"] == "2025a"
+
+    def test__replaced_target_data_warns(
+        self, basic_target: Target, other_target: Target
+    ):
+        # Arrange
+        basic_target.target_data["src01"] = TargetData(parameters={"z": 0.1})
+        other_target.target_data["src01"] = TargetData(parameters={"p": 1.0})
+
+        # Act
+        with pytest.warns(DuplicateDataWarning):
+            merged = merge_targets([basic_target, other_target])
+
+        # Assert
+        assert merged.target_id == "T00"
+        assert set(merged.target_data["src01"].parameters.keys()) == set(["p"])
+
+    def test__sort_by_creation_time(self, basic_target: Target, other_target: Target):
+        # Arrange
+        basic_target.creation_time = Time(60001.0, format="mjd")
+        assert basic_target.creation_time > other_target.creation_time
+
+        # Act
+        merged = merge_targets([basic_target, other_target], sort=True)
+        # 'other_target' should be 'base'
+
+        # Assert
+        assert merged.target_id == "T01"  # from 'other_target'
+        assert merged.alt_ids["src01"] == "T00"  # from 'basic_target'
+        assert merged.alt_ids["src02"] == "target_A"
+
+    def test__empty_list_fails(self):
+        # Act
+        with pytest.raises(ValueError):
+            merged = merge_targets([])
+
+    def test__not_targets_fails(self):
+        # Act
+        with pytest.raises(NotATargetError):
+            merged = merge_targets([None])
+
+
+class Test__ConsolidateTargetsMethod:
+    def test__expected_behaviour(self, tl: TargetLookup, other_target: Target):
+        # Arrange
+        tl["T00"].target_data["src01"] = TargetData(parameters={"z": 0.1})
+        tl["T00"].target_data["src03"] = TargetData(parameters={"z": 0.2})
+        coord = SkyCoord(180.0, 0.0, unit="deg")
+
+        t00x = Target("T00x", coord=coord, source="src03")
+        t00x.target_data["src03"] = TargetData(parameters={"x": 1.0})
+        tl.add_target(t00x)
+        tl.add_target(other_target)
+
+        # Act
+        with pytest.warns(DuplicateDataWarning):
+            # expect warning when src01 is overwritte
+            tl.consolidate_targets(sort=True)
+
+        # Assert
+        assert set(tl.keys()) == set(["T00", "T01"])
+
+        assert tl.id_mapping["T00"] == "T00"
+        assert tl.id_mapping["target_A"] == "T00"
+        assert tl.id_mapping["T00x"] == "T00"
+
+        assert tl["T00"].alt_ids["src01"] == "T00"
+        assert tl["T00"].alt_ids["src02"] == "target_A"
+        assert tl["T00"].alt_ids["src03"] == "T00x"
+
+        assert set(tl["T00"].target_data.keys()) == set(["src01", "src03"])
+
+    def test__no_fail_on_empty_tlookup(self, empty_tl: TargetLookup):
+        # Act
+        empty_tl.consolidate_targets()
