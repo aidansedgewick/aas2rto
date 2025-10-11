@@ -9,7 +9,8 @@ from aas2rto.target_lookup import TargetLookup
 
 from aas2rto.messaging.telegram_messenger import TelegramMessenger
 from aas2rto.messaging.slack_messenger import SlackMessenger
-from aas2rto.messaging.html_webpage_manager import HtmlWebpageManager
+
+# from aas2rto.messaging.html_webpage_manager import HtmlWebpageManager
 
 logger = getLogger(__name__.split(".")[-1])
 

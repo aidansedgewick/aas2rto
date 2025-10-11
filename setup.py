@@ -12,6 +12,6 @@ setup(
     packages=find_packages(),
 )
 
-from aas2rto.utils import init_sfd_dustmaps
+#from aas2rto.utils import init_sfd_dustmaps
 
-init_sfd_dustmaps()
+#init_sfd_dustmaps()

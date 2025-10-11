@@ -1,15 +1,19 @@
 astroplan
 astropy
 black
-dustmaps
 emcee
 iminuit
 matplotlib
 numpy
 pandas
+pytest
 pyyaml
 scipy
+
+# model-specific
 sncosmo
+dustmaps
+dust_extinction
 
 # messengers
 python-telegram-bot==13.12

@@ -28,6 +28,10 @@ class DuplicateDataWarning(UserWarning):
     pass
 
 
+class MissingFileWarning(UserWarning):
+    pass
+
+
 class MissingKeysWarning(UserWarning):
     pass
 

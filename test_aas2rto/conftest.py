@@ -162,3 +162,4 @@ def tlookup(
     other_target.target_data["src01"] = TargetData(lightcurve=extra_det_pandas)
     tl.add_target(basic_target)
     tl.add_target(other_target)
+    return tl

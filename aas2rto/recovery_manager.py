@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import warnings
 from logging import getLogger
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from aas2rto import utils
+from aas2rto.exc import MissingFileWarning
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
@@ -75,13 +77,25 @@ class RecoveryManager:
         targets_files_to_remove = existing_recovery_files[:-N]
         for filepath in targets_files_to_remove:
             os.remove(filepath)
+        return recovery_file
 
-    def write_rank_histories(self, obs_name="no_observatory", t_ref: Time = None):
+    def write_rank_histories(self, observatory=None, t_ref: Time = None):
         t_ref = t_ref or Time.now()
+
+        observatory = observatory or [None]
+        if not isinstance(observatory, list):
+            observatory = [observatory]
+
+        obs_names = [utils.get_observatory_name(o) for o in observatory]
 
         data = {}
         for target_id, target in self.target_lookup.items():
-            data[target_id] = target.rank_history[obs_name]
+            data[target_id] = {}
+            for obs_name in obs_names:
+                obs_rank_hist = target.rank_history.get(obs_name, None)
+                if not obs_rank_hist:
+                    continue  # 'not' catches 'None' and empty list.
+                data[target_id][obs_name] = obs_rank_hist
 
         rank_history_file = self.path_manager.get_current_rank_history_file(t_ref=t_ref)
         with open(rank_history_file, "w+") as f:
@@ -109,15 +123,21 @@ class RecoveryManager:
                 fmt=fmt
             )
             if len(existing_recovery_files) == 0:
+                msg = "no recovery files available!"
+                logger.warning(msg)
+                warnings.warn(MissingFileWarning(msg))
                 return
             recovery_file = existing_recovery_files[-1]
         recovery_file = Path(recovery_file)
 
         if not recovery_file.exists():
-            logger.warning(f"{recovery_file.file} missing")
-            return
+            msg = f"recovery file {recovery_file} not found"
+            logger.error(msg)
+            raise FileNotFoundError(msg)
         if recovery_file.stat().st_size < 2:
-            logger.info("file too small - don't attempt read...")
+            msg = f"file {recovery_file.stem} too small - don't attempt read..."
+            logger.warning(msg)
+            warnings.warn(MissingFileWarning(msg))
             return
 
         logger.info(f"recover targets from\n    {recovery_file}")
@@ -147,22 +167,21 @@ class RecoveryManager:
         recovered_targets = []
         missing_rank_history = []
         for target_id, target_info in known_targets.items():
-            ra = target_info.pop("ra")
-            dec = target_info.pop("dec")
-            target = Target(
-                target_id,
-                coord=coord,
-                base_score=target_info["base_score"],
-                alt_ids=target_info.get("alt_ids", {}),
-            )
+            target_config = target_info.copy()
+            ra = target_config.pop("ra")
+            dec = target_config.pop("dec")
+            target_config["coord"] = SkyCoord(ra=ra, dec=dec, unit="deg")
+            target = Target(**target_config)
 
             if recovered_rank_history is not None:
-                target_rank_history = recovered_rank_history.get(target_id, [])
+                target_rank_history = recovered_rank_history.get(target_id, {})
                 if len(target_rank_history) == 0:
                     missing_rank_history.append(target_id)
-                target.rank_history["no_observatory"] = target_rank_history
+                for obs_name, obs_rank_history in target_rank_history.items():
+                    target.rank_history[obs_name] = obs_rank_history
 
             recovered_targets.append(target)
+            self.target_lookup.add_target(target)
 
         logger.info(f"recovered {len(recovered_targets)} targets from file")
         if recovered_rank_history is not None:
