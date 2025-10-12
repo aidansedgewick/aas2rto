@@ -25,7 +25,7 @@ from astroplan.plots import plot_altitude
 
 from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
 from aas2rto.target_data import TargetData
-from aas2rto.obs_info import ObservatoryInfo
+from aas2rto.ephem_info import EphemInfo
 from aas2rto.utils import get_observatory_name
 
 logger = getLogger(__name__.split(".")[-1])
@@ -96,7 +96,7 @@ class Target:
         self.target_data = target_data or {}
 
         # Observatory data
-        self.observatory_info = {"no_observatory": None}
+        self.ephem_info = {"no_observatory": None}
 
         # Models
         self.models = {}

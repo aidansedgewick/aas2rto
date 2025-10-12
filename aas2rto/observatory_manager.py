@@ -1,3 +1,5 @@
+import copy
+import warnings
 from logging import getLogger
 from pathlib import Path
 from typing import Dict
@@ -9,7 +11,7 @@ from astropy.time import Time
 from astroplan import Observer
 
 from aas2rto import utils
-from aas2rto.obs_info import ObservatoryInfo
+from aas2rto.ephem_info import EphemInfo
 from aas2rto.path_manager import PathManager
 from aas2rto.target_lookup import TargetLookup
 
@@ -19,26 +21,40 @@ logger = getLogger(__name__.split(".")[-1])
 class ObservatoryManager:
 
     default_config = {
-        "obs_info_dt": 0.5 / 24.0,
-        "obs_info_update": 2.0 / 24.0,
+        "dt": 15.0,
+        "dt_unit": "minute",
+        "horizon": -18.0,
+        "sites": {},
     }
 
     def __init__(
         self, config: dict, target_lookup: TargetLookup, path_manager: PathManager
     ):
 
-        self.sites_config = config.pop("sites", {})
-
         self.config = self.default_config.copy()
         self.config.update(config)
         utils.check_unexpected_config_keys(
             self.config, self.default_config, "obs_manager"
         )
+        self.sites_config = self.config["sites"]
+        self._apply_units_to_config()
 
         self.target_lookup = target_lookup
         self.path_manager = path_manager
 
+        self.current_ephem_info = {}
+        self.ephem_updated = {}
+
         self.init_observing_sites()
+
+    def _apply_units_to_config(self):
+        self.config["horizon"] = self.config["horizon"] * u.deg
+
+        dt_unit = getattr(u, self.config["dt_unit"])
+        if not dt_unit.is_equivalent(u.s):
+            raise u.UnitTypeError(f"{dt_unit} should be equiv. to 'u.s'")
+        self.config["dt"] = self.config["dt"] * dt_unit
+        print(self.config["dt"])
 
     def _get_empty_observing_site_lookup(self) -> Dict[str, Observer]:
         """Only for type hinting..."""
@@ -50,50 +66,117 @@ class ObservatoryManager:
         self.sites["no_observatory"] = None
         for site_name, site_location in self.sites_config.items():
             if isinstance(site_location, str):
-                earth_location = EarthLocation.of_site(site_location)
+                observatory = Observer.at_site(site_location)
             else:
                 if "lat" not in site_location or "lon" not in site_location:
                     msg = f"{site_name}" "shoud be dict with {lat=, lon=, (height=)}"
                     logger.warning(f"Likely an exception: {msg}")
                 earth_location = EarthLocation.from_geodetic(**site_location)
+                observatory = Observer(location=earth_location, name=site_name)
 
-            self.sites[site_name] = Observer(location=earth_location, name=site_name)
+            self.sites[site_name] = observatory
         logger.info(f"init {len(self.sites)} obs sites incl. `no_observatory`")
 
-    def compute_observatory_info(
-        self, t_ref: Time = None, horizon: u.Quantity = -18 * u.deg, dt=0.5 / 24.0
-    ):
+    def update_ephem_info(self, observatory: Observer, t: Time, human_time: str = ""):
+        """
+        Parameters
+        ----------
+        observatory : Observer
+        t : Time
+            most usefully some local noon
+        human_time
+            a string only used in logging - helpful to write when obs_info is.
+        **kwargs
+            all passed to EphemInfo - so just the kwargs for that.
+        """
+
+        dt = self.config["dt"]
+        horizon = self.config["horizon"]
+
+        obs_name = utils.get_observatory_name(observatory)
+        t_str = t.strftime("%y-%m-%d %H:%M")
+        msg = f"gen. ephem_info for {obs_name}\n   starting from {t_str}"
+        if human_time:
+            msg = msg + f" ({human_time})"
+        logger.info(msg)
+        ephem_info = EphemInfo(observatory, t_ref=t, horizon=horizon, dt=dt)
+        self.current_ephem_info[obs_name] = ephem_info
+        self.ephem_updated[obs_name] = True
+        return ephem_info
+
+    def check_and_update_ephem_info(self, t_ref: Time = None):
         """
         Precompute some expensive information about the altitude for each observatory.
-
-        access in a target with eg. `my_target.observatory_info["lasilla"]`
         """
         t_ref = t_ref or Time.now()
-        obs_info_update = self.config["obs_info_update"]
 
-        counter = {}
+        horizon = self.config["horizon"]
+
         for obs_name, observatory in self.sites.items():
             if observatory is None:
                 continue
-            msg = f"{obs_name}: obs_info missing/older than {obs_info_update*24:.1f}hr"
-            logger.info(msg)
+
+            logger.info(f"check {obs_name} ephem_info valid...")
+
+            prev_noon = observatory.noon(t_ref, which="previous")
+            next_noon = observatory.noon(t_ref, which="next")
+
+            curr_ephem_info = self.current_ephem_info.get(obs_name, None)
+            if curr_ephem_info is None:
+                logger.info(f"no {obs_name} ephem_info")
+                curr_ephem_info = self.update_ephem_info(
+                    observatory, prev_noon, human_time="local noon"
+                )
+
+            # Check if any ephem data later than t_ref are still at night...
+            future_ephem = t_ref.mjd < curr_ephem_info.t_grid.mjd
+            night = curr_ephem_info.sun_altaz.alt < horizon
+
+            remaining_night = night & future_ephem
+            if sum(remaining_night) > 0:
+                continue
+
+            # If not, update the ephem_info to the next night!
+            # self.update_ephem_info(observatory, next_noon, human_time="local noon")
+
+    def apply_ephem_info(
+        self,
+        t_ref: Time = None,
+    ):
+        """
+        access in a target with eg. `my_target.ephem_info["lasilla"]`
+        """
+        t_ref = t_ref or Time.now()
+
+        self.check_and_update_ephem_info(t_ref=t_ref)
+
+        for obs_name, observatory in self.sites.items():
+            if observatory is None:
+                continue
+
+            update_all_targets = self.ephem_updated[obs_name]
+            if update_all_targets:
+                logger.info("Apply targets to new ephem_info")
+
+            current_ephem_info = self.current_ephem_info.get(obs_name, None)
+            if current_ephem_info is None:
+                msg = f"ephem_info missing for {obs_name}..."
+                logger.warning(msg)
+                warnings.warn(UserWarning(msg))
 
             counter = 0
-            obs_info = ObservatoryInfo.for_observatory(
-                observatory, t_ref=t_ref, horizon=horizon, dt=dt
-            )
             for target_id, target in self.target_lookup.items():
-                existing_info = target.observatory_info.get(obs_name)
-                if existing_info is not None:
-                    if t_ref.mjd - existing_info.t_ref.mjd < obs_info_update:
-                        continue
-                target_obs_info = obs_info.copy()
-                assert target_obs_info.target_altaz is None
-                if target.coord is not None:
-                    target_obs_info.set_target_altaz(target.coord, observatory)
-                target.observatory_info[obs_name] = target_obs_info
-                if target.observatory_info[obs_name].target_altaz is None:
-                    msg = f"\033[33m{target_id} {obs_name} altaz missing\033[0m"
-                    logger.warning(msg)
+
+                target_ephem_info = target.ephem_info.get(obs_name, None)
+
+                if target_ephem_info is not None and not update_all_targets:
+                    continue  # Nothing to apply!
+
+                target_ephem_info = copy.copy(current_ephem_info)
+                target_ephem_info.set_target_altaz(target.coord)
+                target.ephem_info[obs_name] = target_ephem_info
                 counter = counter + 1
-            logger.info(f"updated obs_info for {counter} targets")
+
+            self.ephem_updated[obs_name] = False
+            if counter:
+                logger.info(f"Updated {obs_name} ephem for {counter} targets")

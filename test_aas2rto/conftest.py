@@ -12,7 +12,7 @@ from astropy.time import Time
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
-
+from aas2rto.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 
 
@@ -163,3 +163,18 @@ def tlookup(
     tl.add_target(basic_target)
     tl.add_target(other_target)
     return tl
+
+
+@pytest.fixture
+def obs_mgr_config():
+    return {
+        "sites": {
+            "lasilla": "lasilla",
+            "astrolab": {"lat": 54.767, "lon": -1.5742, "height": 10},
+        }
+    }
+
+
+@pytest.fixture
+def obs_mgr(obs_mgr_config: dict, tlookup: TargetLookup, path_mgr: PathManager):
+    return ObservatoryManager(obs_mgr_config, tlookup, path_mgr)

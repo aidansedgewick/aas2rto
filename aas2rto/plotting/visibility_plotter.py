@@ -23,7 +23,7 @@ from astropy.visualization import ZScaleInterval
 from astroplan import FixedTarget, Observer
 
 from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
-from aas2rto.obs_info import ObservatoryInfo
+from aas2rto.ephem_info import EphemInfo
 from aas2rto.target import Target
 from aas2rto.utils import get_observatory_name
 
@@ -62,7 +62,7 @@ class VisibilityPlotter:
         sky_ax=True,
         sun=True,
         moon=True,
-        obs_info: ObservatoryInfo = None,
+        ephem_info: EphemInfo = None,
         recompute=False,
         t_ref: Time = None,
         t_grid: Time = None,
@@ -72,7 +72,7 @@ class VisibilityPlotter:
     ):
         plotter = cls(
             observatory,
-            obs_info=obs_info,
+            ephem_info=ephem_info,
             t_ref=t_ref,
             t_grid=t_grid,
             alt_ax=alt_ax,
@@ -94,7 +94,7 @@ class VisibilityPlotter:
     def __init__(
         self,
         observatory: Observer,
-        obs_info: ObservatoryInfo = None,
+        ephem_info: EphemInfo = None,
         t_ref: Time = None,
         t_grid: Time = None,
         alt_ax: bool = True,
@@ -109,17 +109,17 @@ class VisibilityPlotter:
         self.forecast = forecast
         self.t_ref = t_ref
 
-        if obs_info is None:
-            logger.info(f"recomputing obs_info for {observatory.name}")
-            obs_info = ObservatoryInfo.for_observatory(
+        if ephem_info is None:
+            logger.info(f"recomputing ephem_info for {observatory.name}")
+            ephem_info = EphemInfo.for_observatory(
                 self.observatory,
                 t_grid=t_grid,
                 t_ref=t_ref,
                 dt=dt,
                 forecast=forecast,
             )
-        self.obs_info = obs_info
-        self.t_grid = self.obs_info.t_grid
+        self.ephem_info = ephem_info
+        self.t_grid = self.ephem_info.t_grid
 
         self.init_fig(alt_ax=alt_ax, sky_ax=sky_ax, figsize=figsize)
         self.init_axes(alt_ax=alt_ax, sky_ax=sky_ax)
@@ -154,22 +154,22 @@ class VisibilityPlotter:
         if isinstance(target, Target):
             coord = target.coord
             target_label = target.target_id
-            obs_info = target.observatory_info.get(obs_name, None)
+            ephem_info = target.ephem_info.get(obs_name, None)
         elif isinstance(target, SkyCoord):
             coord = target
             target_label = None
             if idx is not None:
                 target_label = f"target_{idx+1:02d}"
-            obs_info = None
+            ephem_info = None
         else:
             raise TypeError(
                 f"target should be `Target` or `SkyCoord`, not {type(target)}"
             )
-        if obs_info is None or recompute:
+        if ephem_info is None or recompute:
             logger.info(f"recompute altaz for {target_label}")
             altaz = self.observatory.altaz(self.t_grid, coord)
         else:
-            altaz = obs_info.target_altaz
+            altaz = ephem_info.target_altaz
 
         plot_kwargs = dict(
             label=target_label, color=f"C{idx%8}", ls=("-" if idx < 8 else "--")
@@ -201,7 +201,7 @@ class VisibilityPlotter:
         return
 
     def plot_moon(self, **kwargs):
-        moon_altaz = self.obs_info.moon_altaz
+        moon_altaz = self.ephem_info.moon_altaz
         if moon_altaz is None:
             moon_altaz = self.observatory.moon_altaz(self.t_grid)
         moon_kwargs = self.moon_kwargs.copy()
@@ -214,7 +214,7 @@ class VisibilityPlotter:
         return
 
     def plot_sun(self, **kwargs):
-        sun_altaz = self.obs_info.sun_altaz
+        sun_altaz = self.ephem_info.sun_altaz
         if sun_altaz is None:
             sun_altaz = self.observatory.sun_altaz(self.t_grid)
         sun_kwargs = self.sun_kwargs.copy()

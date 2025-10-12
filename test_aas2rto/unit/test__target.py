@@ -92,10 +92,10 @@ class Test__TargetInit:
 
         assert isinstance(target.coord, SkyCoord)
 
-        assert isinstance(target.observatory_info, dict)
-        assert len(target.observatory_info) == 1
-        assert set(target.observatory_info.keys()) == set(["no_observatory"])
-        assert target.observatory_info["no_observatory"] is None
+        assert isinstance(target.ephem_info, dict)
+        assert len(target.ephem_info) == 1
+        assert set(target.ephem_info.keys()) == set(["no_observatory"])
+        assert target.ephem_info["no_observatory"] is None
 
         assert isinstance(target.models, dict)
         assert len(target.models) == 0

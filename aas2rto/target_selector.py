@@ -31,7 +31,7 @@ from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
 from aas2rto.messaging.messaging_manager import MessagingManager
 from aas2rto.modeling.modeling_manager import ModelingManager
 from aas2rto.scoring.scoring_manager import ScoringManager
-from aas2rto.obs_info import ObservatoryInfo
+from aas2rto.ephem_info import EphemInfo
 from aas2rto.observatory_manager import ObservatoryManager
 from aas2rto.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager

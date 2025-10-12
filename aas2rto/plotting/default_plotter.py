@@ -24,7 +24,7 @@ from astroplan import FixedTarget, Observer
 from astroplan.plots import plot_altitude
 
 from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
-from aas2rto.obs_info import ObservatoryInfo
+from aas2rto.ephem_info import EphemInfo
 from aas2rto.target import Target, DEFAULT_ZTF_BROKER_PRIORITY
 
 logger = getLogger(__name__.split(".")[-1])
