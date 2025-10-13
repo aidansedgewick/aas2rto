@@ -12,6 +12,7 @@ from astropy.time import Time
 from aas2rto.modeling.modeling_manager import ModelingManager
 from aas2rto.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
+from aas2rto.scoring.scoring_manager import ScoringManager
 
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
@@ -35,6 +36,13 @@ def other_target(t_fixed: Time):
     alt_ids = {"src02": "target_B"}
     coord = SkyCoord(ra=90.0, dec=30.0, unit="deg")
     return Target("T01", coord=coord, source="src01", alt_ids=alt_ids, t_ref=t_fixed)
+
+
+@pytest.fixture
+def southern_target(t_fixed: Time):
+    alt_ids = {"src02": "target_C"}
+    coord = SkyCoord(ra=270.0, dec=-30.0, unit="deg")
+    return Target("T02", coord=coord, source="src01", alt_ids=alt_ids, t_ref=t_fixed)
 
 
 @pytest.fixture
@@ -192,3 +200,10 @@ def modeling_mgr(
     modeling_mgr_config: dict, tlookup: TargetLookup, path_mgr: PathManager
 ):
     return ModelingManager(modeling_mgr_config, tlookup, path_mgr)
+
+
+@pytest.fixture
+def scoring_mgr(
+    tlookup: TargetLookup, path_mgr: PathManager, obs_mgr: ObservatoryManager
+):
+    return ScoringManager({}, tlookup, path_mgr, obs_mgr)

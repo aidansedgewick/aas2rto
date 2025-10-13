@@ -269,54 +269,6 @@ class TargetSelector:
             logger.warning(f"failed:{len(failed)} (no compiled lc!)")
         return compiled, failed
 
-    def evaluate_targets(
-        self,
-        science_scoring_function: Callable,
-        observatory_scoring_function: Callable = None,
-        t_ref: Time = None,
-    ):
-        t_ref = t_ref or Time.now()
-        logger.info("evalutate all targets")
-
-        if observatory_scoring_function is None:
-            observatory_scoring_function = DefaultObservatoryScoring()
-
-        for target_id, target in self.target_lookup.items():
-            self.scoring_manager.evaluate_single_target(
-                target,
-                science_scoring_function,
-                observatory_scoring_function=observatory_scoring_function,
-                t_ref=t_ref,
-            )
-
-    def remove_rejected_targets(
-        self, target_id_list=None, t_ref=None, write_comments=True
-    ) -> List[Target]:
-        t_ref = t_ref or Time.now()
-
-        if target_id_list is None:
-            target_id_list = list(self.target_lookup.keys())
-
-        removed_targets = self.target_lookup.remove_rejected_targets(
-            target_id_list=target_id_list, t_ref=t_ref
-        )
-        if write_comments:
-            for target in removed_targets:
-                target.write_comments(
-                    self.path_manager.rejected_targets_path, t_ref=t_ref
-                )
-                target.write_comments(self.path_manager.comments_path, t_ref=t_ref)
-        return removed_targets
-
-    def recover_targets_from_file(self, recovery_file: str):
-
-        recovered_targets = self.recovery_manager.recover_targets_from_file(
-            recovery_file=recovery_file
-        )
-        for target in recovered_targets:
-            self.add_target(target)
-        self.target_lookup.update_target_id_mappings()
-
     def clear_output_plots(self, fig_fmt="png"):
         for obs_name, observatory in self.observatory_manager.sites.items():
             plot_dir = self.path_manager.get_output_plots_path(obs_name, mkdir=False)
@@ -420,13 +372,11 @@ class TargetSelector:
 
         # ================= Prep before modeling and scoring ================= #
         t1 = time.perf_counter()
-        if not "obs_info" in skip_tasks:
-            self.observatory_manager.compute_observatory_info(
-                t_ref=t_ref, dt=obs_info_dt
-            )
+        if not "ephem_info" in skip_tasks:
+            self.observatory_manager.apply_ephem_info(t_ref=t_ref)
         else:
             logger.info("skip compute new obs_info for each target")
-        perf_times["obs_info"] = time.perf_counter() - t1
+        perf_times["ephem_info"] = time.perf_counter() - t1
 
         t1 = time.perf_counter()
         self.compile_target_lightcurves(
@@ -468,7 +418,7 @@ class TargetSelector:
             if scoring_function is None:
                 msg = "You must provide a scoring function."
                 raise ValueError(msg)
-            self.evaluate_targets(
+            self.scoring_manager.evaluate_targets(
                 scoring_function,
                 observatory_scoring_function=observatory_scoring_function,
                 t_ref=t_ref,
@@ -479,7 +429,7 @@ class TargetSelector:
         # ===================== Remove rejected targets ====================== #
         t1 = time.perf_counter()
         if "reject" not in skip_tasks:
-            removed_targets = self.remove_rejected_targets(t_ref=t_ref)
+            removed_targets = self.target_lookup.remove_rejected_targets(t_ref=t_ref)
             if write_comments:
                 self.outputs_manager.write_target_comments(removed_targets, t_ref=t_ref)
                 self.outputs_manager.write_target_comments(
@@ -661,7 +611,9 @@ class TargetSelector:
             lightcurve_compiler = DefaultLightcurveCompiler()
 
         if recovery_file:
-            self.recover_targets_from_file(recovery_file=recovery_file)
+            recovered_target = self.recovery_manager.recover_targets_from_file(
+                recovery_file=recovery_file
+            )
 
         # Send some messages on start-up.
         try:

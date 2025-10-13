@@ -384,7 +384,7 @@ class Test__ScoreHistoryMethods:
 
         # Assert
         assert np.isclose(last_score, 8.0)
-        assert np.isclose(mjd, 60001.0)
+        assert np.isclose(mjd - 60001.0, 0.0)
 
     def test__get_last_score_missing_obs_no_fail(
         self, mock_target_with_history: Target

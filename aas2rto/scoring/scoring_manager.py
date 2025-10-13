@@ -19,24 +19,109 @@ from aas2rto.target_lookup import TargetLookup
 logger = getLogger(__name__.split(".")[-1])
 
 
-def parse_scoring_result(scoring_res, func_name=""):
+def parse_scoring_result(result, func_name=""):
     err_msg = (
         f"scoring function {func_name} should return\n"
-        "score [float] or tuple of (score [float], comments [list[str]])"
+        f"    score : float, or\n"
+        f"    (score, comment_list) : Tuple[float, List[str]]"
     )
+    missing_comments = [f"function {func_name}: no score_comments provided"]
 
-    if isinstance(scoring_res, tuple):
-        if len(scoring_res) == 2:
-            score, score_comments = scoring_res
+    if isinstance(result, tuple):
+        if len(result) == 2:
+            score, comments = result
+        elif len(result) == 1:
+            score, comments = result[0], missing_comments
         else:
-            raise ValueError(err_msg)
-    elif isinstance(scoring_res, float) or isinstance(scoring_res, int):
-        score = scoring_res
-        score_comments = [f"function {func_name}: no score_comments provided"]
+            raise ValueError(err_msg + f"\n your Tuple has len {len(result)}")
+    elif isinstance(result, float) or isinstance(result, int):
+        score, comments = result, missing_comments
     else:
-        raise ValueError(err_msg)
+        raise ValueError(err_msg + f"\nyour function returned type {type(result)}")
 
-    return score, score_comments
+    if not isinstance(score, float) or isinstance(result, int):
+        raise ValueError(err_msg + f"\nyour 'score' is type {type(score)}")
+
+    if comments is None:
+        comments = missing_comments
+    if not isinstance(comments, list):
+        raise ValueError(err_msg + f"\nyour 'comment_list' is type {type(comments)}")
+    return score, comments
+
+
+def science_score_wrapper(
+    science_scoring_function: Callable,
+    target: Target,
+    t_ref: Time = None,
+):
+    """
+    Wrapper function around user-provided science_scoring_function, to catch
+    exceptions.
+
+    """
+
+    t_ref = t_ref or Time.now()
+
+    try:
+        func_name = science_scoring_function.__name__
+    except AttributeError as e:
+        func_name = type(science_scoring_function).__name__
+    obs_name = "no_observatory"
+    try:
+        scoring_res = science_scoring_function(target, t_ref)
+    except Exception as e:
+        t_str = t_ref.strftime("%y-%m-%d %H:%M:%S")
+        details = (
+            f"For target {target.target_id} at {t_str},\n"
+            f"    science score with '{func_name}' failed.\n"
+            f"    Set science score to -1.0 to exclude. Details:\n    {type(e)}: {e}"
+        )
+        scoring_res = (-1.0, [details])
+
+    science_score, score_comments = parse_scoring_result(
+        scoring_res, func_name=func_name
+    )
+    return science_score, score_comments
+
+
+def observatory_score_wrapper(
+    observatory_scoring_function: Callable,
+    target: Target,
+    observatory: Observer,
+    t_ref: Time,
+):
+
+    obs_name = observatory.name
+
+    try:
+        func_name = observatory_scoring_function.__name__
+    except AttributeError as e:
+        func_name = type(observatory_scoring_function).__name__
+
+    t_str = t_ref.strftime("%y-%m-%d %H:%M:%S")
+
+    try:
+        scoring_res = observatory_scoring_function(target, observatory, t_ref=t_ref)
+    except Exception as e:
+        details = (
+            f"For target {target.target_id} at obs {obs_name} at {t_str},\n"
+            f"    observatory score with '{func_name}' failed.\n"
+            f"    Set {obs_name} score to -1.0 to exclude. Details:\n    {type(e)}: {e}"
+        )
+        scoring_res = (-1.0, [details])
+
+    obs_factors, obs_comments = parse_scoring_result(scoring_res, func_name=func_name)
+    if not np.isfinite(obs_factors):
+        msg = (
+            f"For target {target.target_id} at obs {obs_name} at {t_str},\n"
+            f"   obs score with '{func_name}' is non-finite (={obs_factors}). \n"
+            f"    Set to -1.0"
+        )
+        obs_factors = -1.0
+        obs_comments.append(msg)
+        logger.warning(msg)
+
+    return obs_factors, obs_comments
 
 
 class ScoringManager:
@@ -68,7 +153,7 @@ class ScoringManager:
         self,
         target: Target,
         science_scoring_function: Callable,
-        observatory_scoring_function: Observer = None,
+        observatory_scoring_function: Callable = None,
         t_ref: Time = None,
     ):
         """
@@ -97,7 +182,7 @@ class ScoringManager:
         minimum_score = self.config["minimum_score"]
 
         # ===== Compute score according to science scoring ===== #
-        science_score, score_comments = self._evaluate_target_science_score(
+        science_score, score_comments = science_score_wrapper(
             science_scoring_function, target, t_ref=t_ref
         )
 
@@ -116,77 +201,38 @@ class ScoringManager:
 
             if science_score > minimum_score and np.isfinite(science_score):
                 # ===== Modify score for each observatory
-                obs_factors, score_comments = self._evaluate_target_observatory_score(
+                obs_factors, score_comments = observatory_score_wrapper(
                     observatory_scoring_function, target, observatory, t_ref
                 )
                 observatory_score = science_score * obs_factors
             else:
                 obs_factors = 1.0
                 observatory_score = science_score
-                score_comments = ["excluded by no_observatory (science) score"]
+                score_comments = ["excluded by science score"]
 
             target.update_score_history(observatory_score, obs_name, t_ref=t_ref)
             target.score_comments[obs_name] = score_comments
         return
 
-    def _evaluate_target_science_score(
-        self, science_scoring_function: Callable, target: Target, t_ref: Time = None
-    ):
-        """
-        Wrapper function around user-provided science_scoring_function, to catch
-        exceptions.
-
-        """
-
-        t_ref = t_ref or Time.now()
-
-        obs_name = "no_observatory"
-        try:
-            scoring_res = science_scoring_function(target, t_ref)
-        except Exception as e:
-            details = (
-                f"    For target {target.target_id} at obs {obs_name} at {t_ref.isot},\n"
-                f"    scoring with {science_scoring_function.__name__} failed.\n"
-                f"    Set score to -1.0, to exclude.\n"
-            )
-            scoring_res = (-1.0, [details])
-
-        func_name = science_scoring_function.__name__
-        science_score, score_comments = parse_scoring_result(
-            scoring_res, func_name=func_name
-        )
-        return science_score, score_comments
-
-    def _evaluate_target_observatory_score(
+    def evaluate_targets(
         self,
-        observatory_scoring_function: Callable,
-        target: Target,
-        observatory: Observer,
-        t_ref: Time,
+        science_scoring_function: Callable,
+        observatory_scoring_function: Callable = None,
+        t_ref: Time = None,
     ):
+        t_ref = t_ref or Time.now()
+        logger.info("evalutate all targets")
 
-        obs_name = observatory.name
-        try:
-            scoring_res = observatory_scoring_function(target, observatory, t_ref=t_ref)
-        except Exception as e:
-            details = (
-                f"    For target {target.target_id} at obs {obs_name} at {t_ref.isot},\n"
-                f"    scoring with {observatory_scoring_function.__name__} failed.\n"
-                f"    Set score to -1.0, to exclude.\n"
+        if observatory_scoring_function is None:
+            observatory_scoring_function = DefaultObservatoryScoring()
+
+        for target_id, target in self.target_lookup.items():
+            self.evaluate_single_target(
+                target,
+                science_scoring_function,
+                observatory_scoring_function=observatory_scoring_function,
+                t_ref=t_ref,
             )
-            scoring_res = (-1.0, [details])
-            self.send_crash_reports(text=details)
-
-        func_name = observatory_scoring_function.__name__
-        obs_factors, obs_comments = parse_scoring_result(scoring_res)
-        if not np.isfinite(obs_factors):
-            msg = (
-                f"observatory_score not finite (={obs_factors}) "
-                f"for {target.target_id} at {obs_name}."
-            )
-            logger.warning(msg)
-
-        return obs_factors, obs_comments
 
     def new_target_initial_check(
         self, scoring_function: Callable, t_ref: Time = None

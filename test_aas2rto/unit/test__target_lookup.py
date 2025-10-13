@@ -299,6 +299,23 @@ class Test__UpdatePreferredIdMethod:
         assert tl.id_mapping["T01"] == "2025b"
 
 
+class Test__ResetUpdatedMethod:
+    def test__reset(self, tl: TargetLookup):
+        # Arrange
+        tl["T00"].updated = True
+        tl["T00"].send_updates = True
+        tl["T00"].update_messages.append("some_msg")
+
+        # Act
+        tl.reset_updated_targets()
+
+        # Assert
+        assert tl["T00"].updated is False
+        assert tl["T00"].send_updates is False
+        assert isinstance(tl["T00"].update_messages, list)
+        assert len(tl["T00"].update_messages) == 0
+
+
 class Test__AddTargetFromFile:
     def test__normal(
         self, tl: TargetLookup, target_config_example: dict, tmp_path: Path
