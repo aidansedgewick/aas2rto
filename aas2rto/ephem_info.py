@@ -79,11 +79,11 @@ def get_next_valid_sunset_sunrise(
 
 class EphemInfo:
     """
-    For computing and storing information:
+    For computing and storing ephemeris information:
         sun_altaz, moon_altaz, target_altaz, sunrise, sunset, horizon
         and t_grid they were computed on
 
-    Will not upgrate to @dataclass
+    Will not upgrade to @dataclass - too much additional logic.
     """
 
     default_dt = 0.25 * u.hour
@@ -137,8 +137,6 @@ class EphemInfo:
             N = int((self.forecast + self.backcast) / self.dt) + 1
             diff = self.backcast + self.forecast
             t_grid = t_ref - self.backcast + np.linspace(0.0, 1.0, N) * diff
-            print(t_ref, diff, N)
-            print(t_grid.mjd)
         else:
             if not isinstance(t_grid, Time):
                 raise TypeError(f"t_grid should have type Time, not {type(t_grid)}")

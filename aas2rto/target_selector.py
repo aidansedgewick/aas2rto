@@ -324,12 +324,6 @@ class TargetSelector:
                 for plot in plot_dir.glob(f"*.{fig_fmt}"):
                     os.remove(plot)
 
-    def reset_updated_targets(self, t_ref: Time = None):
-        for target_id, target in self.target_lookup.items():
-            target.updated = False
-            target.send_updates = False
-            target.update_messages = []
-
     def perform_web_tasks(self, t_ref: Time = None):
         # TODO: somehow move to messaging_manager
         t_ref = t_ref or Time.now()

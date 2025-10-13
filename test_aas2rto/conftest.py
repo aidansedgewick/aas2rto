@@ -9,11 +9,13 @@ from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.time import Time
 
+from aas2rto.modeling.modeling_manager import ModelingManager
+from aas2rto.observatory_manager import ObservatoryManager
+from aas2rto.path_manager import PathManager
+
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
-from aas2rto.observatory_manager import ObservatoryManager
-from aas2rto.path_manager import PathManager
 
 
 @pytest.fixture
@@ -178,3 +180,15 @@ def obs_mgr_config():
 @pytest.fixture
 def obs_mgr(obs_mgr_config: dict, tlookup: TargetLookup, path_mgr: PathManager):
     return ObservatoryManager(obs_mgr_config, tlookup, path_mgr)
+
+
+@pytest.fixture
+def modeling_mgr_config():
+    return {}
+
+
+@pytest.fixture
+def modeling_mgr(
+    modeling_mgr_config: dict, tlookup: TargetLookup, path_mgr: PathManager
+):
+    return ModelingManager(modeling_mgr_config, tlookup, path_mgr)

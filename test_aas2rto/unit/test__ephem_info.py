@@ -214,3 +214,15 @@ class Test__CopyMethods:
         assert id(copy_ephem_info.t_grid) == id(basic_ephem_info.t_grid)
         assert id(copy_ephem_info.sun_altaz) == id(basic_ephem_info.sun_altaz)
         assert id(copy_ephem_info.moon_altaz) == id(basic_ephem_info.moon_altaz)
+
+    def test__new_t_altaz_works(self, basic_ephem_info: EphemInfo):
+        # Arrange
+        ephem_1 = copy.copy(basic_ephem_info)
+        ephem_1.set_target_altaz(SkyCoord(180.0, 0.0, unit="deg"))
+
+        # Act
+        ephem_2 = copy.copy(basic_ephem_info)
+
+        # Assert
+        assert isinstance(ephem_1.target_altaz, SkyCoord)
+        assert ephem_2.target_altaz is None

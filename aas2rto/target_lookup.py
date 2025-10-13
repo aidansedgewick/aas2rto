@@ -175,6 +175,12 @@ class TargetLookup:
 
         self.update_target_id_mappings()
 
+    def reset_updated_targets(self, t_ref: Time = None):
+        for target_id, target in self.lookup.items():
+            target.updated = False
+            target.send_updates = False
+            target.update_messages = []
+
     def add_target_from_file(
         self,
         target_filepath: Path,

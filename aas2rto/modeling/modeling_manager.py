@@ -1,6 +1,8 @@
+import warnings
+from dataclasses import dataclass
 from logging import getLogger
 from multiprocessing import Pool
-from typing import Callable, List
+from typing import Any, Callable, List
 
 from astropy.time import Time
 
@@ -11,12 +13,12 @@ from aas2rto.target_lookup import TargetLookup
 logger = getLogger(__name__.split(".")[-1])
 
 
+@dataclass
 class ModelingResult:
-    def __init__(self, target_id, model, success, reason):
-        self.target_id = target_id
-        self.model = model
-        self.success = success
-        self.reason = reason
+    target_id: str
+    model: Any
+    success: bool
+    reason: str
 
 
 def modeling_wrapper(func, target, t_ref=None):
@@ -78,6 +80,7 @@ class ModelingManager:
                 model_key = type(modeling_func).__name__
                 msg = f"\n    Your modeling_function {model_key} should have attribute __name__."
                 logger.warning(msg)
+                warnings.warn(UserWarning(msg))
 
             skipped = []
             targets_to_model = []
@@ -130,6 +133,7 @@ class ModelingManager:
                 target_id = result.target_id
                 target = self.target_lookup.get(target_id)
                 target.models[model_key] = result.model
+                target.models_t_ref[model_key] = t_ref.mjd
                 if result.success:
                     if result.model is None:
                         no_model.append(target_id)
