@@ -96,7 +96,7 @@ class Target:
         self.target_data = target_data or {}
 
         # Observatory data
-        self.ephem_info = {"no_observatory": None}
+        self.ephem_info = {}  # {"no_observatory": None}
 
         # Models
         self.models = {}

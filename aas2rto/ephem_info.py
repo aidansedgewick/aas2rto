@@ -86,6 +86,7 @@ class EphemInfo:
     Will not upgrade to @dataclass - too much additional logic.
     """
 
+    default_horizon = -18.0 * u.deg
     default_dt = 0.25 * u.hour
     default_forecast = 1.0 * u.day
     default_backcast = 0.0 * u.day
@@ -95,10 +96,10 @@ class EphemInfo:
         observatory: Observer,
         t_ref: Time = None,
         t_grid: Time = None,
-        horizon: u.Quantity = -18.0 * u.deg,
-        forecast: u.Quantity = 1.0 * u.day,
-        backcast: u.Quantity = 0.0 * u.day,
-        dt: u.Quantity = 0.25 * u.hour,
+        horizon: u.Quantity = None,
+        forecast: u.Quantity = None,
+        backcast: u.Quantity = None,
+        dt: u.Quantity = None,
     ):
         """
         Parameters
@@ -113,10 +114,22 @@ class EphemInfo:
         self.observatory = observatory
         self.t_ref = t_ref
         self.t_grid = t_grid
+
+        # Need ugly if statements here, because u.Quantity has no 'truthiness'
+        # eg. if dt = 1 * u.hr, then `self.dt = dt or default_dt` raises ValueError.
+        if horizon is None:
+            horizon = self.default_horizon
         self.horizon = horizon
+        if forecast is None:
+            forecast = self.default_forecast
         self.forecast = forecast
+        if backcast is None:
+            backcast = self.default_backcast
         self.backcast = backcast
+        if dt is None:
+            dt = self.default_dt
         self.dt = dt
+
         self.sun_altaz = None
         self.moon_altaz = None
         self.target_altaz = None
@@ -134,8 +147,8 @@ class EphemInfo:
 
         if t_grid is None:
             t_ref = t_ref or Time.now()
-            N = int((self.forecast + self.backcast) / self.dt) + 1
             diff = self.backcast + self.forecast
+            N = int((diff) / self.dt) + 1
             t_grid = t_ref - self.backcast + np.linspace(0.0, 1.0, N) * diff
         else:
             if not isinstance(t_grid, Time):

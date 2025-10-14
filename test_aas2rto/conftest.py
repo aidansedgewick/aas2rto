@@ -9,9 +9,12 @@ from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.time import Time
 
+from astroplan import Observer
+
 from aas2rto.modeling.modeling_manager import ModelingManager
 from aas2rto.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
+from aas2rto.plotting.plotting_manager import PlottingManager
 from aas2rto.scoring.scoring_manager import ScoringManager
 
 from aas2rto.target import Target
@@ -58,8 +61,8 @@ def target_config_example():
 
 
 @pytest.fixture
-def mjd0():
-    return 60000.0
+def lasilla():
+    return Observer.at_site("lasilla")
 
 
 @pytest.fixture
@@ -68,40 +71,40 @@ def id0():
 
 
 @pytest.fixture
-def ulim_rows(mjd0):
+def ulim_rows(t_fixed: Time):
     # obsid mjd mag magerr maglim filt tag
     return [
-        [np.nan, mjd0 + 0.0, np.nan, np.nan, 22.0, 1, "ulim"],
-        [np.nan, mjd0 + 0.1, np.nan, np.nan, 21.8, 2, "ulim"],
-        [np.nan, mjd0 + 1.0, np.nan, np.nan, 22.0, 1, "ulim"],
-        [np.nan, mjd0 + 1.1, np.nan, np.nan, 21.8, 2, "ulim"],
+        [np.nan, t_fixed.mjd + 0.0, np.nan, np.nan, 22.0, 1, "ulim"],
+        [np.nan, t_fixed.mjd + 0.1, np.nan, np.nan, 21.8, 2, "ulim"],
+        [np.nan, t_fixed.mjd + 1.0, np.nan, np.nan, 22.0, 1, "ulim"],
+        [np.nan, t_fixed.mjd + 1.1, np.nan, np.nan, 21.8, 2, "ulim"],
     ]
 
 
 @pytest.fixture
-def badqual_rows(mjd0):
+def badqual_rows(t_fixed: Time):
     return [
-        [np.nan, mjd0 + 2.0, 21.0, 0.5, 22.0, 1, "badqual"],
-        [np.nan, mjd0 + 2.1, 21.0, 0.5, 21.8, 2, "badqual"],
-        [np.nan, mjd0 + 3.0, 20.0, 0.3, 22.0, 1, "badqual"],
-        [np.nan, mjd0 + 3.1, 20.0, 0.3, 21.8, 2, "badqual"],
+        [np.nan, t_fixed.mjd + 2.0, 21.0, 0.5, 22.0, 1, "badqual"],
+        [np.nan, t_fixed.mjd + 2.1, 21.0, 0.5, 21.8, 2, "badqual"],
+        [np.nan, t_fixed.mjd + 3.0, 20.0, 0.3, 22.0, 1, "badqual"],
+        [np.nan, t_fixed.mjd + 3.1, 20.0, 0.3, 21.8, 2, "badqual"],
     ]
 
 
 @pytest.fixture
-def det_rows(mjd0, id0):
+def det_rows(t_fixed: Time, id0: int):
     return [
-        [id0 + 1, mjd0 + 4.1, 21.0, 0.05, 21.8, 2, "valid"],
-        [id0 + 0, mjd0 + 4.0, 21.0, 0.08, 22.0, 1, "valid"],
-        [id0 + 2, mjd0 + 5.0, 20.0, 0.08, 22.0, 1, "valid"],
-        [id0 + 3, mjd0 + 5.1, 20.0, 0.05, 21.8, 2, "valid"],
-        [id0 + 4, mjd0 + 6.0, 19.0, 0.08, 22.0, 1, "valid"],
-        [id0 + 5, mjd0 + 6.1, 19.0, 0.05, 21.8, 2, "valid"],
+        [id0 + 1, t_fixed.mjd + 4.1, 21.0, 0.05, 21.8, 2, "valid"],
+        [id0 + 0, t_fixed.mjd + 4.0, 21.0, 0.08, 22.0, 1, "valid"],
+        [id0 + 2, t_fixed.mjd + 5.0, 20.0, 0.08, 22.0, 1, "valid"],
+        [id0 + 3, t_fixed.mjd + 5.1, 20.0, 0.05, 21.8, 2, "valid"],
+        [id0 + 4, t_fixed.mjd + 6.0, 19.0, 0.08, 22.0, 1, "valid"],
+        [id0 + 5, t_fixed.mjd + 6.1, 19.0, 0.05, 21.8, 2, "valid"],
     ]
 
 
 @pytest.fixture
-def lc_rows(ulim_rows, badqual_rows, det_rows):
+def lc_rows(ulim_rows: list, badqual_rows: list, det_rows: list):
     return ulim_rows + badqual_rows + det_rows
 
 
@@ -131,12 +134,12 @@ def tdata_lc_astropy(lc_astropy):
 
 
 @pytest.fixture
-def extra_det_rows(mjd0, id0):
+def extra_det_rows(t_fixed: Time, id0: int):
     return [
-        [id0 + 6, mjd0 + 7.0, 20.0, 0.08, 22.0, 1, "valid"],
-        [id0 + 7, mjd0 + 7.1, 20.0, 0.05, 21.8, 2, "valid"],
-        [id0 + 8, mjd0 + 8.0, 19.0, 0.08, 22.0, 1, "valid"],
-        [id0 + 9, mjd0 + 8.1, 19.0, 0.05, 21.8, 2, "valid"],
+        [id0 + 6, t_fixed.mjd + 7.0, 20.0, 0.08, 22.0, 1, "valid"],
+        [id0 + 7, t_fixed.mjd + 7.1, 20.0, 0.05, 21.8, 2, "valid"],
+        [id0 + 8, t_fixed.mjd + 8.0, 19.0, 0.08, 22.0, 1, "valid"],
+        [id0 + 9, t_fixed.mjd + 8.1, 19.0, 0.05, 21.8, 2, "valid"],
     ]
 
 
@@ -178,10 +181,11 @@ def tlookup(
 @pytest.fixture
 def obs_mgr_config():
     return {
+        "dt": 60.0,
         "sites": {
             "lasilla": "lasilla",
             "astrolab": {"lat": 54.767, "lon": -1.5742, "height": 10},
-        }
+        },
     }
 
 
@@ -207,3 +211,12 @@ def scoring_mgr(
     tlookup: TargetLookup, path_mgr: PathManager, obs_mgr: ObservatoryManager
 ):
     return ScoringManager({}, tlookup, path_mgr, obs_mgr)
+
+
+@pytest.fixture
+def plotting_mgr(
+    tlookup: Target, path_mgr: PathManager, obs_mgr: ObservatoryManager, t_fixed: Time
+):
+    mgr = PlottingManager({}, tlookup, path_mgr, obs_mgr)
+    mgr.observatory_manager.apply_ephem_info(t_ref=t_fixed)
+    return mgr

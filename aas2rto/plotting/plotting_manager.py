@@ -1,13 +1,19 @@
+import warnings
 from logging import getLogger
 from typing import Callable
 
 import matplotlib.pyplot as plt
+
 from astropy.time import Time
+
+from astroplan import Observer
 
 from aas2rto.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting.default_plotter import plot_default_lightcurve
+from aas2rto.plotting.rank_hist_plotter import plot_rank_histories
 from aas2rto.plotting.visibility_plotter import plot_visibility
+
 from aas2rto.target_lookup import TargetLookup
 from aas2rto import utils
 
@@ -46,13 +52,13 @@ class PlottingManager:
     def plot_all_target_lightcurves(
         self,
         plotting_function: Callable = None,
-        lazy_plotting=None,
-        plotting_interval=None,
+        lazy_plotting: bool = None,
+        plotting_interval: float = None,
         t_ref: Time = None,
     ):
-        plotted = []
-        skipped = []
         logger.info(f"plot lightcurves")
+
+        t_ref = t_ref or Time.now()
 
         if plotting_function is None:
             plotting_function = plot_default_lightcurve
@@ -63,6 +69,8 @@ class PlottingManager:
         if lazy_plotting:
             logger.info(f"reuse lc plots <{interval*24:.1f}hr")
 
+        plotted = []
+        skipped = []
         for target_id, target in self.target_lookup.items():
             fig_path = self.path_manager.get_lightcurve_plot_path(target_id)
             target.lc_fig_path = fig_path  # useful to attach fig path to target
@@ -82,7 +90,10 @@ class PlottingManager:
         return plotted, skipped
 
     def plot_all_target_visibilities(
-        self, lazy_plotting=None, plotting_interval=None, t_ref=None
+        self,
+        lazy_plotting: bool = None,
+        plotting_interval: float = None,
+        t_ref: Time = None,
     ):
         for obs_name, observatory in self.observatory_manager.sites.items():
             self.plot_all_target_visibilities_for_observatory(
@@ -94,7 +105,7 @@ class PlottingManager:
 
     def plot_all_target_visibilities_for_observatory(
         self,
-        observatory,
+        observatory: Observer,
         lazy_plotting=None,
         plotting_interval=None,
         t_ref: Time = None,
@@ -125,67 +136,51 @@ class PlottingManager:
                 skipped.append(target_id)
                 continue
 
-            obs_info = target.observatory_info.get(obs_name, None)
-            fig = plot_visibility(observatory, target, t_ref=t_ref, obs_info=obs_info)
+            ephem_info = target.ephem_info.get(obs_name, None)
+            fig = plot_visibility(
+                observatory, target, t_ref=t_ref, ephem_info=ephem_info
+            )
             fig.savefig(fig_path)
             plt.close(fig=fig)
             plotted.append(target_id)
         if len(plotted) > 0 or len(skipped) > 0:
             msg = f"plotted {len(plotted)}, reused {len(skipped)}"
             logger.info(msg)
+        return plotted, skipped
 
     def plot_rank_histories(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
         fig, ax = plt.subplots()
 
-        minimum_rank = self.config["minimum_rank"]
-        rank_lookback = self.config["rank_lookback"]
+        plotter = plot_rank_histories(
+            self.target_lookup, "no_observatory", t_ref=t_ref, return_plotter=True
+        )
 
-        for target_id, target in self.target_lookup.items():
-            rank_history = target.get_rank_history(obs_name="no_observatory")
-            if len(rank_history) == 0:
-                continue
-
-            if all(rank_history > minimum_rank):
-                continue
-
-            recent_mask = t_ref.mjd - rank_history["mjd"] < rank_lookback
-            recent_history = rank_history[recent_mask]
-
-            ax.step(
-                recent_history["mjd"],
-                recent_history["rank"],
-                label=target_id,
-                where="pre",
-            )
-
-        ax.set_ylim(minimum_rank + 0.5, 0.5)
-        ax.set_ylabel("Rank")
-        ax.set_xlabel("Time [mjd]")
+        fig = plotter.fig
 
         fig_path = self.path_manager.scratch_path / "rank_histories.png"
         fig.savefig(fig_path)
         plt.close(fig)
 
-    def plot_additional_figures(self, func, t_ref=None):
+        return plotter.targets_plotted, plotter.targets_skipped
+
+    def plot_additional_target_figures(self, func: Callable, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        plot_name = getattr(func, "plot_name", None)
-        if plot_name is None:
+        try:
             plot_name = func.__name__
-
-        default_interval = self.config["plotting_interval"]
-        default_lazy_plotting = self.config["lazy_plotting"]
+        except AttributeError as e:
+            plot_name = type(func).__name__
 
         lazy_plotting = getattr(func, "lazy_plotting", None)
         if lazy_plotting is None:
-            lazy_plotting = default_lazy_plotting
+            lazy_plotting = self.config["lazy_plotting"]
             # TODO or not: warning here?
 
         interval = getattr(func, "plotting_interval", None)
         if interval is None:
-            interval = default_interval
+            interval = self.config["plotting_interval"]
             # TODO or not: raise warining here?
 
         output_dir = self.path_manager.scratch_path / "extra_plots" / plot_name
@@ -209,7 +204,10 @@ class PlottingManager:
             try:
                 fig = func(target, t_ref=t_ref)
             except Exception as e:
-                logger.error(f"{target_id}: {type(e)}, {e}")
+                if len(failed) < 3:
+                    msg = f"{target_id}: {type(e)}, {e}"
+                    logger.error(f"{target_id}: {type(e)}, {e}")
+                    warnings.warn(UserWarning(msg))
                 failed.append(target_id)
                 continue
             if fig is None:
@@ -228,3 +226,4 @@ class PlottingManager:
         logger.info(
             f"{len(plotted)} plotted, {len(skipped)} skipped, {len(returned_none)} returned 'None'"
         )
+        return plotted, skipped

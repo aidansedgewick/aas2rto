@@ -66,8 +66,8 @@ class VisibilityPlotter:
         recompute=False,
         t_ref: Time = None,
         t_grid: Time = None,
-        dt: float = None,
         forecast: float = None,
+        dt: float = None,
         figsize: tuple = None,
     ):
         plotter = cls(
@@ -99,8 +99,8 @@ class VisibilityPlotter:
         t_grid: Time = None,
         alt_ax: bool = True,
         sky_ax: bool = True,
-        dt: float = None,
         forecast: float = None,
+        dt: float = None,
         figsize: tuple = None,
     ):
         t_ref = t_ref or Time.now()
@@ -111,7 +111,7 @@ class VisibilityPlotter:
 
         if ephem_info is None:
             logger.info(f"recomputing ephem_info for {observatory.name}")
-            ephem_info = EphemInfo.for_observatory(
+            ephem_info = EphemInfo(
                 self.observatory,
                 t_grid=t_grid,
                 t_ref=t_ref,
@@ -170,6 +170,8 @@ class VisibilityPlotter:
             altaz = self.observatory.altaz(self.t_grid, coord)
         else:
             altaz = ephem_info.target_altaz
+
+        idx = idx or 0
 
         plot_kwargs = dict(
             label=target_label, color=f"C{idx%8}", ls=("-" if idx < 8 else "--")
@@ -237,10 +239,7 @@ class VisibilityPlotter:
             0.5, 0.98, title, transform=self.fig.transFigure, **self.title_kwargs
         )
 
-        if self.forecast and self.t_ref:
-            xlim = (self.t_ref.mjd, self.t_ref.mjd + self.forecast)
-        else:
-            xlim = self.t_grid[0].mjd, self.t_grid[-1].mjd
+        xlim = self.t_grid[0].mjd, self.t_grid[-1].mjd
 
         if self.alt_ax is not None:
             self.alt_ax.set_xlim(*xlim)
@@ -263,6 +262,7 @@ class VisibilityPlotter:
         self.axes_formatted = True
 
     def set_readable_alt_xticks(self):
+        # This function is a bit mad
         n = 8
         xlow, xhigh = self.alt_ax.get_xlim()
         delta = int(24 * (xhigh - xlow) / n)
@@ -274,10 +274,11 @@ class VisibilityPlotter:
         ticks = vals[vals.mjd < self.t_grid[-1].mjd]
         tk0 = ticks[0].strftime("%H:%M\n%b %d")
         labels = [tk0]
-        for tk in ticks[1:]:
-            if tk.ymdhms.hour < delta:
-                labels.append(tk.strftime("%H:%M\n%b %d"))
+        for tick in ticks[1:]:
+            if tick.ymdhms.hour < delta:
+                # Think this means "if decimal hour is less than inverval per tick"
+                labels.append(tick.strftime("%H:%M\n%b %d"))
             else:
-                labels.append(tk.strftime("%H:%M"))
+                labels.append(tick.strftime("%H:%M"))
         self.alt_ax.set_xticks(ticks.mjd)
         self.alt_ax.set_xticklabels(labels)

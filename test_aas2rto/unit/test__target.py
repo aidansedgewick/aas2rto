@@ -27,11 +27,6 @@ def mock_coord():
 
 
 @pytest.fixture
-def obs_lasilla():
-    return Observer.at_site("lasilla")
-
-
-@pytest.fixture
 def obs_lapalma():
     return Observer.at_site("lapalma")
 
@@ -54,7 +49,7 @@ def mock_target_with_data(mock_target: Target, mock_target_data: TargetData):
 
 @pytest.fixture
 def mock_target_with_history(
-    mock_target: Target, obs_lasilla: Observer, obs_lapalma: Observer, t_ref: Time
+    mock_target: Target, lasilla: Observer, obs_lapalma: Observer, t_ref: Time
 ):
     t_later = Time(60001.0, format="mjd")
 
@@ -65,11 +60,11 @@ def mock_target_with_history(
     mock_target.update_rank_history(1, t_ref=t_ref)
     mock_target.update_rank_history(2, t_ref=t_later)
 
-    mock_target.update_score_history(5.0, observatory=obs_lasilla, t_ref=t_ref)
-    mock_target.update_score_history(4.0, observatory=obs_lasilla, t_ref=t_later)
+    mock_target.update_score_history(5.0, observatory=lasilla, t_ref=t_ref)
+    mock_target.update_score_history(4.0, observatory=lasilla, t_ref=t_later)
 
-    mock_target.update_rank_history(11, observatory=obs_lasilla, t_ref=t_ref)
-    mock_target.update_rank_history(12, observatory=obs_lasilla, t_ref=t_later)
+    mock_target.update_rank_history(11, observatory=lasilla, t_ref=t_ref)
+    mock_target.update_rank_history(12, observatory=lasilla, t_ref=t_later)
 
     mock_target.update_score_history(2.5, observatory=obs_lapalma, t_ref=t_ref)
     mock_target.update_score_history(2.0, observatory=obs_lapalma, t_ref=t_later)
@@ -93,9 +88,7 @@ class Test__TargetInit:
         assert isinstance(target.coord, SkyCoord)
 
         assert isinstance(target.ephem_info, dict)
-        assert len(target.ephem_info) == 1
-        assert set(target.ephem_info.keys()) == set(["no_observatory"])
-        assert target.ephem_info["no_observatory"] is None
+        assert set(target.ephem_info.keys()) == set()
 
         assert isinstance(target.models, dict)
         assert len(target.models) == 0
@@ -198,13 +191,13 @@ class Test__ScoreHistoryMethods:
         assert np.isclose(score_hist0[1], 60000.0)
 
     def test__update_score_history_observer_class(
-        self, mock_target: Target, obs_lasilla: Observer, t_ref: Time
+        self, mock_target: Target, lasilla: Observer, t_ref: Time
     ):
         # Arrange
         assert set(mock_target.score_history.keys()) == set(["no_observatory"])
 
         # Act
-        mock_target.update_score_history(1.0, observatory=obs_lasilla, t_ref=t_ref)
+        mock_target.update_score_history(1.0, observatory=lasilla, t_ref=t_ref)
 
         # Assert
         expected_keys = ["no_observatory", "lasilla"]
@@ -220,13 +213,13 @@ class Test__ScoreHistoryMethods:
         assert np.isclose(score_hist0[1], 60000.0)
 
     def test__update_score_history_str_observer(
-        self, mock_target: Target, obs_lasilla: Observer, t_ref: Time
+        self, mock_target: Target, lasilla: Observer, t_ref: Time
     ):
         # Arrange
         assert set(mock_target.score_history.keys()) == set(["no_observatory"])
 
         # Act
-        mock_target.update_score_history(1.0, observatory=obs_lasilla, t_ref=t_ref)
+        mock_target.update_score_history(1.0, observatory=lasilla, t_ref=t_ref)
 
         # Assert
         expected_keys = ["no_observatory", "lasilla"]
@@ -316,13 +309,13 @@ class Test__ScoreHistoryMethods:
         assert np.allclose(score_hist["score"].values, np.array([10.0, 8.0]))
 
     def test__get_score_hist_observer_object(
-        self, mock_target_with_history: Target, obs_lasilla: Observer
+        self, mock_target_with_history: Target, lasilla: Observer
     ):
         # Arrange
         target = mock_target_with_history
 
         # Act
-        score_hist = target.get_score_history(observatory=obs_lasilla)
+        score_hist = target.get_score_history(observatory=lasilla)
 
         # Assert
         assert len(score_hist) == 2
@@ -364,13 +357,13 @@ class Test__ScoreHistoryMethods:
         assert np.isclose(lasilla_score, 4.0)
 
     def test__get_last_score_observer_obj(
-        self, mock_target_with_history: Target, obs_lasilla: Observer
+        self, mock_target_with_history: Target, lasilla: Observer
     ):
         # Arrange
         target = mock_target_with_history  # shorter name is nicer...
 
         # Act
-        lasilla_score = target.get_last_score(observatory=obs_lasilla)
+        lasilla_score = target.get_last_score(observatory=lasilla)
 
         # Assert
         assert np.isclose(lasilla_score, 4.0)
@@ -419,13 +412,13 @@ class Test__RankHistoryMethods:
         assert np.isclose(rank_hist0[1], 60000.0)
 
     def test__update_rank_history_observer_class(
-        self, mock_target: Target, obs_lasilla: Observer, t_ref: Time
+        self, mock_target: Target, lasilla: Observer, t_ref: Time
     ):
         # Arrange
         assert set(mock_target.rank_history.keys()) == set(["no_observatory"])
 
         # Act
-        mock_target.update_rank_history(1.0, observatory=obs_lasilla, t_ref=t_ref)
+        mock_target.update_rank_history(1.0, observatory=lasilla, t_ref=t_ref)
 
         # Assert
         expected_keys = ["no_observatory", "lasilla"]
@@ -535,13 +528,13 @@ class Test__RankHistoryMethods:
         assert np.allclose(rank_hist["ranking"].values, np.array([1, 2]))
 
     def test__get_rank_hist_observer_object(
-        self, mock_target_with_history: Target, obs_lasilla: Observer
+        self, mock_target_with_history: Target, lasilla: Observer
     ):
         # Arrange
         target = mock_target_with_history
 
         # Act
-        rank_hist = target.get_rank_history(observatory=obs_lasilla)
+        rank_hist = target.get_rank_history(observatory=lasilla)
 
         # Assert
         assert len(rank_hist) == 2
@@ -583,13 +576,13 @@ class Test__RankHistoryMethods:
         assert lasilla_rank == 12
 
     def test__get_last_rank_observer_obj(
-        self, mock_target_with_history: Target, obs_lasilla: Observer
+        self, mock_target_with_history: Target, lasilla: Observer
     ):
         # Arrange
         target = mock_target_with_history  # shorter name is nicer...
 
         # Act
-        lasilla_rank = target.get_last_rank(observatory=obs_lasilla)
+        lasilla_rank = target.get_last_rank(observatory=lasilla)
 
         # Assert
         assert lasilla_rank == 12

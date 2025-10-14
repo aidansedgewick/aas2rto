@@ -459,7 +459,7 @@ class TargetSelector:
             # self.plotting_manager.plot_rank_histories(t_ref=t_ref)
             if extra_plotting_functions is not None:
                 for plotting_func in extra_plotting_functions:
-                    self.plotting_manager.plot_additional_figures(
+                    self.plotting_manager.plot_additional_target_figures(
                         plotting_func, t_ref=t_ref
                     )
 
@@ -504,7 +504,7 @@ class TargetSelector:
         # ======== Reset all targets to un-updated for the next loop ========= #
         self.reset_updated_targets()
 
-        print(
+        logger.info(
             f"time summary:\n    "
             + f"\n    ".join(f"{k:10} = {v: 6.2f}s" for k, v in perf_times.items())
         )

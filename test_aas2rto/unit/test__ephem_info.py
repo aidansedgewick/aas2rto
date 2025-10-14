@@ -1,11 +1,10 @@
 import copy
 import pytest
-from pathlib import Path
 
 import numpy as np
 
 from astropy import units as u
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord
+from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.time import Time, TimeDelta
 
 from astroplan import Observer, TargetAlwaysUpWarning, TargetNeverUpWarning

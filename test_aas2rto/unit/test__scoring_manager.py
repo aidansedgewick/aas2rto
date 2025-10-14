@@ -20,11 +20,6 @@ from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
 
-@pytest.fixture
-def lasilla():
-    return Observer.at_site("lasilla")
-
-
 # ===== define some mock functions here ===== #
 
 
