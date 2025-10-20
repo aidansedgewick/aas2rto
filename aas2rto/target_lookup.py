@@ -141,6 +141,10 @@ class TargetLookup:
                 raise ValueError(msg)
         self[target.target_id] = target
 
+    def add_target_list(self, target_list: List[Target]):
+        for target in target_list:
+            self.add_target(target)
+
     def _warn_repeat_targets_in_lookup(self):
         mem_id_values = [id(t) for t in self.lookup.values()]
         if not len(set(mem_id_values)) == len(mem_id_values):
@@ -262,7 +266,7 @@ class TargetLookup:
                 logger.warning(msg)
                 warnings.warn(msg)
                 continue
-            last_score = target.get_last_score()  # at no_observatory.
+            last_score = target.get_latest_science_score()  # at no_observatory.
             if last_score is None:
                 msg = f"in remove_rejected: {target_id} has no score"
                 logger.warning(msg)

@@ -186,9 +186,6 @@ class TargetSelector:
         selector = cls(selector_config, create_paths=create_paths)
         return selector
 
-    def _get_empty_observatory_lookup(self) -> Dict[str, Observer]:
-        return {}
-
     def add_target(self, target: Target):
         if target.target_id in self.target_lookup:
             raise ValueError(f"obj {target.target_id} already in target_lookup")
@@ -502,7 +499,7 @@ class TargetSelector:
         perf_times["web_tasks"] = time.perf_counter() - t1
 
         # ======== Reset all targets to un-updated for the next loop ========= #
-        self.reset_updated_targets()
+        self.target_lookup.reset_updated_targets()
 
         logger.info(
             f"time summary:\n    "

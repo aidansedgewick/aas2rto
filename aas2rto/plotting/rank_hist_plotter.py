@@ -75,9 +75,10 @@ class RankHistoryPlotter:
         handles = []
         ranks_plotted = []
         for ii, (target_id, target) in enumerate(target_lookup.items()):
-            rank_history = target.get_rank_history(observatory, t_ref=t_ref)
-
-            print(rank_history)
+            if observatory is None:
+                rank_history = target.get_science_rank_history(t_ref=t_ref)
+            else:
+                rank_history = target.get_obs_rank_history(observatory, t_ref=t_ref)
 
             if len(rank_history) == 0:
                 self.targets_skipped.append(target_id)
@@ -85,7 +86,6 @@ class RankHistoryPlotter:
 
             recent_mask = t_ref.mjd - rank_history["mjd"] <= self.lookback
             recent_history = rank_history[recent_mask]
-            print(recent_history)
 
             if all(recent_history["ranking"].values > self.minimum_rank):
                 self.targets_skipped.append(target_id)
@@ -123,6 +123,7 @@ class RankHistoryPlotter:
         self.ax.set_ylim(self.minimum_rank + 0.5, 0.5)
 
         xmin, xmax = self.ax.get_xlim()
+        print(xmin, xmax)
         xscale = max(5.0, self.lookback)
         self.ax.set_xlim(xmax - xscale, xmax + 0.1)
 
@@ -147,6 +148,7 @@ class RankHistoryPlotter:
             ticks = ticks[::spacing]
 
         t_grid = [Time(tick, format="mjd") for tick in ticks]
+        print(ticks)
 
         labels = []
         for ii, t in enumerate(t_grid):

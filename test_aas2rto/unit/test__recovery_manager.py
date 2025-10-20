@@ -124,9 +124,11 @@ class Test__WriteRankHistFiles:
         # Arrange
         t1 = Time(59998.0, format="mjd")
         t2 = Time(59999.0, format="mjd")
-        rec_mgr.target_lookup["T00"].update_rank_history(1, t_ref=t1)  # T00 len >1
-        rec_mgr.target_lookup["T00"].update_rank_history(2, t_ref=t2)
-        rec_mgr.target_lookup["T01"].update_rank_history(3, t_ref=t2)  # T01 len ==1
+        T00 = rec_mgr.target_lookup["T00"]
+        T01 = rec_mgr.target_lookup["T01"]
+        T00.update_science_rank_history(1, t_ref=t1)  # T00 len >1
+        T00.update_science_rank_history(2, t_ref=t2)
+        T01.update_science_rank_history(3, t_ref=t2)  # T01 len == 1
 
         # Act
         rec_mgr.write_rank_histories(t_ref=t_fixed)
@@ -139,17 +141,17 @@ class Test__WriteRankHistFiles:
 
         assert set(data.keys()) == set(["T00", "T01"])
 
-        assert set(data["T00"].keys()) == set(["no_observatory"])
-        assert len(data["T00"]["no_observatory"]) == 2
-        t00_no_obs_data = data["T00"]["no_observatory"]
+        assert set(data["T00"].keys()) == set(["science"])
+        assert len(data["T00"]["science"]) == 2
+        t00_no_obs_data = data["T00"]["science"]
         assert t00_no_obs_data[0][0] == 1
         assert t00_no_obs_data[1][0] == 2
         assert np.isclose(t00_no_obs_data[0][1], 59998.0)
         assert np.isclose(t00_no_obs_data[1][1], 59999.0)
 
-        assert set(data["T01"].keys()) == set(["no_observatory"])
-        assert len(data["T01"]["no_observatory"]) == 1
-        t01_no_obs_data = data["T01"]["no_observatory"]
+        assert set(data["T01"].keys()) == set(["science"])
+        assert len(data["T01"]["science"]) == 1
+        t01_no_obs_data = data["T01"]["science"]
         assert t01_no_obs_data[0][0] == 3
         assert np.isclose(t01_no_obs_data[0][1], 59999.0)
 
@@ -157,17 +159,16 @@ class Test__WriteRankHistFiles:
         # Arrange
         t1 = Time(59998.0, format="mjd")
         t2 = Time(59999.0, format="mjd")
-        rec_mgr.target_lookup["T00"].update_rank_history(1, t_ref=t1)
-        rec_mgr.target_lookup["T00"].update_rank_history(2, t_ref=t2)
-        rec_mgr.target_lookup["T00"].update_rank_history(
-            1, observatory="lasilla", t_ref=t2
-        )
-        rec_mgr.target_lookup["T01"].update_rank_history(3, t_ref=t2)
+        T00 = rec_mgr.target_lookup["T00"]
+        T01 = rec_mgr.target_lookup["T01"]
+        T00.update_science_rank_history(1, t_ref=t1)
+        T00.update_science_rank_history(2, t_ref=t2)
+        T00.update_obs_rank_history(1, observatory="lasilla", t_ref=t2)
+
+        T01.update_science_rank_history(3, t_ref=t2)
 
         # Act
-        rec_mgr.write_rank_histories(
-            observatory=["no_observatory", "lasilla"], t_ref=t_fixed
-        )
+        rec_mgr.write_rank_histories(observatories=True, t_ref=t_fixed)
 
         # Assert
         exp_path = rec_mgr.path_manager.get_current_rank_history_file(t_ref=t_fixed)
@@ -175,21 +176,24 @@ class Test__WriteRankHistFiles:
         with open(exp_path, "r") as f:
             data = json.load(f)
 
-        assert set(data["T00"].keys()) == set(["no_observatory", "lasilla"])
-        assert len(data["T00"]["no_observatory"]) == 2
-        assert len(data["T00"]["lasilla"]) == 1
+        assert set(data.keys()) == set(["T00", "T01"])
 
-        assert set(data["T01"].keys()) == set(["no_observatory"])
-        assert len(data["T01"]["no_observatory"]) == 1
+        assert set(data["T00"].keys()) == set(["science", "observatory"])
+        assert len(data["T00"]["science"]) == 2
+        assert set(data["T00"]["observatory"].keys()) == set(["lasilla"])
+        assert len(data["T00"]["observatory"]["lasilla"]) == 1
 
-    def test__no_fail_missing_obs(self, rec_mgr: RecoveryManager, t_fixed: Time):
+        assert set(data["T01"].keys()) == set(["science", "observatory"])
+        assert len(data["T01"]["science"]) == 1
+        assert set(data["T01"]["observatory"].keys()) == set()
+
+    def test__no_hist_no_fail(self, rec_mgr: RecoveryManager, t_fixed: Time):
         # Arrange
-        rec_mgr.target_lookup["T00"].update_rank_history(1, t_ref=t_fixed)
+        T00 = rec_mgr.target_lookup["T00"]
+        T00.update_science_rank_history(1, t_ref=t_fixed)
 
         # Act
-        rec_mgr.write_rank_histories(
-            observatory=["no_observatory", "astrolab"], t_ref=t_fixed
-        )
+        rec_mgr.write_rank_histories(observatories=True, t_ref=t_fixed)
 
         # Assert
         exp_path = rec_mgr.path_manager.get_current_rank_history_file(t_ref=t_fixed)
@@ -197,9 +201,7 @@ class Test__WriteRankHistFiles:
         with open(exp_path, "r") as f:
             data = json.load(f)
 
-        assert set(data["T00"].keys()) == set(["no_observatory"])
-        assert len(data["T00"]["no_observatory"]) == 1
-        assert set(data["T01"].keys()) == set()
+        assert set(data.keys()) == set(["T00"])
 
     def test__clear_old_files(self, rec_mgr: RecoveryManager, t_fixed: Time):
         # Arrange
@@ -214,7 +216,7 @@ class Test__WriteRankHistFiles:
         assert rec_filepath1.exists()
         assert rec_filepath2.exists()
 
-        rec_mgr.target_lookup["T00"].update_rank_history(1, t_ref=t_fixed)
+        rec_mgr.target_lookup["T00"].update_science_rank_history(1, t_ref=t_fixed)
 
         # Act
         rec_mgr.write_rank_histories(t_ref=t_fixed)
@@ -234,7 +236,7 @@ class Test__RecoverFromFile:
         t_fixed: Time,
     ):
         # Arrange
-        rec_mgr.target_lookup["T00"].update_rank_history(1, t_ref=t_fixed)
+        rec_mgr.target_lookup["T00"].update_science_rank_history(1, t_ref=t_fixed)
         rec_mgr.target_lookup["T00"].base_score = 100.0
         rec_mgr.target_lookup["T01"].alt_ids = {}
         rec_mgr.write_recovery_file(t_ref=t_fixed)
@@ -258,7 +260,7 @@ class Test__RecoverFromFile:
         assert T00.alt_ids["src01"] == "T00"
         assert T00.alt_ids["src02"] == "target_A"
 
-        assert len(T00.rank_history["no_observatory"]) == 1
+        assert len(T00.science_rank_history) == 1
 
         T01 = new_rec_mgr.target_lookup["T01"]
         assert np.isclose(T01.coord.ra.deg, 90.0)
@@ -273,7 +275,7 @@ class Test__RecoverFromFile:
         t_fixed: Time,
     ):
         # Arrange
-        rec_mgr.target_lookup["T00"].update_rank_history(1, t_ref=t_fixed)
+        rec_mgr.target_lookup["T00"].update_science_rank_history(1, t_ref=t_fixed)
         rec_mgr.target_lookup["T00"].base_score = 100.0
         rec_mgr.target_lookup["T01"].alt_ids = {}
         rec_mgr.write_recovery_file(t_ref=t_fixed)  # Don't write rank hist now...

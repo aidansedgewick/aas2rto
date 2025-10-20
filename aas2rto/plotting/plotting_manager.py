@@ -150,15 +150,10 @@ class PlottingManager:
 
     def plot_rank_histories(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
-
-        fig, ax = plt.subplots()
-
         plotter = plot_rank_histories(
-            self.target_lookup, "no_observatory", t_ref=t_ref, return_plotter=True
+            self.target_lookup, t_ref=t_ref, return_plotter=True
         )
-
         fig = plotter.fig
-
         fig_path = self.path_manager.scratch_path / "rank_histories.png"
         fig.savefig(fig_path)
         plt.close(fig)

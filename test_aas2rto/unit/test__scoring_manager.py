@@ -280,17 +280,16 @@ class Test__EvalSingleTargetMethod:
         )
 
         # Assert
-        expected_keys = ["no_observatory", "lasilla", "astrolab"]
-        assert set(T00.score_history.keys()) == set(expected_keys)
-        assert np.isclose(T00.get_last_score(), 10.0)
+        assert set(T00.obs_score_history.keys()) == set(["lasilla", "astrolab"])
+        assert np.isclose(T00.get_latest_science_score(), 10.0)
         # check science_score and obs_score are COMBINED.
-        assert np.isclose(T00.get_last_score("lasilla"), 5.0)  # 10. * 0.5
-        assert np.isclose(T00.get_last_score("astrolab"), 2.0)  # 10. * 0.2
+        assert np.isclose(T00.get_latest_obs_score("lasilla"), 5.0)  # 10. * 0.5
+        assert np.isclose(T00.get_latest_obs_score("astrolab"), 2.0)  # 10. * 0.2
 
-        assert set(T00.score_comments.keys()) == set(expected_keys)
-        assert T00.score_comments["no_observatory"][0] == "comment"
-        assert T00.score_comments["lasilla"][0] == "obs in south"
-        assert T00.score_comments["astrolab"][0] == "obs in north"
+        assert T00.science_comments[0] == "comment"
+        assert set(T00.obs_comments.keys()) == set(["lasilla", "astrolab"])
+        assert T00.obs_comments["lasilla"][0] == "obs in south"
+        assert T00.obs_comments["astrolab"][0] == "obs in north"
 
     def test__score_target_bad_func(self, scoring_mgr: ScoringManager, t_fixed: Time):
         # Arrange
@@ -305,17 +304,17 @@ class Test__EvalSingleTargetMethod:
         )
 
         # Assert
-        expected_keys = ["no_observatory", "lasilla", "astrolab"]
-        assert set(T00.score_history.keys()) == set(expected_keys)
-        assert np.isclose(T00.get_last_score(), -1.0)
-        assert np.isclose(T00.get_last_score("lasilla"), -1.0)
-        assert np.isclose(T00.get_last_score("astrolab"), -1.0)
+        assert set(T00.obs_score_history.keys()) == set(["lasilla", "astrolab"])
+        assert np.isclose(T00.get_latest_science_score(), -1.0)
+        assert np.isclose(T00.get_latest_obs_score("lasilla"), -1.0)
+        assert np.isclose(T00.get_latest_obs_score("astrolab"), -1.0)
 
-        assert set(T00.score_comments.keys()) == set(expected_keys)
-        exp_comm_str = "Set science score to -1.0 to exclude"
-        assert exp_comm_str in T00.score_comments["no_observatory"][0]
-        assert T00.score_comments["lasilla"][0] == "excluded by science score"
-        assert T00.score_comments["astrolab"][0] == "excluded by science score"
+        exp_sci_comm_str = "Set science score to -1.0 to exclude"
+        assert exp_sci_comm_str in T00.science_comments[0]
+        exp_obs_comm_str = "excluded as science score"
+        assert set(T00.obs_comments.keys()) == set(["lasilla", "astrolab"])
+        assert exp_obs_comm_str in T00.obs_comments["astrolab"][0]
+        assert exp_obs_comm_str in T00.obs_comments["lasilla"][0]
 
     def test__obs_scoring_none(self, scoring_mgr: ScoringManager, t_fixed: Time):
         # Arrange
@@ -330,10 +329,11 @@ class Test__EvalSingleTargetMethod:
         )
 
         # Assert
-        assert np.isclose(T00.get_last_score(), 10.0)
+        assert np.isclose(T00.get_latest_science_score(), 10.0)
 
-        assert set(T00.score_comments.keys()) == set(["no_observatory"])
-        assert T00.score_comments["no_observatory"][0] == "comment"
+        assert T00.science_comments[0] == "comment"
+        assert set(T00.obs_score_history.keys()) == set()
+        assert set(T00.obs_comments.keys()) == set()
 
 
 class Test__EvaluateTargets:
@@ -346,29 +346,30 @@ class Test__EvaluateTargets:
         # Assert
         T00 = scoring_mgr.target_lookup["T00"]
         T01 = scoring_mgr.target_lookup["T01"]
-        expected_keys = ["no_observatory", "lasilla", "astrolab"]
 
         # Check all of T00 first...
-        assert set(T00.score_history.keys()) == set(expected_keys)
-        assert np.isclose(T00.get_last_score(), 10.0)
-        assert np.isclose(T00.get_last_score("lasilla"), 5.0)
-        assert np.isclose(T00.get_last_score("astrolab"), 2.0)
+        assert np.isclose(T00.get_latest_science_score(), 10.0)
+        assert len(T00.science_score_history) == 1
+        assert set(T00.obs_score_history.keys()) == set(["lasilla", "astrolab"])
+        assert np.isclose(T00.get_latest_obs_score("lasilla"), 5.0)  # 10.0 * 0.5
+        assert np.isclose(T00.get_latest_obs_score("astrolab"), 2.0)  # 10.0 * 0.2
 
-        assert set(T00.score_comments.keys()) == set(expected_keys)
-        assert T00.score_comments["no_observatory"][0] == "comment"
-        assert T00.score_comments["lasilla"][0] == "obs in south"
-        assert T00.score_comments["astrolab"][0] == "obs in north"
+        assert T00.science_comments[0] == "comment"
+        assert set(T00.obs_comments.keys()) == set(["lasilla", "astrolab"])
+        assert T00.obs_comments["lasilla"][0] == "obs in south"
+        assert T00.obs_comments["astrolab"][0] == "obs in north"
 
         # Now check T01
-        assert set(T01.score_history.keys()) == set(expected_keys)
-        assert np.isclose(T01.get_last_score(), -10.0)
-        assert np.isclose(T01.get_last_score("lasilla"), -10.0)  # exactly no_obs score
-        assert np.isclose(T01.get_last_score("astrolab"), -10.0)
+        assert np.isclose(T01.get_latest_science_score(), -10.0)
+        assert set(T01.obs_score_history.keys()) == set(["lasilla", "astrolab"])
+        assert np.isclose(T01.get_latest_obs_score("lasilla"), -10.0)  # exactly equal
+        assert np.isclose(T01.get_latest_obs_score("astrolab"), -10.0)  # ...to sci
 
-        assert set(T01.score_comments.keys()) == set(expected_keys)
-        assert T01.score_comments["no_observatory"][0] == "target is excluded"
-        assert T01.score_comments["lasilla"][0] == "excluded by science score"
-        assert T01.score_comments["astrolab"][0] == "excluded by science score"
+        assert T01.science_comments[0] == "target is excluded"
+        exp_obs_comm_str = "excluded as science score"
+        assert set(T01.obs_comments.keys()) == set(["lasilla", "astrolab"])
+        assert exp_obs_comm_str in T01.obs_comments["astrolab"][0]
+        assert exp_obs_comm_str in T01.obs_comments["lasilla"][0]
 
 
 class Test__NewTargetInitCheck:
@@ -392,18 +393,14 @@ class Test__NewTargetInitCheck:
 
         # Check indiv targets.
         T00 = scoring_mgr.target_lookup["T00"]
-        T00_exp_keys = ["no_observatory", "lasilla", "astrolab"]
-        assert set(T00.score_history.keys()) == set(T00_exp_keys)
-        assert len(T00.score_history["no_observatory"]) == 1
-        sc_T00, t_T00 = T00.get_last_score(return_time=True)
+        assert len(T00.science_score_history) == 1
+        assert set(T00.obs_score_history.keys()) == set(["lasilla", "astrolab"])
+        sc_T00, t_T00 = T00.get_latest_science_score(return_time=True)
         assert np.isclose(t_T00 - 60000.0, 0.0)  # ie. not re-scored at t_later...
 
         T02 = scoring_mgr.target_lookup["T02"]
-        assert set(T02.score_history.keys()) == set(["no_observatory"])
-        assert len(T02.score_history["no_observatory"]) == 1
-        sc_T02, t_T02 = T02.get_last_score(return_time=True)
+        assert set(T02.obs_score_history.keys()) == set()
+        assert len(T02.science_score_history) == 1
+        sc_T02, t_T02 = T02.get_latest_science_score(return_time=True)
         assert np.isclose(sc_T02, 10.0)
-        assert np.isclose(t_T02 - 60001.0, 0.0)
-
-    def test__init_score_no_new_targets(self):
-        pass
+        assert np.isclose(t_T02 - 60001.0, 0.0)  # new target just scored now!

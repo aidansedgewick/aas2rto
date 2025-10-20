@@ -103,9 +103,17 @@ class Target:
         self.models_t_ref = {}
 
         # Scoring data
-        self.score_history = {"no_observatory": []}
-        self.score_comments = {"no_observatory": []}
-        self.rank_history = {"no_observatory": []}
+        # self.score_history = {"no_observatory": []}
+        self.science_score_history = []
+        self.obs_score_history = {}
+
+        # self.score_comments = {"no_observatory": []}
+        self.science_comments = []
+        self.obs_comments = {}
+
+        # self.rank_history = {"no_observatory": []}
+        self.science_rank_history = []
+        self.obs_rank_history = {}
 
         # Paths to scratch figures
         self.lc_fig_path = None
@@ -183,122 +191,131 @@ class Target:
             self.target_data[source] = source_data
         return source_data
 
-    def update_score_history(
-        self,
-        score_value: float,
-        observatory: Observer = None,
-        t_ref: Time = None,
+    def update_science_score_history(self, score_value: float, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+        score_tuple = (score_value, t_ref.mjd)
+        self.science_score_history.append(score_tuple)
+
+    def update_obs_score_history(
+        self, score_value: float, observatory: Observer, t_ref: Time = None
     ):
         t_ref = t_ref or Time.now()
 
         obs_name = get_observatory_name(observatory)
-        if obs_name not in self.score_history:
+        if obs_name not in self.obs_score_history:
             # Make sure we can append the score
-            self.score_history[obs_name] = []
+            self.obs_score_history[obs_name] = []
 
         score_tuple = (score_value, t_ref.mjd)
-        self.score_history[obs_name].append(score_tuple)
+        self.obs_score_history[obs_name].append(score_tuple)
         return
 
-    def get_score_history(self, observatory=False, t_ref: Time = None):
-        """
-        Returns df with three columns: 'observatory', 'mjd', 'score'
-            (avoid column name 'rank' as clash with pd keywords...)
-        """
+    def get_science_score_history(self, t_ref: Time = None):
 
-        if observatory is False:
-            obs_names = list(self.score_history.keys())
-        else:
-            if not isinstance(observatory, list):
-                observatory = [observatory]
-            obs_names = [get_observatory_name(o) for o in observatory]
+        if len(self.science_score_history) == 0:
+            return pd.DataFrame(columns=["score", "mjd"])
 
-        df_list = []
-        for obs_name in obs_names:
-            obs_score_history = self.score_history.get(obs_name, None)
-            if obs_score_history is None:
-                msg = f"{self.target_id} has no score_history for {obs_name}"
-                logger.warning(msg)
-                warnings.warn(UnknownObservatoryWarning(msg))
-                continue
-
-            obs_df = pd.DataFrame(obs_score_history, columns=["score", "mjd"])
-            obs_df["observatory"] = obs_name
-            df_list.append(obs_df)
-
-        if len(df_list) == 0:
-            return pd.DataFrame(columns=["score", "mjd", "observatory"])
-        score_history_df = pd.concat(df_list)
-        score_history_df.sort_values(
-            ["observatory", "mjd"], inplace=True, ignore_index=True
+        score_history_df = pd.DataFrame(
+            self.science_score_history, columns=["score", "mjd"]
         )
+        score_history_df.sort_values("mjd", inplace=True, ignore_index=True)
         if t_ref is not None:
             score_history_df = score_history_df[score_history_df["mjd"] < t_ref.mjd]
         return score_history_df
 
-    def update_rank_history(
-        self,
-        rank: int,
-        observatory: Observer = None,
-        t_ref: Time = None,
+    def get_obs_score_history(self, observatory: Observer, t_ref: Time = None):
+        """
+        Returns df with three columns: 'observatory', 'mjd', 'score'
+        """
+
+        obs_name = get_observatory_name(observatory)
+        obs_score_history = self.obs_score_history.get(obs_name, None)
+        if obs_score_history is None:
+            msg = f"{self.target_id} has no score_history for {obs_name}"
+            logger.warning(msg)
+            warnings.warn(UnknownObservatoryWarning(msg))
+            return pd.DataFrame(columns=["score", "mjd"])
+
+        if len(obs_score_history) == 0:
+            return pd.DataFrame(columns=["score", "mjd"])
+
+        score_history_df = pd.DataFrame(obs_score_history, columns=["score", "mjd"])
+        score_history_df.sort_values("mjd", inplace=True, ignore_index=True)
+        if t_ref is not None:
+            score_history_df = score_history_df[score_history_df["mjd"] < t_ref.mjd]
+        return score_history_df
+
+    def update_science_rank_history(self, rank: int, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+        rank_tuple = (rank, t_ref.mjd)
+        self.science_rank_history.append(rank_tuple)
+        return
+
+    def update_obs_rank_history(
+        self, rank: int, observatory: Observer, t_ref: Time = None
     ):
         t_ref = t_ref or Time.now()
 
         obs_name = get_observatory_name(observatory)
-        if obs_name not in self.rank_history:
+        if obs_name not in self.obs_rank_history:
             # Make sure we can append the rank
-            self.rank_history[obs_name] = []
+            self.obs_rank_history[obs_name] = []
 
         rank_tuple = (rank, t_ref.mjd)
-        self.rank_history[obs_name].append(rank_tuple)
+        self.obs_rank_history[obs_name].append(rank_tuple)
         return
 
-    def get_rank_history(self, observatory=False, t_ref: Time = None):
+    def get_science_rank_history(self, t_ref: Time = None):
+        if len(self.science_rank_history) == 0:
+            return pd.DataFrame(columns=["ranking", "mjd"])
+
+        score_history_df = pd.DataFrame(
+            self.science_rank_history, columns=["ranking", "mjd"]
+        )
+        score_history_df.sort_values("mjd", inplace=True, ignore_index=True)
+        if t_ref is not None:
+            score_history_df = score_history_df[score_history_df["mjd"] < t_ref.mjd]
+        return score_history_df
+
+    def get_obs_rank_history(self, observatory: Observer, t_ref: Time = None):
         """
         Returns df with three columns: 'observatory', 'mjd', 'ranking'
             (avoid column name 'rank' as clash with pd keywords...)
         """
+        obs_name = get_observatory_name(observatory)
+        obs_data = self.obs_rank_history.get(obs_name, None)
+        if obs_data is None:
+            msg = f"{self.target_id} has no rank history for '{obs_name}'"
+            logger.warning(msg)
+            warnings.warn(UnknownObservatoryWarning(msg))
+            return pd.DataFrame(columns=["ranking", "mjd"])
+        rank_history_df = pd.DataFrame(obs_data, columns=["ranking", "mjd"])
 
-        if observatory is False:
-            obs_names = list(self.score_history.keys())
-        else:
-            if not isinstance(observatory, list):
-                observatory = [observatory]
-            obs_names = [get_observatory_name(o) for o in observatory]
-
-        df_list = []
-        for obs_name in obs_names:
-            obs_data = self.rank_history.get(obs_name, None)
-            if obs_data is None:
-                msg = f"{self.target_id} has no rank history for '{obs_name}'"
-                logger.warning(msg)
-                warnings.warn(UnknownObservatoryWarning(msg))
-                continue
-            obs_df = pd.DataFrame(obs_data, columns=["ranking", "mjd"])
-            obs_df["observatory"] = obs_name
-            df_list.append(obs_df)
-
-        if len(df_list) == 0:
-            return pd.DataFrame(columns=["ranking", "mjd", "observatory"])
-        rank_history_df = pd.concat(df_list)
-        rank_history_df.sort_values(
-            ["observatory", "mjd"], inplace=True, ignore_index=True
-        )
+        rank_history_df.sort_values("mjd", inplace=True, ignore_index=True)
         if t_ref is not None:
             rank_history_df = rank_history_df[rank_history_df["mjd"] < t_ref.mjd]
         return rank_history_df
 
-    def get_last_score(
-        self, observatory: Union[Observer, str] = None, return_time=False
+    def get_latest_science_score(self, return_time=False):
+        if len(self.science_score_history) == 0:
+            result = (None, None)
+        else:
+            result = self.science_score_history[-1]
+
+        if return_time:
+            return result
+        return result[0]  # Otherwise just return the score.
+
+    def get_latest_obs_score(
+        self, observatory: Union[Observer, str], return_time=False
     ):
         """
         Provide a string (observatory name) and return.
 
         Parameters
         ----------
-        observatory: `astroplan.Observer` | `None` | `str` [optional]
-            default=None (="no_observatory")
-            an observatory that the system knows about.
+        observatory: `astroplan.Observer` | `str` [optional]
+            an observatory (or the name of obs) that the system knows about.
         return_time: `bool`
             optional, defaults to `False`. If `False` return only the score
             (either a float or `None`).
@@ -308,11 +325,7 @@ class Target:
 
         obs_name = get_observatory_name(observatory)  # Returns "no_observatory" if None
 
-        if obs_name not in self.score_history.keys():
-            msg = f"No scores for observatory {obs_name}. Known: {self.score_history.keys()}"
-            warnings.warn(UnknownObservatoryWarning(msg))
-
-        obs_history = self.score_history.get(obs_name, [])
+        obs_history = self.obs_score_history.get(obs_name, [])
         if len(obs_history) == 0:
             result = (None, None)
         else:
@@ -322,16 +335,23 @@ class Target:
             return result
         return result[0]  # Otherwise just return the score.
 
-    def get_last_rank(
-        self, observatory: Union[Observer, str] = None, return_time=False
-    ):
+    def get_latest_science_rank(self, return_time=False):
+        if len(self.science_rank_history) == 0:
+            result = (None, None)
+        else:
+            result = self.science_rank_history[-1]
+
+        if return_time:
+            return result
+        return result[0]  # Otherwise just return the score.
+
+    def get_latest_obs_rank(self, observatory: Union[Observer, str], return_time=False):
         """
         Provide a string (observatory name) and return.
 
         Parameters
         ----------
-        observatory: `astroplan.Observer` | `None` | `str` [optional]
-            default=None (="no_observatory")
+        observatory: `astroplan.Observer` | `str` [optional]
             an observatory that the system knows about.
         return_time: `bool`
             optional, defaults to `False`. If `False` return only the score
@@ -341,11 +361,7 @@ class Target:
         """
         obs_name = get_observatory_name(observatory)  # Returns "no_observatory" if None
 
-        if obs_name not in self.score_history.keys():
-            msg = f"No scores for observatory {obs_name}. Known: {self.score_history.keys()}"
-            warnings.warn(UnknownObservatoryWarning(msg))
-
-        rank_history = self.rank_history.get(obs_name, [])
+        rank_history = self.obs_rank_history.get(obs_name, [])
         if len(rank_history) == 0:
             result = (None, None)
         else:
@@ -464,31 +480,28 @@ class Target:
         missing_score_comments = ["no score_comments provided"]
 
         lines = self.get_info_string(t_ref=t_ref).split("\n")
-        last_score = self.get_last_score()
+        last_score = self.get_latest_science_score()
         if last_score is None:
             score_str = "no_score"
         else:
             score_str = f"{last_score:.3f}"
         lines.append(f"score = {score_str} for no_observatory")
 
-        score_comments = self.score_comments.get("no_observatory", None)
+        score_comments = self.science_comments
         score_comments = score_comments or missing_score_comments
         for comm in score_comments:
             lines.append(f"    {comm}")
 
-        for obs_name, comments in self.score_comments.items():
-            if obs_name == "no_observatory":  # We've just done this.
-                continue
+        for obs_name, comments in self.obs_comments.items():
             if comments is None:
                 continue
-            obs_comments = [comm for comm in comments if comm not in score_comments]
-            if len(obs_comments) == 0:
+            if len(comments) == 0:
                 continue
-            obs_last_score = self.get_last_score(obs_name)
-            if obs_last_score is None:
+            obs_score = self.get_latest_obs_score(obs_name)
+            if obs_score is None:
                 continue
-            lines.append(f"score = {obs_last_score:.3f} for {obs_name}")
-            for comm in obs_comments:
+            lines.append(f"score = {obs_score:.3f} for {obs_name}")
+            for comm in comments:
                 lines.append(f"    {comm}")
 
         if last_score is not None:
@@ -497,5 +510,5 @@ class Target:
 
         comments_file = outdir / f"{self.target_id}_comments.txt"
         with open(comments_file, "w+") as f:
-            f.writelines([l + "\n" for l in lines])
+            f.writelines([line + "\n" for line in lines])
         return lines

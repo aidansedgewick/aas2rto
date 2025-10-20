@@ -95,7 +95,7 @@ class DefaultLightcurvePlotter:
         atlas_shapes = {x: "o" for x in "atlasc atlaso".split()}
         yse_shapes = {f"ps1::{x}": "s" for x in "g r i z y w".split()}
         swift_shapes = {f"uvot::{x}": "v" for x in "u b v uvw1 uvw2 uvm1 uvm2".split()}
-        self.plot_shapes = {**ztf_shapes, **atlas_shapes, **yse_shapes}
+        self.plot_shapes = {**ztf_shapes, **atlas_shapes, **yse_shapes, **swift_shapes}
 
         self.valid_kwargs = dict(ls="none")  # , marker="o")
         self.ulimit_kwargs = dict(ls="none")  # , marker="v", mfc="none")

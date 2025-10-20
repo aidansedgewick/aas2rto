@@ -52,6 +52,9 @@ class Test__VisPlotterInit:
         assert not vp.sun_plotted
         assert not vp.axes_formatted
 
+        # Cleanup
+        plt.close(vp.fig)
+
     def test__init_use_existing_ephem(
         self, lasilla: Observer, lasilla_ephem: EphemInfo
     ):
@@ -61,6 +64,9 @@ class Test__VisPlotterInit:
         # Assert
         assert id(vp.ephem_info) == id(lasilla_ephem)
 
+        # Cleanup
+        plt.close(vp.fig)
+
     def test__init_no_sky(self, lasilla: Observer, lasilla_ephem: EphemInfo):
         # Act
         vp = VisibilityPlotter(lasilla, ephem_info=lasilla_ephem, sky_ax=False)
@@ -68,12 +74,18 @@ class Test__VisPlotterInit:
         assert isinstance(vp.alt_ax, plt.Axes)
         assert vp.sky_ax is None
 
+        # Cleanup
+        plt.close(vp.fig)
+
     def test__init_no_alt(self, lasilla: Observer, lasilla_ephem: EphemInfo):
         # Act
         vp = VisibilityPlotter(lasilla, ephem_info=lasilla_ephem, alt_ax=False)
         assert isinstance(vp.fig, plt.Figure)
         assert vp.alt_ax is None
         assert isinstance(vp.sky_ax, plt.Axes)
+
+        # Cleanup
+        plt.close(vp.fig)
 
 
 class Test__PlotTargetMethod:
@@ -93,6 +105,9 @@ class Test__PlotTargetMethod:
         assert not vp.sun_plotted
         assert not vp.axes_formatted
 
+        # Cleanup
+        plt.close(vp.fig)
+
     def test__no_sky(
         self, lasilla: Observer, lasilla_ephem: EphemInfo, ephem_target: Target
     ):
@@ -108,6 +123,9 @@ class Test__PlotTargetMethod:
         assert not vp.moon_plotted
         assert not vp.sun_plotted
         assert not vp.axes_formatted
+
+        # Cleanup
+        plt.close(vp.fig)
 
     def test__plot_target_no_alt(
         self, lasilla: Observer, lasilla_ephem: EphemInfo, ephem_target: Target
@@ -125,6 +143,9 @@ class Test__PlotTargetMethod:
         assert not vp.sun_plotted
         assert not vp.axes_formatted
 
+        # Cleanup
+        plt.close(vp.fig)
+
     def test__target_no_ephem(
         self, lasilla: Observer, lasilla_ephem: EphemInfo, basic_target: Target
     ):
@@ -139,6 +160,9 @@ class Test__PlotTargetMethod:
         assert vp.altitude_plotted
         assert vp.sky_plotted
 
+        # Cleanup
+        plt.close(vp.fig)
+
     def test__plot_target_sky_coord(self, vis_plotter: VisibilityPlotter):
         # Arrange
         sky_coord = SkyCoord(ra=180.0, dec=0.0, unit="deg")
@@ -150,10 +174,16 @@ class Test__PlotTargetMethod:
         assert vis_plotter.altitude_plotted
         assert vis_plotter.sky_plotted
 
+        # Cleanup
+        plt.close(vis_plotter.fig)
+
     def test__plot_fails_bad_coord(self, vis_plotter: VisibilityPlotter):
         # Act
         with pytest.raises(TypeError):
             vis_plotter.plot_target(None)
+
+        # Cleanup
+        plt.close(vis_plotter.fig)
 
 
 class Test__PlotClassMethod:
@@ -171,3 +201,6 @@ class Test__PlotClassMethod:
         assert vp.moon_plotted
         assert vp.sun_plotted
         assert vp.axes_formatted
+
+        # Cleanup
+        plt.close(vp.fig)

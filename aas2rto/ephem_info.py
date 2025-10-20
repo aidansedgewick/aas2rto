@@ -133,6 +133,7 @@ class EphemInfo:
         self.sun_altaz = None
         self.moon_altaz = None
         self.target_altaz = None
+        self.target_transit = None
 
         self.recompute_info(t_ref=self.t_ref, t_grid=self.t_grid)
 
@@ -171,6 +172,7 @@ class EphemInfo:
         self.sun_altaz = sun_altaz
         self.moon_altaz = moon_altaz
         self.target_altaz = None
+        self.target_transit = None
         self.sunrise = sunrise
         self.sunset = sunset
         self.t_ref = t_ref
@@ -179,3 +181,6 @@ class EphemInfo:
         if not isinstance(coord, SkyCoord):
             raise TypeError(f"'coord' should be type 'SkyCoord' not {type(coord)}")
         self.target_altaz = self.observatory.altaz(self.t_grid, coord)
+        self.target_transit = self.observatory.target_meridian_transit_time(
+            self.t_ref, coord, which="next"
+        )

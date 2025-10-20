@@ -86,12 +86,6 @@ def get_detections(
         return lc
 
 
-def who_is_calling(*args, **kwargs):
-    print("who is calling?! {len(args)} args, {len(kwargs)} kwargs")
-    print(args)
-    print(kwargs)
-
-
 class PickleableF99Dust(sncosmo.PropagationEffect):
 
     _minwave = 909.09
@@ -102,7 +96,7 @@ class PickleableF99Dust(sncosmo.PropagationEffect):
         self.param_names_latex = ["E(B-V)"]
         self._parameters = np.array([0.0])
         self._r_v = r_v
-        self._f = who_is_calling
+        self._f = None
 
     def propagate(self, wave, flux, phase=None):
         ebv = self._parameters[0]

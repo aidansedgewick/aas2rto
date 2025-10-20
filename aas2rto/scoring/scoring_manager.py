@@ -66,7 +66,6 @@ def science_score_wrapper(
         func_name = science_scoring_function.__name__
     except AttributeError as e:
         func_name = type(science_scoring_function).__name__
-    obs_name = "no_observatory"
     try:
         scoring_res = science_scoring_function(target, t_ref)
     except Exception as e:
@@ -186,19 +185,13 @@ class ScoringManager:
             science_scoring_function, target, t_ref=t_ref
         )
 
-        obs_name = "no_observatory"
-        target.update_score_history(science_score, obs_name, t_ref=t_ref)
-        target.score_comments[obs_name] = score_comments
+        target.update_science_score_history(science_score, t_ref=t_ref)
+        target.science_comments = score_comments
 
         if observatory_scoring_function is None:
             return
 
         for obs_name, observatory in self.observatory_manager.sites.items():
-            if observatory is None:
-                if not obs_name == "no_observatory":
-                    raise ValueError(f"observatory {obs_name} is None!")
-                continue
-
             if science_score > minimum_score and np.isfinite(science_score):
                 # ===== Modify score for each observatory
                 obs_factors, score_comments = observatory_score_wrapper(
@@ -208,10 +201,19 @@ class ScoringManager:
             else:
                 obs_factors = 1.0
                 observatory_score = science_score
-                score_comments = ["excluded by science score"]
 
-            target.update_score_history(observatory_score, obs_name, t_ref=t_ref)
-            target.score_comments[obs_name] = score_comments
+                if not np.isfinite(science_score):
+                    sci_score_str = science_score
+                else:
+                    sci_score_str = f"{science_score:.2f}"
+                comm = (
+                    f"excluded as science score "
+                    f"{sci_score_str} < minimum (={minimum_score:.2f})"
+                )
+                score_comments = [comm]
+
+            target.update_obs_score_history(observatory_score, obs_name, t_ref=t_ref)
+            target.obs_comments[obs_name] = score_comments
         return
 
     def evaluate_targets(
@@ -258,7 +260,7 @@ class ScoringManager:
         t_ref = t_ref or Time.now()
         new_targets = []
         for target_id, target in self.target_lookup.items():
-            last_score = target.get_last_score("no_observatory")
+            last_score = target.get_latest_science_score()
             if last_score is not None:
                 continue
             self.evaluate_single_target(

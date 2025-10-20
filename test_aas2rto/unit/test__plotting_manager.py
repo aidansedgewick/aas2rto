@@ -20,15 +20,15 @@ def mod_tl(tlookup: TargetLookup, t_fixed: Time):
     t0 = t_fixed - 2.0 * u.day
     t1 = t_fixed - 1.0 * u.day
 
-    tlookup["T00"].update_rank_history(3, t_ref=t0)
-    tlookup["T00"].update_rank_history(2, t_ref=t1)
-    tlookup["T00"].update_rank_history(1, t_ref=t_fixed)
-    tlookup["T00"].update_rank_history(1, "lasilla", t_ref=t1)
-    tlookup["T00"].update_rank_history(2, "lasilla", t_ref=t_fixed)
+    tlookup["T00"].update_science_rank_history(3, t_ref=t0)
+    tlookup["T00"].update_science_rank_history(2, t_ref=t1)
+    tlookup["T00"].update_science_rank_history(1, t_ref=t_fixed)
+    tlookup["T00"].update_obs_rank_history(1, "lasilla", t_ref=t1)
+    tlookup["T00"].update_obs_rank_history(2, "lasilla", t_ref=t_fixed)
 
-    tlookup["T01"].update_rank_history(4, t_ref=t0)
-    tlookup["T01"].update_rank_history(6, t_ref=t1)
-    tlookup["T01"].update_rank_history(8, t_ref=t_fixed)
+    tlookup["T01"].update_science_rank_history(4, t_ref=t0)
+    tlookup["T01"].update_science_rank_history(6, t_ref=t1)
+    tlookup["T01"].update_science_rank_history(8, t_ref=t_fixed)
     return tlookup
 
 

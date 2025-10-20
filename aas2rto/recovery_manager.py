@@ -28,6 +28,9 @@ class RecoveryManager:
         "load_rank_history": True,
     }
 
+    SCIENCE_TAG = "science"
+    OBS_TAG = "observatory"
+
     def __init__(
         self,
         recovery_config: dict,
@@ -79,23 +82,22 @@ class RecoveryManager:
             os.remove(filepath)
         return recovery_file
 
-    def write_rank_histories(self, observatory=None, t_ref: Time = None):
+    def write_rank_histories(self, observatories=False, t_ref: Time = None):
         t_ref = t_ref or Time.now()
-
-        observatory = observatory or [None]
-        if not isinstance(observatory, list):
-            observatory = [observatory]
-
-        obs_names = [utils.get_observatory_name(o) for o in observatory]
 
         data = {}
         for target_id, target in self.target_lookup.items():
+            sci_rank_hist = target.science_rank_history
+            if not sci_rank_hist:
+                continue
             data[target_id] = {}
-            for obs_name in obs_names:
-                obs_rank_hist = target.rank_history.get(obs_name, None)
-                if not obs_rank_hist:
-                    continue  # 'not' catches 'None' and empty list.
-                data[target_id][obs_name] = obs_rank_hist
+            data[target_id][self.SCIENCE_TAG] = sci_rank_hist
+            if observatories:
+                data[target_id][self.OBS_TAG] = {}
+                for obs_name, obs_rank_hist in target.obs_rank_history.items():
+                    if not obs_rank_hist:
+                        continue  # 'not' catches 'None' and empty list.
+                    data[target_id][self.OBS_TAG][obs_name] = obs_rank_hist
 
         rank_history_file = self.path_manager.get_current_rank_history_file(t_ref=t_ref)
         with open(rank_history_file, "w+") as f:
@@ -147,23 +149,6 @@ class RecoveryManager:
         t_end = time.perf_counter()
         logger.info(f"...load data from file in {t_end-t_start:.2f}sec")
 
-        load_rank_history = self.config["load_rank_history"]
-        recovered_rank_history = None
-        if load_rank_history:
-            recovered_rank_history_files = (
-                self.path_manager.get_existing_rank_history_files()
-            )
-            if len(recovered_rank_history_files) == 0:
-                logger.info("no files to recover rank history")
-            else:
-                logger.info("also load rank history")
-                rank_history_file = recovered_rank_history_files[-1]
-                t_start = time.perf_counter()
-                with open(rank_history_file) as f:
-                    recovered_rank_history = json.load(f)
-                t_end = time.perf_counter()
-                logger.info(f"...load data from file in {t_end-t_start:.2f}sec")
-
         recovered_targets = []
         missing_rank_history = []
         for target_id, target_info in known_targets.items():
@@ -173,20 +158,53 @@ class RecoveryManager:
             target_config["coord"] = SkyCoord(ra=ra, dec=dec, unit="deg")
             target = Target(**target_config)
 
-            if recovered_rank_history is not None:
-                target_rank_history = recovered_rank_history.get(target_id, {})
-                if len(target_rank_history) == 0:
-                    missing_rank_history.append(target_id)
-                for obs_name, obs_rank_history in target_rank_history.items():
-                    target.rank_history[obs_name] = obs_rank_history
-
             recovered_targets.append(target)
             self.target_lookup.add_target(target)
 
+        load_rank_history = self.config["load_rank_history"]
+        if load_rank_history:
+            self.recover_rank_histories()
+
         logger.info(f"recovered {len(recovered_targets)} targets from file")
-        if recovered_rank_history is not None:
-            logger.info(f"{len(missing_rank_history)} are missing rank history")
         return recovered_targets
+
+    def recover_rank_histories(self):
+        rank_history_files = self.path_manager.get_existing_rank_history_files()
+        if len(rank_history_files) == 0:
+            logger.info("no files to recover rank history")
+            return
+        else:
+            logger.info("also load rank history")
+            latest_rank_history_file = rank_history_files[-1]
+        t_start = time.perf_counter()
+        with open(latest_rank_history_file) as f:
+            recovered_rank_history = json.load(f)
+        t_end = time.perf_counter()
+        logger.info(f"...load data from file in {t_end-t_start:.2f}sec")
+
+        missing_history = []
+        recovered_history = []
+        t_start = time.perf_counter()
+        for target_id, target in self.target_lookup.items():
+            target_rank_history = recovered_rank_history.get(target_id, {})
+            if len(target_rank_history) == 0:
+                missing_history.append(target_id)
+                continue
+
+            science_rank_history = target_rank_history.get(self.SCIENCE_TAG, [])
+            target.science_rank_history = science_rank_history
+
+            obs_rank_history = target_rank_history.get(self.OBS_TAG, {})
+            for obs_name, obs_hist_ii in target_rank_history.items():
+                target.obs_rank_history[obs_name] = obs_hist_ii
+            recovered_history.append(target_id)
+
+        t_end = time.perf_counter()
+        msg = f"load history for {len(recovered_history)} in {t_end-t_start:.2f}sec"
+        logger.info(msg)
+
+        if len(missing_history) > 0:
+            logger.info(f"missing history for {len(missing_history)} targets")
 
     # def recover_score_history(self, target: Target):
     #     score_history_file = self.path_manager.get_score_history_file(target.target_id)

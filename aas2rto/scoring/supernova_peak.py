@@ -13,6 +13,8 @@ from astropy.time import Time
 
 from astroplan import Observer
 
+import sncosmo
+
 from aas2rto.target import Target
 from aas2rto.target import DEFAULT_ZTF_BROKER_PRIORITY
 
@@ -20,6 +22,12 @@ logger = getLogger("supernova_peak")
 
 
 def logistic(x, L, k, x0):
+    """
+    params L: Ampilture, k: stretch, x0: midpoint
+    defined such that +ve k value give increasing x from -ve to +ve input x
+
+    """
+
     return L / (1.0 + np.exp(-k * (x - x0)))
 
 
@@ -59,7 +67,13 @@ def calc_chisq_factor(chisq_nu):
     return chisq_factor
 
 
-def calc_cv_prob_penalty(detections, ulim, model, cv_cand_detections=3, mag_thresh=1.0):
+def calc_cv_prob_penalty(
+    detections: pd.DataFrame,
+    ulim: pd.DataFrame,
+    model: sncosmo.Model,
+    cv_cand_detections: int = 3,
+    mag_thresh: float = 1.0,
+):
     """
     For upperlimits data before the model peak:
 
@@ -74,15 +88,15 @@ def calc_cv_prob_penalty(detections, ulim, model, cv_cand_detections=3, mag_thre
         return 1.0, [f"no CV-penalty (no 'diffmaglim' data)"]
 
     if len(det_pre_t0) > cv_cand_detections:
-        return 1.0, [f"no CV penalty ({len(det_pre_t0)} det pre-t0)"]
+        return 1.0, [f"no CV penalty: pre-t0 N_det={len(det_pre_t0)}"]
 
     penalties = []
-    # comments = []
 
     penalty_strings = []
     for band, band_ulim in ulim.groupby("band"):
 
-        if band not in detections["band"]:
+        if band not in detections["band"].values:
+            # MUST check on .values, else pd.Series 'truthy'-ness returns False
             continue
 
         t0_mask = band_ulim["mjd"] > t0 - 15.0  # anything after t0-15
@@ -162,10 +176,11 @@ class SupernovaPeakScore:
         min_rising_fraction: float = 0.4,
         min_detections: int = 3,
         min_lc_length: float = 0.75,
+        max_dt_peak: float = 15.0,
         default_color_factor: float = 0.1,
         max_chisq_nu: float = 10.0,
-        min_bulge_sep=15.0,
-        min_gal_lat=5.0,
+        min_mw_sep: float = 15.0,
+        min_gal_lat: float = 5.0,
         # broker_priority: tuple = DEFAULT_ZTF_BROKER_PRIORITY,
         use_compiled_lightcurve=True,
         scoring_sources: tuple = DEFAULT_SCORING_SOURCES,
@@ -180,9 +195,10 @@ class SupernovaPeakScore:
         self.min_rising_fraction = min_rising_fraction
         self.min_detections = min_detections
         self.min_lc_length = min_lc_length
+        self.max_dt_peak = max_dt_peak
         self.default_color_factor = default_color_factor
         self.max_chisq_nu = max_chisq_nu
-        self.min_bulge_sep = min_bulge_sep
+        self.min_mw_sep = min_mw_sep
         self.min_gal_lat = min_gal_lat
         # self.broker_priority = tuple(broker_priority)
         self.use_compiled_lightcurve = use_compiled_lightcurve
@@ -225,7 +241,7 @@ class SupernovaPeakScore:
         upperlimits = clc[ulim_mask]
 
         if len(detections) == 0:
-            return -1.0, ["no detections"]
+            return -1.0, [f"exclude: no detections ({len(upperlimits)} upperlims"]
 
         ###===== Make a quick check on the MJD data ===###
         if sum(detections["mjd"] > t_ref.mjd) > 0:
@@ -240,18 +256,18 @@ class SupernovaPeakScore:
         ###===== Is it in the bulge or disc? =======###
         gal_target = target.coord.galactic
 
-        bulge_sep = target.coord.separation(gal_center)
-        if bulge_sep.deg < self.min_bulge_sep:
+        mw_sep = target.coord.separation(gal_center)
+        if mw_sep.deg < self.min_mw_sep:
             reject = True
             coord_string = f"(l,b)=({gal_target.l.deg:.1f},{gal_target.b.deg:.2f})"
             scoring_comments.append(
-                f"REJECT: {coord_string} < {self.min_bulge_sep:.1f} from MW center"
+                f"REJECT: MW centre: {coord_string} < {self.min_mw_sep:.1f} min sep"
             )
         if abs(gal_target.b.deg) < self.min_gal_lat:
             reject = True
             coord_string = f"(l,b)=({gal_target.l.deg:.1f},{gal_target.b.deg:.2f})"
             scoring_comments.append(
-                f"REJECT: {coord_string}: abs(b) < {self.min_gal_lat:.1f} - in the disc!"
+                f"REJECT: disc: {coord_string}: abs(b) < {self.min_gal_lat:.1f}"
             )
 
         ###===== Is it bright enough =======###
@@ -261,7 +277,7 @@ class SupernovaPeakScore:
         scoring_comments.append(f"mag_factor={mag_factor:.2f} from mag={last_mag:.2f}")
         if last_mag > self.faint_limit:
             exclude = True
-            comm = f"exclude: mag={last_mag:.1f}>{self.faint_limit} (faint lim)"
+            comm = f"exclude: faint mag={last_mag:.1f}>{self.faint_limit} (faint lim)"
             exclude_comments.append(comm)
         factors["mag"] = mag_factor
 
@@ -274,7 +290,7 @@ class SupernovaPeakScore:
         scoring_comments.append(comm)
         if timespan > self.max_timespan:
             reject = True
-            reject_comments.append(f"REJECT: target is {timespan:.2f} days old")
+            reject_comments.append(f"REJECT: target age is {timespan:.2f} days")
 
         ##===== or much too young!? =====##
         if timespan < self.min_timespan:
@@ -322,16 +338,19 @@ class SupernovaPeakScore:
 
         ###===== How many observations =====###
         if len(detections) < self.min_detections:
-            comm = f"exclude: {N_detections} detections insufficient"
+            comm = f"exclude: N_det={N_detections} detections insufficient"
             scoring_comments.append(comm)
             exclude = True
 
         ###===== Factors dependent on Model =====###
 
         model = target.models.get("sncosmo_salt", None)
+        if model is None:
+            scoring_comments.append("no 'sncosmo_salt' model to score")
+
         if model is not None:
             sncosmo_model = copy.deepcopy(model)
-            # Get "result" if it exists, else empty dict. Then ask for "samples", else get None.
+            # Use a COPY so we can update the parameters to median of samples, etc.
 
             ###===== Samples
             try:
@@ -365,15 +384,15 @@ class SupernovaPeakScore:
                         msg = f"model chisq={chisq:.3f} with ndof={ndof}"
                         scoring_comments.append(msg)
                     except ZeroDivisionError as e:
-                        scoring_comments.append(f"model has ndof={ndof} ?")
+                        scoring_comments.append(f"model has bad ndof={ndof} ?")
 
-            if isinstance(chisq_nu, float):
+            if isinstance(chisq_nu, float) and np.isfinite(chisq_nu):
                 if chisq_nu > 0.0:
                     f_chisq = calc_chisq_factor(chisq_nu)
                     factors["chisq_factor"] = f_chisq
-                    chisq_comm = f"chisq factor {f_chisq:.2f} (chisq_nu={chisq_nu:.3f})"
+                    chisq_comm = f"f_chisq={f_chisq:.2f} (from chisq_nu={chisq_nu:.3f})"
                 else:
-                    chisq_comm = f"no factor based on chisq_nu={chisq_nu:.3f}"
+                    chisq_comm = f"no f_chisq from chisq_nu={chisq_nu:.3f}"
             else:
                 chisq_comm = f"no f_chisq: non-float chisq_nu={chisq_nu})"
             scoring_comments.append(chisq_comm)
@@ -384,31 +403,40 @@ class SupernovaPeakScore:
             if not np.isfinite(peak_dt):
                 f_interest = 1.0
                 msg = (
-                    f"{target_id} interest_factor not finite:\n    "
-                    f"dt={peak_dt:.2f}, mjd={t_ref.mjd:.2f}, t0={t0:.2f}"
-                    f"{model.parameters}"
+                    f"{target_id} interest_factor not finite:\n"
+                    f"    dt={peak_dt:.2f}, mjd={t_ref.mjd:.2f}, t0={t0:.2f}\n"
+                    f"    {model.parameters}"
                 )
                 logger.warning(msg)
                 scoring_comments.append(msg)
             else:
                 f_interest = peak_only_interest_function(peak_dt)
 
-            if isinstance(chisq_nu, float):
-                if (0.0 < chisq_nu) and chisq_nu < self.max_chisq_nu:
-                    factors["interest_factor"] = f_interest
-                    comm = f"interest {f_interest:.2f} from peak_dt={peak_dt:+.2f}d"
-                    scoring_comments.append(comm)
-                else:
-                    comm = f"ignore interest {f_interest:.2f}/peak_dt={peak_dt:+.2f}d because chisq_nu={chisq_nu:.3f}"
+            if isinstance(chisq_nu, float) or samples:
+                good_chisq = (0.0 < chisq_nu) and chisq_nu < self.max_chisq_nu
 
-                if peak_dt > self.max_timespan:
-                    reject = True
-                    comm = f"REJECT: too far past peak ({peak_dt:+.1f}d)"
-                    reject_comments.append(comm)
+                if good_chisq or samples:
+                    factors["interest_factor"] = f_interest
+                    dt_comm = f"interest {f_interest:.2f} from peak_dt={peak_dt:+.1f}d"
+
+                    if peak_dt > self.max_dt_peak:
+                        reject = True
+                        dt_str = f"{peak_dt:+.1f}d > {self.max_dt_peak:.1f} max"
+                        comm = f"REJECT: too far past peak ({dt_str})"
+                        reject_comments.append(comm)
+
+                else:
+                    dt_comm = (
+                        f"ignore f_interest={f_interest:.2f}/peak_dt={peak_dt:+.1f}d "
+                        f"as bad value chisq_nu={chisq_nu:.3f}"
+                    )
 
             else:
-                comm = f"ignore interest as non-float chisq_nu {chisq_nu}"
-                scoring_comments.append(comm)
+                dt_comm = (
+                    f"ignore f_interest={f_interest:.2f} (peak_dt={peak_dt:+.1f}d)"
+                    f"as non-float chisq_nu {chisq_nu}"
+                )
+            scoring_comments.append(dt_comm)
 
             ###===== Penalty for likely CVs?
             cv_penalty, cv_comms = calc_cv_prob_penalty(detections, upperlimits, model)

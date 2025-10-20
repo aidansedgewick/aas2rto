@@ -51,7 +51,7 @@ class Test__ObsMgrInit:
         obs_manager = ObservatoryManager(empty_config, tlookup, path_mgr)
 
         # Assert
-        assert set(obs_manager.sites.keys()) == set(["no_observatory"])
+        assert set(obs_manager.sites.keys()) == set()
 
     def test__with_sites(
         self, basic_config: dict, tlookup: TargetLookup, path_mgr: PathManager
@@ -60,12 +60,11 @@ class Test__ObsMgrInit:
         obs_manager = ObservatoryManager(basic_config, tlookup, path_mgr)
 
         # Assert
-        assert set(obs_manager.sites) == set(["no_observatory", "lasilla", "astrolab"])
+        assert set(obs_manager.sites) == set(["lasilla", "astrolab"])
 
         expected_config_keys = ["dt", "dt_unit", "horizon", "sites"]
         assert set(obs_manager.config.keys()) == set(expected_config_keys)
 
-        assert obs_manager.sites["no_observatory"] is None
         assert isinstance(obs_manager.sites["lasilla"], Observer)
         assert isinstance(obs_manager.sites["astrolab"], Observer)
 

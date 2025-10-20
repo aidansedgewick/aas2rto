@@ -421,7 +421,7 @@ class Test__AddTargetFromFile:
 class Test__RemoveTargetsMethod:
     def test__remove_non_finite(self, tl: TargetLookup, t_ref: Time):
         # Arrange
-        tl["T00"].update_score_history(-np.inf, t_ref=t_ref)
+        tl["T00"].update_science_score_history(-np.inf, t_ref=t_ref)
 
         # Act
         removed = tl.remove_rejected_targets()
@@ -436,7 +436,7 @@ class Test__RemoveTargetsMethod:
 
     def test__no_remove_neg_score(self, tl: TargetLookup, t_ref: Time):
         # Arrange
-        tl["T00"].update_score_history(-100.0, t_ref=t_ref)
+        tl["T00"].update_science_score_history(-100.0, t_ref=t_ref)
 
         # Act
         removed = tl.remove_rejected_targets()
@@ -457,8 +457,8 @@ class Test__RemoveTargetsMethod:
     def test__only_subset(self, tl: TargetLookup, other_target: Target, t_ref: Time):
         # Arrange
         tl.add_target(other_target)
-        tl["T00"].update_score_history(-np.inf, t_ref=t_ref)
-        tl["T01"].update_score_history(-np.inf, t_ref=t_ref)
+        tl["T00"].update_science_score_history(-np.inf, t_ref=t_ref)
+        tl["T01"].update_science_score_history(-np.inf, t_ref=t_ref)
 
         # Act
         removed = tl.remove_rejected_targets(target_id_list=["T01"])

@@ -107,26 +107,29 @@ class PathManager:
         self.recovery_path = self.lookup["recovery"]
 
         if create_paths:
-            for path_name, path_val in self.lookup.items():
-                path_val.mkdir(exist_ok=True, parents=True)
+            self.create_paths()
 
-    def get_output_plots_path(self, obs_name, mkdir=True) -> Path:
-        plots_path = self.outputs_path / f"plots/{obs_name}"
+    def create_paths(self):
+        for path_name, path_val in self.lookup.items():
+            path_val.mkdir(exist_ok=True, parents=True)
+
+    def get_output_plots_path(self, sub_dir, mkdir=True) -> Path:
+        plots_path = self.outputs_path / f"plots/{sub_dir}"
         if mkdir:
             plots_path.mkdir(exist_ok=True, parents=True)
         return plots_path
 
-    def get_visible_targets_list_path(self, obs_name, mkdir=True) -> Path:
+    def get_visible_targets_list_path(self, list_stem, mkdir=True) -> Path:
         visible_targets_path = self.outputs_path / "visible_targets"
         if mkdir:
             visible_targets_path.mkdir(exist_ok=True, parents=True)
-        return visible_targets_path / f"{obs_name}.csv"
+        return visible_targets_path / f"{list_stem}.csv"
 
-    def get_ranked_list_path(self, obs_name, mkdir=True) -> Path:
+    def get_ranked_list_path(self, list_stem, mkdir=True) -> Path:
         ranked_lists_path = self.outputs_path / "ranked_lists"
         if mkdir:
             ranked_lists_path.mkdir(exist_ok=True, parents=True)
-        return ranked_lists_path / f"{obs_name}.csv"
+        return ranked_lists_path / f"{list_stem}.csv"
 
     def get_lightcurve_plot_path(self, target_id, mkdir=True):
         scratch_lc_path = self.scratch_path / "lc"

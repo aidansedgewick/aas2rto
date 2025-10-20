@@ -63,7 +63,6 @@ class ObservatoryManager:
     def init_observing_sites(self):
         self.sites = self._get_empty_observing_site_lookup()
 
-        self.sites["no_observatory"] = None
         for site_name, site_location in self.sites_config.items():
             if isinstance(site_location, str):
                 observatory = Observer.at_site(site_location)
@@ -75,7 +74,7 @@ class ObservatoryManager:
                 observatory = Observer(location=earth_location, name=site_name)
 
             self.sites[site_name] = observatory
-        logger.info(f"init {len(self.sites)} obs sites incl. `no_observatory`")
+        logger.info(f"init {len(self.sites)} observatory sites")
 
     def update_ephem_info(self, observatory: Observer, t: Time, human_time: str = ""):
         """
@@ -151,12 +150,10 @@ class ObservatoryManager:
         self.check_and_update_ephem_info(t_ref=t_ref)
 
         for obs_name, observatory in self.sites.items():
-            if observatory is None:
-                continue
 
             update_all_targets = self.ephem_updated[obs_name]
             if update_all_targets:
-                logger.info("Apply targets to new ephem_info")
+                logger.info("Add new {obs_name} ephem_info to all targets")
 
             current_ephem_info = self.current_ephem_info.get(obs_name, None)
             if current_ephem_info is None:
@@ -170,13 +167,14 @@ class ObservatoryManager:
                 target_ephem_info = target.ephem_info.get(obs_name, None)
 
                 if target_ephem_info is not None and not update_all_targets:
-                    continue  # Nothing to apply!
+                    continue  # No need to re-apply!
 
                 target_ephem_info = copy.copy(current_ephem_info)
                 target_ephem_info.set_target_altaz(target.coord)
                 target.ephem_info[obs_name] = target_ephem_info
                 counter = counter + 1
+                logger.debug(f"Add {obs_name} ephem to {target_id}")
 
             self.ephem_updated[obs_name] = False
-            if counter:
-                logger.info(f"Updated {obs_name} ephem for {counter} targets")
+            if counter > 0:
+                logger.info(f"Add {obs_name} ephem to {counter} targets")
