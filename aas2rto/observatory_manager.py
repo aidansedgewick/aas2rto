@@ -11,6 +11,7 @@ from astropy.time import Time
 from astroplan import Observer
 
 from aas2rto import utils
+from aas2rto.exc import MissingEphemInfoWarning
 from aas2rto.ephem_info import EphemInfo
 from aas2rto.path_manager import PathManager
 from aas2rto.target_lookup import TargetLookup
@@ -153,13 +154,13 @@ class ObservatoryManager:
 
             update_all_targets = self.ephem_updated[obs_name]
             if update_all_targets:
-                logger.info("Add new {obs_name} ephem_info to all targets")
+                logger.info(f"Add new {obs_name} ephem_info to all targets")
 
             current_ephem_info = self.current_ephem_info.get(obs_name, None)
             if current_ephem_info is None:
                 msg = f"ephem_info missing for {obs_name}..."
                 logger.warning(msg)
-                warnings.warn(UserWarning(msg))
+                warnings.warn(MissingEphemInfoWarning(msg))
 
             counter = 0
             for target_id, target in self.target_lookup.items():

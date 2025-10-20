@@ -23,7 +23,12 @@ from astropy.visualization import ZScaleInterval
 from astroplan import FixedTarget, Observer
 from astroplan.plots import plot_altitude
 
-from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
+from aas2rto import utils
+from aas2rto.exc import (
+    MissingColumnWarning,
+    MissingDateError,
+    UnknownPhotometryTagWarning,
+)
 from aas2rto.ephem_info import EphemInfo
 from aas2rto.target import Target, DEFAULT_ZTF_BROKER_PRIORITY
 
@@ -32,23 +37,27 @@ logger = getLogger(__name__.split(".")[-1])
 matplotlib.use("Agg")
 
 
-def plot_default_lightcurve(target: Target, t_ref: Time = None) -> plt.Figure:
+def plot_default_lightcurve(
+    target: Target, t_ref: Time = None, return_plotter=False, **kwargs
+) -> plt.Figure:
     t_ref = t_ref or Time.now()
-    plotter = DefaultLightcurvePlotter.plot(target, t_ref=t_ref)
+    plotter = DefaultLightcurvePlotter.plot(target, t_ref=t_ref, **kwargs)
+    if return_plotter:
+        return plotter
     return plotter.fig
 
 
 class DefaultLightcurvePlotter:
 
     @classmethod
-    def plot(cls, target: Target, t_ref: Time = None, **kwargs) -> plt.Figure:
+    def plot(cls, target: Target, t_ref: Time = None, **kwargs):
         t_ref = t_ref or Time.now()
 
         plotter = cls(t_ref=t_ref, **kwargs)
         plotter.plot_target(target)
         return plotter
 
-    def __init__(self, t_ref: Time = None, figsize: tuple = None):
+    def __init__(self, t_ref: Time = None, figsize: tuple = None, no_warnings=False):
         self.t_ref = t_ref or Time.now()
 
         self.set_default_plot_params()
@@ -61,6 +70,8 @@ class DefaultLightcurvePlotter:
         self.cutouts_added = False
         self.axes_formatted = False
         self.comments_added = False
+
+        self.no_warnings = no_warnings
 
     def plot_target(self, target: Target):
 
@@ -112,6 +123,9 @@ class DefaultLightcurvePlotter:
 
         self.band_col = "band"
 
+        self.cutouts_priority = (*DEFAULT_ZTF_BROKER_PRIORITY, "ztf", "yse", "atlas")
+        self.cutout_keys = ["science", "template", "difference"]
+
     def init_fig(self, figsize: tuple = None):
         figsize = figsize or self.default_figsize
         self.fig = plt.figure(figsize=figsize)
@@ -121,9 +135,10 @@ class DefaultLightcurvePlotter:
         target_id = target.target_id
 
         if target.compiled_lightcurve is None:
-
-            logger.warning(f"{target_id} has no compiled lightcurve for plotting.")
-            return self.fig
+            msg = f"{target_id} has no compiled lightcurve for plotting."
+            logger.warning(msg)
+            warnings.warn(UserWarning(msg))
+            return None
         lightcurve = target.compiled_lightcurve.copy()
 
         if "mjd" not in lightcurve.columns:
@@ -138,13 +153,15 @@ class DefaultLightcurvePlotter:
         band_col = band_col or self.band_col
         if band_col not in lightcurve.columns:
             msg = (
-                f"{target_id} has no column '{band_col}' in compiled_lightcurve.columns"
+                f"{target_id} has no column '{band_col}' in "
+                f"compiled_lightcurve.columns {lightcurve.columns}"
             )
-            print(list(lightcurve.columns))
-            logger.error(msg)
+            if not self.no_warnings:
+                logger.warning(msg)
+                warnings.warn(MissingColumnWarning(msg))
             lightcurve.loc[:, band_col] = "no_band"
 
-        for ii, (band, band_history) in enumerate(lightcurve.groupby(band_col)):
+        for ii, (band, band_lc) in enumerate(lightcurve.groupby(band_col)):
             band_color = self.plot_colors.get(band, f"C{ii%8}")
             shape = self.plot_shapes.get(band, "o")
             det_kwargs = dict(color=band_color, marker=shape)
@@ -155,10 +172,17 @@ class DefaultLightcurvePlotter:
             )
             self.legend_handles.append(scatter_handle)
 
-            if self.tag_col in band_history.columns:
-                detections = band_history[band_history[self.tag_col] == self.valid_tag]
-                ulimits = band_history[band_history[self.tag_col] == self.ulimit_tag]
-                badqual = band_history[band_history[self.tag_col] == self.badqual_tag]
+            if self.tag_col in band_lc.columns:
+                det_mask = band_lc[self.tag_col] == self.valid_tag
+                ulim_mask = band_lc[self.tag_col] == self.ulimit_tag
+                badqual_mask = band_lc[self.tag_col] == self.badqual_tag
+                detections = band_lc[det_mask]
+                ulimits = band_lc[ulim_mask]
+                badqual = band_lc[badqual_mask]
+
+                print(band_lc[["mjd", "band", "tag"]])
+
+                other = band_lc[~(det_mask | ~ulim_mask | ~badqual_mask)]
 
                 if len(ulimits) > 0:
                     xdat = ulimits["mjd"].values - self.t_ref.mjd
@@ -174,14 +198,22 @@ class DefaultLightcurvePlotter:
                 N_det = len(detections)
                 N_badqual = len(badqual)
                 N_ulim = len(ulimits)
-                if N_det + N_badqual + N_ulim != len(band_history):
+                if N_det + N_badqual + N_ulim != len(band_lc):
+                    unknown_tags = set(other["tag"].values)
                     msg = (
                         f"{target_id}: N_det+N_badqual+N_ulim != len {band} lc "
-                        + f"({N_det}+{N_badqual}+{N_ulim} != {len(band_history)})"
+                        f"({N_det}+{N_badqual}+{N_ulim} != {len(band_lc)})."
+                        f"Unknown photometry tag for {unknown_tags}\n"
                     )
-                    logger.warning("\n    " + msg)
+                    if not self.no_warnings:
+                        logger.warning("\n    " + msg)
+                        warnings.warn(UnknownPhotometryTagWarning(msg))
             else:
-                detections = band_history
+                msg = f"{target_id}: no column '{self.tag_col}' in compiled_lightcurve"
+                if not self.no_warnings:
+                    logger.warning(msg)
+                    warnings.warn(MissingColumnWarning(msg))
+                detections = band_lc
 
             if len(detections) > 0:
                 xdat = detections["mjd"] - self.t_ref.mjd
@@ -196,16 +228,23 @@ class DefaultLightcurvePlotter:
 
     def add_cutouts(self, target: Target):
         cutouts = {}
-        for broker in DEFAULT_ZTF_BROKER_PRIORITY:
-            source_data = target.target_data.get(broker, None)
+        for source in self.cutouts_priority:
+            source_data = target.target_data.get(source, None)
             if source_data is None:
                 continue
             if len(source_data.cutouts) == 0:
                 continue
             cutouts = source_data.cutouts
             break
+        if len(cutouts) == 0:
+            return
 
-        for ii, imtype in enumerate(["Science", "Template", "Difference"]):
+        target_id = target.target_id
+        if not self.no_warnings:
+            name = f"{target_id}.target_data['{source}'].cutouts"
+            utils.check_unexpected_config_keys(cutouts, self.cutout_keys, name=name)
+
+        for ii, imtype in enumerate(self.cutout_keys):
             im_ax = self.fig.add_subplot(self.lc_gs[ii : ii + 1, -1:])
 
             im_ax.set_xticks([])
@@ -295,7 +334,7 @@ class DefaultLightcurvePlotter:
         twiny.set_xticklabels(xticklabels)
 
     def add_comments(self, target):
-        comments = target.score_comments.get("no_observatory", [])
+        comments = target.science_comments
         self.fig.subplots_adjust(bottom=0.3)
         if len(comments) > 0:
             N = len(comments) // 2

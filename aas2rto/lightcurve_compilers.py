@@ -111,7 +111,6 @@ def prepare_atlas_data(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 weights = 1.0 / (group["fluxerr"] ** 2)
-                print(weights)
                 flux = np.sum(weights * group["flux"]) / np.sum(weights)
                 fluxerr = 1.0 / np.sqrt(np.sum(weights))
                 row["flux"] = flux

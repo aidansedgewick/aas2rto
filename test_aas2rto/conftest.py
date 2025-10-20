@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 import numpy as np
 
@@ -249,7 +249,6 @@ def lc_ztf(lc_pandas: pd.DataFrame):
     }
     lc_pandas.rename(col_mapping, inplace=True, axis=1)
     lc_pandas.loc[:, "blah"] = 100.0
-    print(lc_pandas)
     return lc_pandas
 
 
@@ -263,6 +262,15 @@ def compiled_ztf_lc(
     ztf_td: TargetData, lc_compiler: DefaultLightcurveCompiler, t_fixed
 ):
     return lc_compiler(ztf_td, t_ref=t_fixed)  # t_ref does nothing.
+
+
+@pytest.fixture
+def ztf_cutouts():
+    return {
+        "science": np.random.normal(0, 1.0, (20, 20)),
+        "template": np.random.normal(0, 1.0, (20, 20)),
+        "difference": np.random.normal(0, 1.0, (20, 20)),
+    }
 
 
 @pytest.fixture
@@ -314,3 +322,32 @@ def lc_yse(yse_rows: List[List], t_fixed: Time):
 @pytest.fixture
 def yse_td(lc_yse):
     return TargetData(lightcurve=lc_yse)
+
+
+@pytest.fixture
+def tns_td():
+    return TargetData(parameters={"redshift": 0.05})
+
+
+@pytest.fixture
+def t_plot():
+    return Time(60010.0, format="mjd")
+
+
+@pytest.fixture
+def target_to_plot(
+    basic_target: Target,
+    ztf_td: TargetData,
+    atlas_td: TargetData,
+    tns_td: TargetData,
+    ztf_cutouts: Dict[str, np.ndarray],
+    lc_compiler: DefaultLightcurveCompiler,
+    t_plot: Time,
+):
+    ztf_td.cutouts = ztf_cutouts
+    basic_target.target_data["ztf"] = ztf_td
+    basic_target.target_data["atlas"] = atlas_td
+    basic_target.target_data["tns"] = tns_td
+    basic_target.compiled_lightcurve = lc_compiler(basic_target, t_ref=t_plot)
+    basic_target.science_comments = ["a comment here", "another comment"]
+    return basic_target

@@ -12,9 +12,12 @@ import matplotlib as mpl
 
 from scipy.interpolate import CubicSpline
 
+
 from astropy import units as u
 from astropy.time import Time
 from astropy.visualization import ZScaleInterval
+
+import sncosmo
 
 from aas2rto.target import Target
 from aas2rto.plotting.default_plotter import DefaultLightcurvePlotter
@@ -22,11 +25,15 @@ from aas2rto.plotting.default_plotter import DefaultLightcurvePlotter
 logger = getLogger(__name__.split(".")[-1])
 
 
-def plot_sncosmo_lightcurve(target: Target, t_ref: Time = None, **kwargs) -> plt.Figure:
+def plot_sncosmo_lightcurve(
+    target: Target, t_ref: Time = None, return_plotter=False, **kwargs
+) -> plt.Figure:
     t_ref = t_ref or Time.now()
     plotter = SncosmoLightcurvePlotter.plot(target, t_ref=t_ref, **kwargs)
     if plotter.target_has_models and (not plotter.models_plotted):
         logger.warning(f"{target.target_id} has models but none were plotted")
+    if return_plotter:
+        return plotter
     return plotter.fig
 
 
@@ -109,27 +116,26 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
             tgrid_shift = tgrid - self.t_ref.mjd
 
             sample_tgrid_start = tgrid[0] - self.grid_dt
-            sample_tgrid_end = (tgrid[-1] + 1.5 * self.grid_dt,)
+            sample_tgrid_end = tgrid[-1] + 1.5 * self.grid_dt
             samples_tgrid = np.arange(
                 sample_tgrid_start, sample_tgrid_end, self.grid_dt
             )
             samples_tgrid_shift = samples_tgrid - self.t_ref.mjd
 
             model_mag = -2.5 * np.log10(model_flux) + 8.9
-            self.peakmag_vals.append(np.nanmin(model_mag))
+            self.peakmag_vals.append(np.nanmin(model_mag))  # axes fmt in parent class
 
             samples = getattr(model, "result", {}).get("samples", None)
 
             if samples is not None:
-                ls = ":"
+                ls = ":"  # plot the sample median with solid
             else:
                 ls = "-"
             self.ax.plot(tgrid_shift, model_mag, color=band_color, ls=ls)
             self.models_plotted = True
 
             if samples is not None:
-                vparam_names = model.result.get("vparam_names")
-                median_model = get_model_median_params(model, vparam_names=vparam_names)
+                median_model = get_model_median_params(model)
 
                 model_med_flux = median_model.bandflux(band, tgrid, zp=8.9, zpsys="ab")
                 with warnings.catch_warnings():
@@ -141,19 +147,13 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
                 # Now deal with samples.
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", category=RuntimeWarning)
+                    quartiles = [0.16, 0.5, 0.84]
                     samples_lb, samples_med, samples_ub = get_sample_quartiles(
-                        samples_tgrid,
-                        model,
-                        band,
-                        q=[0.16, 0.5, 0.84],
-                        vparam_names=vparam_names,
+                        samples_tgrid, model, band, q=quartiles
                     )
+                    fb_kwargs = dict(color=band_color, alpha=0.2)
                     self.ax.fill_between(
-                        samples_tgrid_shift,
-                        samples_lb,
-                        samples_ub,
-                        color=band_color,
-                        alpha=0.2,
+                        samples_tgrid_shift, samples_lb, samples_ub, **fb_kwargs
                     )
                     self.samples_plotted = True
                     self.ax.plot(
@@ -171,13 +171,16 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
         return
 
 
-def get_model_median_params(model, vparam_names=None, samples=None, burnin=0):
+def get_model_median_params(model: sncosmo.Model, burnin=0):
     model_copy = copy.deepcopy(model)
-    vparam_names = vparam_names or model.result.get("vparam_names")
-    samples = samples or model.result.get("samples", None)
+    vparam_names = model.result.get("vparam_names")
+    samples = model.result.get("samples", None)
     if samples is None:
         msg = f"model result {model.get('result', {}).keys()} has no samples"
         raise ValueError(msg)
+
+    if vparam_names is None:
+        raise ValueError(f"model.result has no 'vparam_names'")
 
     median_params = np.nanquantile(samples, q=0.5, axis=0)
 
@@ -187,14 +190,17 @@ def get_model_median_params(model, vparam_names=None, samples=None, burnin=0):
 
 
 def get_sample_quartiles(
-    time_grid, model, band, samples=None, vparam_names=None, q=0.5, spacing=20, burnin=0
+    time_grid: Time, model: sncosmo.Model, band: str, q=0.5, spacing=20, burnin=0
 ):
     model_copy = copy.deepcopy(model)
-    vparam_names = vparam_names or model.result.get("vparam_names")
-    samples = samples or model.result.get("samples", None)
+    vparam_names = model.result.get("vparam_names")
+    samples = model.result.get("samples", None)
     if samples is None:
         msg = f"model result {model.get('result', {}).keys()} has no samples"
         raise ValueError(msg)
+
+    if vparam_names is None:
+        raise ValueError(f"model.result has no 'vparam_names'")
 
     lc_evaluations = []
     t_start = time.perf_counter()
@@ -212,14 +218,3 @@ def get_sample_quartiles(
         warnings.simplefilter("ignore", category=RuntimeWarning)
     lc_bounds = np.nanquantile(lc_evaluations, q=q, axis=0)
     return lc_bounds
-
-
-def spline_and_sample(x, y, xnew):
-    ypos_mask = np.isfinite(y)
-    xpos = x[ypos_mask]
-    ypos = y[ypos_mask]
-    spl = CubicSpline(xpos, ypos)
-    xprime_mask = (xpos[0] < xnew) & (xnew < xpos[-1])
-    xprime = xnew[xprime_mask]
-    yprime = spl(xprime[xprime_mask])
-    return xprime, yprime

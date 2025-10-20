@@ -83,7 +83,9 @@ def check_unexpected_config_keys(provided, expected, name: str = None) -> list:
         msg = "\033[33;1munexpected keys\033[0m"
         if name is not None:
             msg = msg + f" in {name}"
-        msg = msg + ":\n    " + " ".join(unexpected_keys)
+
+        keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in unexpected_keys)
+        msg = msg + ":\n    " + keys_str
         warnings.warn(UnexpectedKeysWarning(msg))
     return list(unexpected_keys)
 
@@ -99,7 +101,8 @@ def check_missing_config_keys(provided, expected, name: str = None) -> list:
         msg = "\033[33;1mmissing keys\033[0m"
         if name is not None:
             msg = msg + f" in {name}"
-        msg = msg + ":\n    " + " ".join(missing_keys)
+        keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in missing_keys)
+        msg = msg + ":\n    " + keys_str
         warnings.warn(MissingKeysWarning(msg))
     return list(missing_keys)
 

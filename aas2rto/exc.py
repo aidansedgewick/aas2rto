@@ -28,6 +28,14 @@ class DuplicateDataWarning(UserWarning):
     pass
 
 
+class MissingColumnWarning(UserWarning):
+    pass
+
+
+class MissingEphemInfoWarning(UserWarning):
+    pass
+
+
 class MissingFileWarning(UserWarning):
     pass
 
@@ -53,4 +61,8 @@ class UnknownObservatoryWarning(UserWarning):
 
 
 class UnknownPhotometryTagWarning(UserWarning):
+    pass
+
+
+class UnknownTargetWarning(UserWarning):
     pass

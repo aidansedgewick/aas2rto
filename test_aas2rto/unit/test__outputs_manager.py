@@ -13,7 +13,11 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto.exc import UnexpectedKeysWarning
+from aas2rto.exc import (
+    MissingEphemInfoWarning,
+    UnexpectedKeysWarning,
+    UnknownTargetWarning,
+)
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.observatory_manager import ObservatoryManager
@@ -195,7 +199,7 @@ class Test__WriteComments:
 
     def test__missing_target_warns(self, outputs_mgr: OutputsManager, t_fixed: Time):
         # Act
-        with pytest.warns(UserWarning):
+        with pytest.warns(UnknownTargetWarning):
             outputs_mgr.write_target_comments(target_id_list=["Tx"])
 
 
@@ -415,7 +419,7 @@ class Test__VisibleTargets:
             target.ephem_info = {}
 
         # Act
-        with pytest.warns(UserWarning):
+        with pytest.warns(MissingEphemInfoWarning):
             vis_list = outputs_mgr.create_visible_target_list_for_obs(
                 lasilla, t_ref=t_fixed
             )

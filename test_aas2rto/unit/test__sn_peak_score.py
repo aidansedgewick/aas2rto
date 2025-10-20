@@ -41,7 +41,6 @@ def lc_ztf(lc_pandas: pd.DataFrame):
     }
     lc_pandas.rename(col_mapping, inplace=True, axis=1)
     lc_pandas.loc[:, "blah"] = 100.0
-    print(lc_pandas)
     return lc_pandas
 
 

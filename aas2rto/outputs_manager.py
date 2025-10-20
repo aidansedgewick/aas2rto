@@ -14,6 +14,7 @@ from astropy.time import Time
 from astroplan import Observer
 
 from aas2rto import utils
+from aas2rto.exc import MissingEphemInfoWarning, UnknownTargetWarning
 from aas2rto.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting.visibility_plotter import plot_visibility
@@ -95,7 +96,7 @@ class OutputsManager:
             if target is None:
                 msg = f"cannot write comments for non-existant target {target_id}"
                 logger.warning(msg)
-                warnings.warn(UserWarning(msg))
+                warnings.warn(UnknownTargetWarning(msg))
                 continue
             target.write_comments(outdir, t_ref=t_ref)
 
@@ -235,7 +236,7 @@ class OutputsManager:
                 if N_warn < 3:
                     msg = f"no ephem_info for {target_id} at {obs_name}"
                     logger.warning(msg)
-                    warnings.warn(UserWarning(msg))
+                    warnings.warn(MissingEphemInfoWarning(msg))
                     N_warn = N_warn + 1
                 continue
 
@@ -261,7 +262,7 @@ class OutputsManager:
         if missing_ephem > 0:
             msg = f"{missing_ephem} targets missing ephem_info at {obs_name}"
             logger.warning(msg)
-            warnings.warn(UserWarning(msg))
+            warnings.warn(MissingEphemInfoWarning(msg))
 
         if len(data_list) == 0:
             columns = ["target_id", "score", "transit_mjd", "transit_time"]
