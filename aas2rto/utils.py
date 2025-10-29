@@ -39,6 +39,40 @@ def calc_file_age(filepath, t_ref, allow_missing=True):
     return dt.jd
 
 
+def clear_stale_files(dir: Path, t_ref=None, stale_age=60.0, depth=0, max_depth=3):
+    if depth > max_depth:
+        return
+
+    t_ref = t_ref or Time.now()
+
+    N_dirs = 0
+    N_files = 0
+
+    for filepath in dir.glob("*"):
+        if filepath.is_dir():
+            N_subdirs, N_subfiles = clear_stale_files(
+                filepath,
+                t_ref,
+                stale_age=stale_age,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
+            N_dirs = N_dirs + N_subdirs
+            N_files = N_files + N_subfiles
+            subdir_is_empty = not list(filepath.iterdir())
+            if subdir_is_empty:
+                logger.info(f"removing empty subdir {filepath.name}")
+                filepath.rmdir()
+                N_dirs = N_dirs + 1
+        else:
+            file_age = calc_file_age(filepath, t_ref=t_ref)
+            if file_age > stale_age:
+                logger.debug(f"removing stale {filepath.name}")
+                filepath.unlink()
+                N_files = N_files + 1
+    return N_dirs, N_files
+
+
 def print_header(s: str) -> None:
     """
     Print a nicely formatted header line.
