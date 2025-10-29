@@ -54,7 +54,7 @@ def outputs_mgr(
 def outputs_mgr_with_plots(
     mod_tl: TargetLookup, path_mgr: PathManager, obs_mgr: ObservatoryManager
 ):
-    om = OutputsManager({}, mod_tl, path_mgr, obs_mgr)
+    omgr = OutputsManager({}, mod_tl, path_mgr, obs_mgr)
     for target_id, target in mod_tl.items():
         lc_path = path_mgr.get_lightcurve_plot_path(target_id)
         blank_plot_helper(lc_path)
@@ -63,7 +63,7 @@ def outputs_mgr_with_plots(
             vis_path = path_mgr.get_visibility_plot_path(target_id, obs_name)
             blank_plot_helper(vis_path)
             target.vis_fig_paths[obs_name] = vis_path
-    return om
+    return omgr
 
 
 @pytest.fixture

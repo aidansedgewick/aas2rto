@@ -1,6 +1,7 @@
 import time
 import traceback
 from logging import getLogger
+from typing import Dict
 
 from astropy.time import Time
 
@@ -14,12 +15,17 @@ from aas2rto.messaging.slack_messenger import SlackMessenger
 
 logger = getLogger(__name__.split(".")[-1])
 
+EXPECTED_MESSENGERS = {
+    "slack": SlackMessenger,
+    "telegram": TelegramMessenger,
+}
+
 
 class MessagingManager:
 
     def __init__(
         self,
-        messengers_config: dict,
+        messengers_config: Dict[str, Dict],
         target_lookup: TargetLookup,
         path_manager: PathManager,
     ):
@@ -34,8 +40,9 @@ class MessagingManager:
         self.messengers = {}
         self.telegram_messenger = None
         self.slack_messenger = None
-        self.git_webpage_manager = None
+
         for msgr_name, msgr_config in self.messengers_config.items():
+
             use_msgr = msgr_config.pop("use", True)
             if not use_msgr:
                 logger.info(f"Skip messenger {msgr_name} init")
@@ -46,20 +53,17 @@ class MessagingManager:
             elif msgr_name == "slack":
                 msgr = SlackMessenger(msgr_config)
                 self.slack_messenger = msgr
-            elif msgr_name == "html_web":
-                msgr = HtmlWebpageManager(
-                    msgr_config,
-                    self.path_manager.lookup.get("www_path", None),
-                    self.target_lookup,
-                )
-                self.html_webpage_manager = msgr
             else:
                 raise NotImplementedError(f"No messenger {msgr_name}")
             self.messengers[msgr_name] = msgr
 
     def send_sudo_messages(self, texts):
         if self.telegram_messenger is not None:
-            self.telegram_messenger.message_users(texts=texts, users="sudoers")
+            sent, exc = self.telegram_messenger.message_users(
+                texts=texts, users="sudoers"
+            )
+            return sent, exc
+        return [], []
 
     def perform_messaging_tasks(self, t_ref: Time = None):
         """
@@ -82,17 +86,18 @@ class MessagingManager:
         logger.info("perform messaging tasks")
         for target_id, target in self.target_lookup.items():
             logger.debug(f"messaging for {target_id}")
-            if len(target.update_messages) == 0:
-                logger.debug(f"no messages")
-                no_updates.append(target_id)
-                continue
 
             if not target.updated:
                 logger.debug(f"not updated; skip")
                 skipped.append(target_id)
                 continue
 
-            last_score = target.get_last_score()
+            if len(target.update_messages) == 0:
+                logger.debug(f"no messages")
+                no_updates.append(target_id)
+                continue
+
+            last_score = target.get_latest_science_score()
             if last_score is None:
                 skipped.append(target_id)
                 logger.debug(f"last score is None; skip")
@@ -103,22 +108,21 @@ class MessagingManager:
                 logger.debug(f"last score: {last_score} < {minimum_score}; skip")
                 continue
 
-            intro = f"Updates for {target_id}"
             messages = [target.get_info_string()] + target.update_messages
             message_text = "\n".join(msg for msg in messages)
 
             lc_fig_path = target.lc_fig_path
-            vis_fig_paths = []
-            for obs_name, vis_fig_path in target.vis_fig_paths.items():
-                vis_fig_paths.append(vis_fig_path)
+            # vis_fig_paths = []
+            # for obs_name, vis_fig_path in target.vis_fig_paths.items():
+            #     vis_fig_paths.append(vis_fig_path)
 
             if self.telegram_messenger is not None:
                 try:
                     self.telegram_messenger.message_users(texts=message_text)
                     self.telegram_messenger.message_users(img_paths=lc_fig_path)
-                    self.telegram_messenger.message_users(
-                        texts="visibilities", img_paths=vis_fig_paths
-                    )
+                    # self.telegram_messenger.message_users(
+                    #    texts="visibilities", img_paths=vis_fig_paths
+                    # )
                 except Exception as e:
                     logger.error(f"error in telegram messaging {e}")
 
@@ -153,4 +157,6 @@ class MessagingManager:
         tr = text + [traceback.format_exc()]
         logger.error("\n" + "\n".join(tr))
         if self.telegram_messenger is not None:
-            self.telegram_messenger.message_users(users="sudoers", texts=tr)
+            sent, exc = self.telegram_messenger.message_users(users="sudoers", texts=tr)
+            return sent, exc
+        return [], []

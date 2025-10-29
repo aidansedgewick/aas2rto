@@ -1,4 +1,5 @@
 import os
+import warnings
 from logging import getLogger
 from pathlib import Path
 
@@ -10,6 +11,7 @@ except Exception as e:
     slack_sdk = None
 
 from aas2rto import utils
+from aas2rto.exc import MissingRequiredConfigKeyError
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -23,28 +25,29 @@ class SlackMessenger:
             self.slack_config, self.expected_kwargs, name="slack_config"
         )
 
-        self.token = self.slack_config.get("token", None)
-        self.channel_id = self.slack_config.get("channel_id", None)
-
         self.client = None  # stays as None if can't init.
         if slack_sdk is None:
-            logger.warning(f"\n{e}")
-            logger.warning("\033[31;1merror importing slack_sdk\033[0m")
-            return
+            msg = "\033[31;1merror importing slack_sdk\033[0m"
+            logger.error(msg)
+            raise ModuleNotFoundError(msg)
 
-        if self.token is None:
-            logger.warning("no 'token' in config: can't init client.")
-            return
+        missing_config_keys = utils.check_missing_config_keys(
+            self.slack_config, self.expected_kwargs, name="slack_config", warn=False
+        )
+        if missing_config_keys:
+            msg = (
+                f"SlackMessenger config expects: \033[0m{self.expected_kwargs}\033[0m"
+                f"\n    Missing keys \033[031;1m{missing_config_keys}\033[0m"
+            )
+            raise MissingRequiredConfigKeyError(msg)
 
-        if self.channel_id is None:
-            logger.warning("no 'channel_id' in config.")
-            return
+        self.token = self.slack_config.get("token", None)
+        self.channel_id = self.slack_config.get("channel_id", None)
 
         try:
             self.client = WebClient(token=self.token)
         except Exception as e:
             logger.warning(f"during slack client init:\n{e}")
-
         return
 
     def send_messages(self, texts=None, img_paths=None, comment=None):
@@ -55,8 +58,11 @@ class SlackMessenger:
 
         if self.client is None:
             logger.warning("slack client did not initialise.")
+            return
 
         for text in texts:
+            if text is None:
+                continue
             try:
                 self.client.chat_postMessage(channel=self.channel_id, text=text)
             except SlackApiError as e:

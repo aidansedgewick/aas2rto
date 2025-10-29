@@ -96,6 +96,7 @@ class EphemInfo:
         observatory: Observer,
         t_ref: Time = None,
         t_grid: Time = None,
+        target_coord: Time = None,
         horizon: u.Quantity = None,
         forecast: u.Quantity = None,
         backcast: u.Quantity = None,
@@ -132,10 +133,14 @@ class EphemInfo:
 
         self.sun_altaz = None
         self.moon_altaz = None
+        self.target_coord = None
         self.target_altaz = None
         self.target_transit = None
 
         self.recompute_info(t_ref=self.t_ref, t_grid=self.t_grid)
+
+        if target_coord:
+            self.set_target_altaz(target_coord)
 
     def recompute_info(self, t_ref: Time = None, t_grid: Time = None):
         if self.t_ref and self.t_grid:
@@ -180,6 +185,7 @@ class EphemInfo:
     def set_target_altaz(self, coord: SkyCoord):
         if not isinstance(coord, SkyCoord):
             raise TypeError(f"'coord' should be type 'SkyCoord' not {type(coord)}")
+        self.target_coord = coord
         self.target_altaz = self.observatory.altaz(self.t_grid, coord)
         self.target_transit = self.observatory.target_meridian_transit_time(
             self.t_ref, coord, which="next"

@@ -13,6 +13,9 @@ from astropy.time import Time
 from astroplan import Observer
 
 from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
+from aas2rto.messaging.messaging_manager import MessagingManager
+from aas2rto.messaging.slack_messenger import SlackMessenger, SlackApiError
+from aas2rto.messaging.telegram_messenger import TelegramMessenger
 from aas2rto.modeling.modeling_manager import ModelingManager
 from aas2rto.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
@@ -326,7 +329,7 @@ def yse_td(lc_yse):
 
 @pytest.fixture
 def tns_td():
-    return TargetData(parameters={"redshift": 0.05})
+    return TargetData(parameters={"redshift": 0.02})
 
 
 @pytest.fixture
@@ -351,3 +354,121 @@ def target_to_plot(
     basic_target.compiled_lightcurve = lc_compiler(basic_target, t_ref=t_plot)
     basic_target.science_comments = ["a comment here", "another comment"]
     return basic_target
+
+
+@pytest.fixture
+def slack_config():
+    return {"token": "123456", "channel_id": "channel:abcdef"}
+
+
+def mock_chat_postMessage(channel=None, text=None):
+    if channel is None:
+        raise ValueError("Should not pass channel=None to chat_postMessage()!")
+    if text is None:
+        raise ValueError("Should not pass text=None to chat_postMessage()")
+    return
+
+
+def mock_files_upload_v2(channel=None, initial_comment=None, file=None):
+    if channel is None:
+        raise ValueError("Should not pass channel=None to files_upload_v2()!")
+    if file is None:
+        raise ValueError("Should not pass file=None to files_upload_v2()")
+    if isinstance(file, str) or isinstance(file, Path):
+        raise TypeError("file should be FILE DATA, not Path/str!")
+    return
+
+
+def mock_chat_postMessage_raises(**kwargs):
+    raise SlackApiError("raised in mock function", 404)
+
+
+def mock_upload_files_v2_raises(**kwargs):
+    raise SlackApiError("raised in mock function", 404)
+
+
+@pytest.fixture
+def slack_msgr(slack_config: dict, monkeypatch):
+    msgr = SlackMessenger(slack_config)
+    monkeypatch.setattr(msgr.client, "chat_postMessage", mock_chat_postMessage)
+    monkeypatch.setattr(msgr.client, "files_upload_v2", mock_files_upload_v2)
+    return msgr
+
+
+@pytest.fixture
+def raising_slack_msgr(slack_config: dict, monkeypatch):
+    msgr = SlackMessenger(slack_config)
+    monkeypatch.setattr(msgr.client, "chat_postMessage", mock_chat_postMessage_raises)
+    monkeypatch.setattr(msgr.client, "files_upload_v2", mock_upload_files_v2_raises)
+    return msgr
+
+
+@pytest.fixture
+def telegram_config():
+    return {
+        "token": "abcdef",
+        "users": {101: "user1", 102: "user2"},
+        "sudoers": {901: "sudoer1"},
+    }
+
+
+@pytest.fixture
+def telegram_msgr(telegram_config: dict):
+    return TelegramMessenger(telegram_config)
+
+
+class MockBot:
+    def __init__(self):
+        self.token = "mock_token"
+
+    async def send_message(
+        self,
+        chat_id: int = None,
+        text: str = None,
+        disable_web_page_preview: bool = None,
+    ):
+        if not isinstance(text, str):
+            raise TypeError(f"text should be str, not {type(text)}")
+
+        return dict(user=chat_id, msg_type="text", length=len(text))
+
+    async def send_media_group(self, chat_id: int = None, media: list = None):
+        if not isinstance(media, list):
+            raise TypeError(f"media_group should be list, not type {type(media)}!")
+        return dict(user=chat_id, msg_type="media_group", length=len(media))
+
+    async def send_photo(
+        self, chat_id: int = None, photo: bytes = None, caption: str = None
+    ):
+        return dict(user=chat_id, msg_type="single_photo", length="n/a")
+
+
+@pytest.fixture
+def telegram_msgr(telegram_config: dict, monkeypatch):
+    def get_mock_bot():
+        return MockBot()
+
+    msgr = TelegramMessenger(telegram_config)
+    monkeypatch.setattr(msgr, "get_bot", get_mock_bot)
+    return msgr
+
+
+@pytest.fixture
+def msg_mgr_config(slack_config: dict, telegram_config: dict):
+    return {
+        "slack": {"use": True, **slack_config},
+        "telegram": {"use": True, **telegram_config},
+    }
+
+
+@pytest.fixture
+def msg_mgr(
+    slack_msgr: SlackMessenger,
+    telegram_msgr: TelegramMessenger,
+    tlookup: TargetLookup,
+    path_mgr: PathManager,
+):
+    mgr = MessagingManager({}, tlookup, path_mgr)
+    mgr.slack_messenger = slack_msgr
+    mgr.telegram_messenger = telegram_msgr
+    return mgr

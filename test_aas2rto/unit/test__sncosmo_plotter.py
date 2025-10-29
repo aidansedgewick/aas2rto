@@ -28,7 +28,7 @@ def t_plot():
 @pytest.fixture
 def salt_model():
     model = sncosmo.Model(source="salt3")
-    model.update(dict(z=0.05, x0=1e-2, x1=0.0, c=0.0, t0=60010.0))
+    model.update(dict(z=0.02, x0=1e-2, x1=0.0, c=0.0, t0=60010.0))
     result = dict(chisq=5.0, ndof=5, vparam_names=["z", "x0", "x1", "c", "t0"])
     model.result = result
     return model
@@ -36,8 +36,8 @@ def salt_model():
 
 @pytest.fixture
 def salt_model_with_samples(salt_model):
-    mu_vals = np.array([0.05, 1e-2, 0.0, 0.0, 60010.0])  # z, x0, x1, c, t0
-    sig_vals = np.array([0.01, 1e-4, 0.05, 0.01, 0.3])
+    mu_vals = [salt_model[p] for p in "z x0 x1 c t0".split()]
+    sig_vals = [0.005, 1e-4, 0.05, 0.01, 0.3]
 
     samples = np.column_stack(
         [np.random.normal(mu, sig, 500) for mu, sig in zip(mu_vals, sig_vals)]
@@ -75,7 +75,6 @@ class Test__SampleQuartilesHelper:
         )
 
         # Assert
-        print(lc_bounds[0] - lc_bounds[1])
         assert lc_bounds.ndim == 2
 
         assert all(lc_bounds[0] < lc_bounds[1])  # upper bound brighter mag
@@ -93,7 +92,7 @@ class Test__MedianModelHelper:
         # Assert
         assert id(salt_model_with_samples) != id(med_model)  # ie. it's a copy
 
-        assert np.isclose(med_model["z"], 0.05, rtol=0.1)
+        assert np.isclose(med_model["z"], 0.02, rtol=0.1)
         assert np.isclose(med_model["x0"], 1e-2, rtol=0.1)
         assert np.isclose(med_model["x1"], 0.0, atol=0.01)
         assert np.isclose(med_model["c"], 0.0, atol=5e-3)
@@ -114,6 +113,9 @@ class Test__PlotterInit:
         assert not plotter.models_plotted
         assert not plotter.samples_plotted
 
+        # Cleanup
+        plt.close(plotter.fig)
+
 
 class Test__PlotModel:
     def test__plot_model(
@@ -126,6 +128,9 @@ class Test__PlotModel:
         assert not lc_plotter.photometry_plotted
         assert lc_plotter.models_plotted
         assert not lc_plotter.samples_plotted
+
+        # Cleanup
+        plt.close(lc_plotter.fig)
 
     def test__no_model_no_fail(
         self, target_to_plot: Target, lc_plotter: SncosmoLightcurvePlotter
@@ -141,6 +146,9 @@ class Test__PlotModel:
         assert not lc_plotter.models_plotted
         assert not lc_plotter.samples_plotted
 
+        # Cleanup
+        plt.close(lc_plotter.fig)
+
     def test__no_lc_no_fail(
         self, target_with_models: Target, lc_plotter: SncosmoLightcurvePlotter
     ):
@@ -153,6 +161,9 @@ class Test__PlotModel:
         # Assert
         assert not lc_plotter.models_plotted
 
+        # Cleanup
+        plt.close(lc_plotter.fig)
+
 
 class Test__PlotWithSamples:
     def test__plot_with_samples(
@@ -164,6 +175,9 @@ class Test__PlotWithSamples:
         # Assert
         assert lc_plotter.models_plotted
         assert lc_plotter.samples_plotted
+
+        # Cleanup
+        plt.close(lc_plotter.fig)
 
 
 class Test__PlotMethod:
@@ -178,6 +192,9 @@ class Test__PlotMethod:
         assert plotter.comments_added
         assert plotter.models_plotted
         assert plotter.samples_plotted
+
+        # Cleanup
+        plt.close(plotter.fig)
 
 
 class Test__PlotFunc:
@@ -197,9 +214,15 @@ class Test__PlotFunc:
         assert plotter.models_plotted
         assert plotter.samples_plotted
 
+        # Cleanup
+        plt.close(plotter.fig)
+
     def test__figure(self, target_with_samples: Target, t_plot: Time):
         # Act
         result = plot_sncosmo_lightcurve(target_with_samples, t_ref=t_plot)
 
         # Assert
         assert isinstance(result, plt.Figure)
+
+        # Cleanup
+        plt.close(result)

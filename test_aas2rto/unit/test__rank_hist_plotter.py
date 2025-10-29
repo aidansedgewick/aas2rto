@@ -30,17 +30,22 @@ def mod_tl(tlookup: TargetLookup, t_fixed: Time):
 
 
 class Test__PlotterInit:
-    # Act
-    plotter = RankHistoryPlotter()
 
-    # Assert
-    assert isinstance(plotter.fig, plt.Figure)
-    assert isinstance(plotter.ax, plt.Axes)
-    assert isinstance(plotter.targets_plotted, list)
-    assert len(plotter.targets_plotted) == 0
-    assert isinstance(plotter.targets_skipped, list)
-    assert len(plotter.targets_skipped) == 0
-    assert not plotter.axes_formatted
+    def test__plotter_init(self):
+        # Act
+        plotter = RankHistoryPlotter()
+
+        # Assert
+        assert isinstance(plotter.fig, plt.Figure)
+        assert isinstance(plotter.ax, plt.Axes)
+        assert isinstance(plotter.targets_plotted, list)
+        assert len(plotter.targets_plotted) == 0
+        assert isinstance(plotter.targets_skipped, list)
+        assert len(plotter.targets_skipped) == 0
+        assert not plotter.axes_formatted
+
+        # Cleanup
+        plt.close(plotter.fig)
 
 
 class Test__PlotRanksMethod:
@@ -53,6 +58,9 @@ class Test__PlotRanksMethod:
         assert set(t_plotted) == set(["T00", "T01"])
         assert set(t_skipped) == set()
 
+        # Cleanup
+        plt.close(plotter.fig)
+
     def test__plot_if_prev_high_rank(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange
         plotter = RankHistoryPlotter(minimum_rank=5)  # T01 RECENTLY had rank<5.
@@ -63,6 +71,9 @@ class Test__PlotRanksMethod:
         # Assert
         assert set(t_plotted) == set(["T00", "T01"])
         assert set(t_skipped) == set()
+
+        # Cleanup
+        plt.close(plotter.fig)
 
     def test__plot_high_rank_recent_only(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange
@@ -75,6 +86,9 @@ class Test__PlotRanksMethod:
         assert set(t_plotted) == set(["T00"])
         assert set(t_skipped) == set(["T01"])
 
+        # Cleanup
+        plt.close(plotter.fig)
+
     def test__no_fail_no_rank_hist(self, tlookup: TargetLookup, t_fixed: Time):
         # Arrange
         assert len(tlookup["T00"].science_rank_history) == 0
@@ -86,6 +100,9 @@ class Test__PlotRanksMethod:
         # Assert]
         assert set(t_plotted) == set()
         assert set(t_skipped) == set(["T00", "T01"])
+
+        # Cleanup
+        plt.close(plotter.fig)
 
     def test__plot_ranks_at_obs(
         self, mod_tl: TargetLookup, lasilla: Observer, t_fixed: Time
@@ -103,6 +120,9 @@ class Test__PlotRanksMethod:
         assert set(t_plotted) == set(["T00"])
         assert set(t_skipped) == set(["T01"])
 
+        # Cleanup
+        plt.close(plotter.fig)
+
     def test__plot_ranks_obs_name(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange()
         plotter = RankHistoryPlotter()
@@ -117,6 +137,9 @@ class Test__PlotRanksMethod:
         assert set(t_plotted) == set(["T00"])
         assert set(t_skipped) == set(["T01"])
 
+        # Cleanup
+        plt.close(plotter.fig)
+
 
 class Test__FormatAxesMethod:
     def test__fmt_axes_no_fail(self, mod_tl: TargetLookup, t_fixed: Time):
@@ -127,6 +150,9 @@ class Test__FormatAxesMethod:
         # Act
         plotter.format_axes()
 
+        # Cleanup
+        plt.close(plotter.fig)
+
     def test__fmt_axes_many_days(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange
         plotter = RankHistoryPlotter(lookback=23)
@@ -135,6 +161,9 @@ class Test__FormatAxesMethod:
         # Act
         plotter.format_axes()
 
+        # Cleanup
+        plt.close(plotter.fig)
+
     def test__fmt_axes_few_days(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange
         plotter = RankHistoryPlotter(lookback=3)
@@ -142,6 +171,9 @@ class Test__FormatAxesMethod:
 
         # Act
         plotter.format_axes()
+
+        # Cleanup
+        plt.close(plotter.fig)
 
 
 class Test__PlotClassMethod:
@@ -153,6 +185,9 @@ class Test__PlotClassMethod:
         assert set(plotter.targets_plotted) == set(["T00", "T01"])
         assert plotter.axes_formatted
 
+        # Cleanup
+        plt.close(plotter.fig)
+
 
 class Test__PlotFunc:
     def test__rank_hist_func(self, mod_tl: TargetLookup, t_fixed: Time):
@@ -161,3 +196,6 @@ class Test__PlotFunc:
 
         # Assert
         assert isinstance(fig, plt.Figure)
+
+        # Cleanup
+        plt.close(fig)

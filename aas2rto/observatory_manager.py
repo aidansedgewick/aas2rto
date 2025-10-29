@@ -85,7 +85,7 @@ class ObservatoryManager:
         t : Time
             most usefully some local noon
         human_time
-            a string only used in logging - helpful to write when obs_info is.
+            a string only used in logging - helpful to write when ephem_info starts.
         **kwargs
             all passed to EphemInfo - so just the kwargs for that.
         """

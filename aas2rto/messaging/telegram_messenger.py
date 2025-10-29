@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 # import requests
@@ -6,12 +7,12 @@ import warnings
 import yaml
 from logging import getLogger
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from astropy.time import Time
 
 from aas2rto import utils
-from aas2rto.exc import MissingMediaWarning
+from aas2rto.exc import MissingRequiredConfigKeyError, MissingMediaWarning
 
 try:
     import telegram
@@ -22,7 +23,9 @@ logger = getLogger(__name__.split(".")[-1])
 
 
 class TelegramMessenger:
-    CHUNK_MAX = 4000  # Telegram send fails if text has more than 4096 chars.
+    TEXT_CHUNK_MAX = 4000  # Telegram send fails if text has more than 4096 chars.
+    MIN_MEDIA_GROUP_SIZE = 2  # see comment in send_to_user() function...
+    MAX_MEDIA_GROUP_SIZE = 10  # ""       ""
 
     http_url = "https://api.telegram.org"
 
@@ -34,9 +37,19 @@ class TelegramMessenger:
             self.telegram_config, self.expected_kwargs, name="telegram_config"
         )
 
+        if telegram is None:
+            msg = (
+                "\033[31;1mtelegram module did not import correctly\033[0m.\n"
+                "try \033[36;1mpython3 -m pip install python-telegram-bot\033[0m"
+            )
+            logger.error(msg)
+            raise ModuleNotFoundError(msg)
+
         self.token = self.telegram_config.get("token", None)
         if self.token is None:
-            logger.warning("\033[33;1mno token provided in telegram_config\033[0m.")
+            msg = "telegram config missing required key \033[31;1mtoken\033[0m"
+            logger.error(msg)
+            raise MissingRequiredConfigKeyError(msg)
 
         users = self.telegram_config.get("users", {})
         sudoers = self.telegram_config.get("sudoers", {})
@@ -53,6 +66,9 @@ class TelegramMessenger:
             logger.warning(msg)
             users = {u: "unknown_user" for u in users}
         self.users = users
+
+        if isinstance(sudoers, int):
+            sudoers = [sudoers]
 
         if isinstance(sudoers, list):
             sudoers = {u: self.users.get(u, "unknown_sudoer") for u in sudoers}
@@ -74,43 +90,53 @@ class TelegramMessenger:
         else:
             self.users_file = None
 
-        self.bot = None
-        if telegram is None:
-            msg = (
-                "\033[31;1mtelegram module did not import correctly\033[0m.\n"
-                "try \033[36;1mpython3 -m pip install python-telegram-bot\033[0m"
-            )
-            logger.warning(msg)
-            return
-
+        # self.bot = None
         try:
-            self.bot = telegram.Bot(token=self.token)
+            bot = self.get_bot()
         except Exception as e:
             logger.error(f"\033[31;1mduring telegram bot init\033[0m]:\n{e}")
         return
 
-    def read_new_users(self):
+    def get_bot(self):
+        return telegram.Bot(token=self.token)
+
+    def read_users_file(self):
         if self.users_file is not None:
             if self.users_file.exists():
                 with open(self.users_file, "r") as f:
                     new_users = yaml.load(f, Loader=yaml.FullLoader)
                 if isinstance(new_users, list):
                     new_users = {u: "unknown_user" for u in new_users}
-                return new_users
+                return new_users or {}
         return {}
+
+    def get_users(self):
+        """
+        Return a COPY of users and the updated version, so that we can take people
+        out of the users_file if we need to without killing the whole program
+        """
+
+        try:
+            new_users = self.read_users_file()
+        except Exception as e:
+            new_users = {}
+            msg = f"{type(e).__name__} in read_users_file {e}"
+            logger.warning(msg)
+            warnings.warn(UserWarning(msg))
+        print(new_users)
+
+        users = self.users.copy()
+        users.update(new_users)
+        return users
 
     def send_to_user(
         self,
         user,
         texts: List[str] = None,
-        img_paths: List[str] = None,
+        img_paths: List[Path] = None,
         caption=None,
         min_media_group_size=2,
-    ):
-
-        img_paths = img_paths or []
-        if isinstance(img_paths, str) or isinstance(img_paths, Path):
-            img_paths = [Path(img_paths)]
+    ) -> List:
 
         texts = texts or []
         if isinstance(texts, str):
@@ -118,12 +144,11 @@ class TelegramMessenger:
 
         formatted_texts = []
         for text in texts:
-            if len(text) > self.CHUNK_MAX:
+            if len(text) > self.TEXT_CHUNK_MAX:
                 # Telegram send fails if text has more than 4096 chars.
-                # formatted_texts.append(f"MESSAGE SPLIT! longer than {self.CHUNK_MAX}")
                 text_split = [
-                    text[ii : ii + self.CHUNK_MAX]
-                    for ii in range(0, len(text), self.CHUNK_MAX)
+                    text[ii : ii + self.TEXT_CHUNK_MAX]
+                    for ii in range(0, len(text), self.TEXT_CHUNK_MAX)
                 ]
                 formatted_texts.extend(text_split)
             else:
@@ -132,10 +157,9 @@ class TelegramMessenger:
 
         sent_messages = []
         for text in texts:
-            # url = f"{self.http_url}/bot{self.token}/sendMessage?chat_id={user}&text={text}"
-            # requests.get(url)
-            sent = self.bot.send_message(
-                chat_id=user, text=text, disable_web_page_preview=True
+            bot = self.get_bot()
+            sent = asyncio.run(
+                bot.send_message(chat_id=user, text=text, disable_web_page_preview=True)
             )
             sent_messages.append(sent)
 
@@ -143,34 +167,32 @@ class TelegramMessenger:
         # Cannot use send_media_group() for list of imgs which has len==1
         # Cannot use open(img, "rb") [which has type bytes] in send_media_group()
         # Cannot use telegram.InputMediaPhoto in send_photo()
-        if img_paths is not None:
-            img_list = []
-            filenames = []
-            # Sort the list of images to send.
-            for img_path in img_paths:
-                if not Path(img_path).exists():
-                    msg = f"{Path(img_path).stem} missing"
-                    logger.warning(msg)
-                    warnings.warn(MissingMediaWarning(msg))
-                    continue
-                with open(img_path, "rb") as f:
-                    img = f.read()
-                img_list.append(img)
-                filenames.append(str(img_path))
-            # Do the actual sending.
-            if len(img_list) >= min_media_group_size:  # probably 2...
-                media_list = [
-                    telegram.InputMediaPhoto(img, filename=fname)
-                    for img, fname in zip(img_list, filenames)
-                ]
-                sent = self.bot.send_media_group(chat_id=user, media=media_list)
-                sent_messages.extend(sent)
-                if caption is not None:
-                    msg = "will not send caption with send_media_group() (only for single image)"
-                    logger.info(msg)
+
+        img_paths = img_paths or []
+        if isinstance(img_paths, str) or isinstance(img_paths, Path):
+            img_paths = [Path(img_paths)]
+
+        for img_chunk in utils.chunk_list(
+            img_paths, chunk_size=self.MAX_MEDIA_GROUP_SIZE
+        ):
+            if len(img_chunk) >= self.MIN_MEDIA_GROUP_SIZE:
+                media_list = []
+                for img_path in img_chunk:
+                    with open(img_path, "rb") as f:
+                        img = f.read()
+                    media_ii = telegram.InputMediaPhoto(img, filename=str(img_path))
+                    media_list.append(media_ii)
+                bot = self.get_bot()
+                sent = asyncio.run(bot.send_media_group(chat_id=user, media=media_list))
+                sent_messages.append(sent)
             else:
-                for img in img_list:
-                    sent = self.bot.send_photo(chat_id=user, photo=img, caption=caption)
+                for img_path in img_chunk:
+                    with open(img_path, "rb") as f:
+                        img = f.read()
+                    bot = self.get_bot()
+                    sent = asyncio.run(
+                        bot.send_photo(chat_id=user, photo=img, caption=caption)
+                    )
                     sent_messages.append(sent)
 
         return sent_messages
@@ -179,13 +201,9 @@ class TelegramMessenger:
         self,
         users=None,
         texts: List[str] = None,
-        img_paths: List[str] = None,
+        img_paths: List[Path] = None,
         caption=None,
-    ):
-        if self.bot is None:
-            logger.warning("telegram bot did not initialise - can't send messages")
-            return None, None
-
+    ) -> Tuple[List, List]:
         if isinstance(users, int):
             users = [users]
 
@@ -193,11 +211,7 @@ class TelegramMessenger:
             users = {u: "unknown_user" for u in users}
 
         if users is None:
-            try:
-                new_users = self.read_new_users()
-            except Exception as e:
-                new_users = {}
-            users = {**self.users, **new_users}
+            users = self.get_users()
         if users in ["sudoers", "sudo"]:
             users = self.sudoers
 
@@ -212,7 +226,7 @@ class TelegramMessenger:
         img_paths_to_send = []
         if img_paths is not None:
             for img_path in img_paths:
-                if not img_path.exists():
+                if not Path(img_path).exists():
                     msg = f"Image {img_path.name} missing!"
                     logger.warning(msg)
                     exceptions.append(msg)
@@ -240,7 +254,7 @@ class TelegramMessenger:
                     self.send_to_user(sudoer, texts=err_msg)
                 except Exception as e:
                     tr = traceback.format_exc()
-                    logger.warn(
+                    logger.warning(
                         f"Exception while sending error report to telegram sudoer"
                         f" {sudoer} ({user_label})! {e}\n{tr}"
                     )

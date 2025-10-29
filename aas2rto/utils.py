@@ -62,17 +62,23 @@ def print_header(s: str) -> None:
     print(fmt_s)
 
 
-def check_config_keys(provided, expected, name: str = None) -> Tuple[List, List]:
+def check_config_keys(
+    provided, expected, name: str = None, warn=True
+) -> Tuple[List, List]:
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):
         expected = expected.keys()
-    unexpected_keys = check_unexpected_config_keys(provided, expected, name=name)
-    missing_keys = check_missing_config_keys(provided, expected, name=name)
+    unexpected_keys = check_unexpected_config_keys(
+        provided, expected, name=name, warn=warn
+    )
+    missing_keys = check_missing_config_keys(provided, expected, name=name, warn=warn)
     return unexpected_keys, missing_keys
 
 
-def check_unexpected_config_keys(provided, expected, name: str = None) -> list:
+def check_unexpected_config_keys(
+    provided, expected, name: str = None, warn=True, exc=False
+) -> list:
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):
@@ -86,11 +92,19 @@ def check_unexpected_config_keys(provided, expected, name: str = None) -> list:
 
         keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in unexpected_keys)
         msg = msg + ":\n    " + keys_str
-        warnings.warn(UnexpectedKeysWarning(msg))
+        if exc:
+            logger.error(msg)
+            raise UnexpectedKeysWarning(msg)
+        if warn:
+            logger.warning(msg)
+            warnings.warn(UnexpectedKeysWarning(msg))
     return list(unexpected_keys)
 
 
-def check_missing_config_keys(provided, expected, name: str = None) -> list:
+def check_missing_config_keys(
+    provided, expected, name: str = None, warn=True, exc=False
+) -> list:
+
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):
@@ -103,7 +117,12 @@ def check_missing_config_keys(provided, expected, name: str = None) -> list:
             msg = msg + f" in {name}"
         keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in missing_keys)
         msg = msg + ":\n    " + keys_str
-        warnings.warn(MissingKeysWarning(msg))
+        if exc:
+            logger.error(msg)
+            raise MissingKeysWarning(msg)
+        if warn:
+            logger.warning(msg)
+            warnings.warn(MissingKeysWarning(msg))
     return list(missing_keys)
 
 

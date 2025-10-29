@@ -13,6 +13,10 @@ class MissingDateError(Exception):
     pass
 
 
+class MissingRequiredConfigKeyError(Exception):
+    pass
+
+
 class MissingTargetIdError(Exception):
     pass
 
@@ -25,6 +29,10 @@ class NotATargetError(Exception):
 
 
 class DuplicateDataWarning(UserWarning):
+    pass
+
+
+class InvalidEphemWarning(UserWarning):
     pass
 
 
