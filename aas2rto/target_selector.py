@@ -293,7 +293,7 @@ class TargetSelector:
         lc_plotting_function: Callable = None,
         extra_plotting_functions: List[Callable] = None,
         skip_tasks: list = None,
-        startup: bool = False,
+        iteration: int = -1,
         t_ref: Time = None,
     ):
         """
@@ -311,9 +311,9 @@ class TargetSelector:
         lightcurve_compiler : Callable, optional
         lc_plotting_function : Callable, optional
         skip_tasks : list, optional
-        startup : bool, default=False
+        iteration : int, default=-1
             passed to the "perform_all_tasks()" function for query_managers.
-            useful for skipping certain steps on first iteration.
+            useful for skipping certain steps on iteration=0.
         t_ref : `astropy.time.Time`, default=Time.now()
             the reference time at the start of the iteration.
             useful for simulations.
@@ -355,7 +355,7 @@ class TargetSelector:
         self.check_for_targets_of_opportunity()
         if not "qm_tasks" in skip_tasks:
             self.global_query_manager.perform_all_query_manager_tasks(
-                startup=startup, t_ref=t_ref
+                iteration=iteration, t_ref=t_ref
             )
         else:
             logger.info("skip query manager tasks")
@@ -595,7 +595,6 @@ class TargetSelector:
         t_ref = Time.now()
 
         # ===================== Get and set some parameters ================== #
-        N_iterations = 0
         sleep_time = self.selector_parameters.get("sleep_time")
 
         if scoring_function is None:
@@ -634,20 +633,18 @@ class TargetSelector:
         self.messaging_manager.send_sudo_messages(texts=msg)
 
         # ========================= loop indefinitely ======================== #
+        iteration_idx = 0
         while True:
             t_ref = Time.now()
 
             t_start = time.perf_counter()
             loop_skip_tasks = skip_tasks or []
-            if N_iterations == 0:
+            if iteration_idx == 0:
                 # Don't send messages on the first loop.
                 # If many targets are recovered, 100s of messages could be sent...
                 loop_skip_tasks.append("messaging")
                 loop_skip_tasks.append("write_targets")
                 # loop_skip_tasks.append("plotting")
-                startup = True
-            else:
-                startup = False  # skips some query_manager tasks on startup
 
             try:
                 self.perform_iteration(
@@ -658,7 +655,7 @@ class TargetSelector:
                     lc_plotting_function=lc_plotting_function,
                     extra_plotting_functions=extra_plotting_functions,
                     skip_tasks=loop_skip_tasks,
-                    startup=startup,
+                    iteration=iteration_idx,
                     t_ref=t_ref,
                 )
             except Exception as e:
@@ -668,12 +665,12 @@ class TargetSelector:
                 sys.exit()
 
             # Some post-loop tasks
-            N_iterations = N_iterations + 1
+            iteration_idx = iteration_idx + 1
             if iterations is not None:
-                if N_iterations >= iterations:
+                if iteration_idx >= iterations:
                     break
 
-            if startup:
+            if iteration_idx == 0:
                 logger.info("no sleep after startup")
             else:
                 exc_time = time.perf_counter() - t_start

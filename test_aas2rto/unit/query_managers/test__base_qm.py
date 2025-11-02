@@ -49,7 +49,9 @@ class CoolQM(BaseQueryManager):
 
 
 @pytest.fixture
-def cool_qm(lc_ztf: pd.DataFrame, tlookup: TargetLookup, monkeypatch):
+def cool_qm(
+    lc_ztf: pd.DataFrame, tlookup: TargetLookup, monkeypatch: pytest.MonkeyPatch
+):
     def mock_load_lc(target_id: str, t_ref=None):
         if target_id == "T00":
             return lc_ztf

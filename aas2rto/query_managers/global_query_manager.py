@@ -10,12 +10,13 @@ from aas2rto.path_manager import PathManager
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.target_lookup import TargetLookup
 
-from aas2rto.query_managers.alerce import AlerceQueryManager
-from aas2rto.query_managers.atlas import AtlasQueryManager
-from aas2rto.query_managers.fink import FinkQueryManager
-from aas2rto.query_managers.lasair import LasairQueryManager
-from aas2rto.query_managers.tns import TnsQueryManager
-from aas2rto.query_managers.yse import YseQueryManager
+# from aas2rto.query_managers.alerce import AlerceQueryManager
+# from aas2rto.query_managers.atlas import AtlasQueryManager
+# from aas2rto.query_managers.fink import FinkQueryManager
+
+# from aas2rto.query_managers.lasair import LasairQueryManager
+# from aas2rto.query_managers.tns import TnsQueryManager
+# from aas2rto.query_managers.yse import YseQueryManager
 
 # from aas2rto.query_managers.sdss import SdssQueryManager
 
@@ -23,12 +24,12 @@ from aas2rto.query_managers.yse import YseQueryManager
 logger = getLogger(__name__.split(".")[-1])
 
 EXPECTED_QUERY_MANAGERS = {
-    "alerce": AlerceQueryManager,
-    "atlas": AtlasQueryManager,
-    "fink": FinkQueryManager,
-    "lasair": LasairQueryManager,
-    "tns": TnsQueryManager,
-    "yse": YseQueryManager,
+    # "alerce": AlerceQueryManager,
+    # "atlas": AtlasQueryManager,
+    # "fink_ztf": FinkZTFQueryManager,
+    # "lasair": LasairQueryManager,
+    # "tns": TnsQueryManager,
+    # "yse": YseQueryManager,
 }
 
 
@@ -114,7 +115,7 @@ class GlobalQueryManager:
         )
         self.query_managers[qm_name] = qm
 
-    def perform_all_query_manager_tasks(self, startup=False, t_ref: Time = None):
+    def perform_all_query_manager_tasks(self, iteration, t_ref: Time = None):
         """
         for each of the query managers `qm` in target_selector.query_managers,
         call the method `qm.perform_all_tasks(t_ref=t_ref)`
@@ -131,7 +132,7 @@ class GlobalQueryManager:
         for qm_name, qm in self.query_managers.items():
             t_start = time.perf_counter()
             logger.info(f"begin {qm_name} tasks")
-            query_result = qm.perform_all_tasks(startup=startup, t_ref=t_ref)
+            query_result = qm.perform_all_tasks(iteration=iteration, t_ref=t_ref)
             if isinstance(query_result, Exception):
                 text = [f"EXCEPTION IN {qm_name} [no crash]"]
                 # self.send_crash_reports(text=text)

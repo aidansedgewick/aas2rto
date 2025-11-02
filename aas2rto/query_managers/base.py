@@ -6,6 +6,9 @@ from typing import Callable, Dict, List
 
 from pathlib import Path
 
+import pandas as pd
+
+from astropy.table import Table
 from astropy.time import Time
 
 from aas2rto.exc import UnknownTargetWarning
@@ -84,10 +87,15 @@ class BaseQueryManager(abc.ABC):
         self.data_path = data_path.absolute()
 
         directories = directories or DEFAULT_DIRECTORIES
+        if isinstance(directories, str):
+            directories = [directories]
+
         extra_directories = extra_directories or []
+        if isinstance(extra_directories, str):
+            extra_directories = [extra_directories]
 
         self.paths_lookup: Dict[str, Path] = {}
-        for dir_name in directories + extra_directories:
+        for dir_name in list(directories) + list(extra_directories):
             path = self.data_path / dir_name
             self.paths_lookup[dir_name] = path
             setattr(self, f"{dir_name}_path", path)
@@ -101,7 +109,7 @@ class BaseQueryManager(abc.ABC):
         for dir_name, path in self.paths_lookup.items():
             path.mkdir(exist_ok=True)
 
-    def load_single_lightcurve(self, target_id, t_ref=None):
+    def load_single_lightcurve(self, target_id: str, t_ref: Time = None):
         logger.error(
             f"{self.name}: to call load_target_lightcurves, must implement load_single_lightcurve"
         )
@@ -150,20 +158,22 @@ class BaseQueryManager(abc.ABC):
                 missing.append(target_id)
                 continue
 
-            lightcurve = self.load_single_lightcurve(target_id, t_ref=t_ref)
+            lightcurve: pd.DataFrame | Table = self.load_single_lightcurve(
+                target_id, t_ref=t_ref
+            )
             if lightcurve is None:
                 # logger.warning(f"{self.name}: loaded {id_} LC is bad")
                 missing.append(target_id)
                 continue
 
             try:
-                if lightcurve.empty:
+                if len(lightcurve) == 0:
                     missing.append(target_id)
                     continue
             except Exception as e:
                 pass
 
-            # get eg. target.target_data["fink"], target.target_data["yse"], ...
+            # get eg. target.target_data["fink_ztf"], target.target_data["yse"], ...
             qm_data = target.get_target_data(self.name)
             existing_lightcurve = qm_data.lightcurve
             if existing_lightcurve is not None:

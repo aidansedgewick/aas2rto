@@ -388,7 +388,7 @@ def mock_upload_files_v2_raises(**kwargs):
 
 
 @pytest.fixture
-def slack_msgr(slack_config: dict, monkeypatch):
+def slack_msgr(slack_config: dict, monkeypatch: pytest.MonkeyPatch):
     msgr = SlackMessenger(slack_config)
     monkeypatch.setattr(msgr.client, "chat_postMessage", mock_chat_postMessage)
     monkeypatch.setattr(msgr.client, "files_upload_v2", mock_files_upload_v2)
@@ -396,7 +396,7 @@ def slack_msgr(slack_config: dict, monkeypatch):
 
 
 @pytest.fixture
-def raising_slack_msgr(slack_config: dict, monkeypatch):
+def raising_slack_msgr(slack_config: dict, monkeypatch: pytest.MonkeyPatch):
     msgr = SlackMessenger(slack_config)
     monkeypatch.setattr(msgr.client, "chat_postMessage", mock_chat_postMessage_raises)
     monkeypatch.setattr(msgr.client, "files_upload_v2", mock_upload_files_v2_raises)
@@ -444,7 +444,7 @@ class MockBot:
 
 
 @pytest.fixture
-def telegram_msgr(telegram_config: dict, monkeypatch):
+def telegram_msgr(telegram_config: dict, monkeypatch: pytest.MonkeyPatch):
     def get_mock_bot():
         return MockBot()
 

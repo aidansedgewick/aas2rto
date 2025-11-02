@@ -1,10 +1,6 @@
 # Exceptions
 
 
-class BadKafkaConfigError(Exception):
-    pass
-
-
 class MissingCoordinatesError(Exception):
     pass
 

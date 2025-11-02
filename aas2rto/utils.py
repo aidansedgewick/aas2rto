@@ -111,7 +111,12 @@ def check_config_keys(
 
 
 def check_unexpected_config_keys(
-    provided, expected, name: str = None, warn=True, exc=False
+    provided,
+    expected,
+    name: str = None,
+    warn=True,
+    raise_exc=False,
+    exc_class=UnexpectedKeysWarning,
 ) -> list:
     if isinstance(provided, dict):
         provided = provided.keys()
@@ -126,9 +131,9 @@ def check_unexpected_config_keys(
 
         keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in unexpected_keys)
         msg = msg + ":\n    " + keys_str
-        if exc:
+        if raise_exc:
             logger.error(msg)
-            raise UnexpectedKeysWarning(msg)
+            raise exc_class(msg)
         if warn:
             logger.warning(msg)
             warnings.warn(UnexpectedKeysWarning(msg))
@@ -136,7 +141,12 @@ def check_unexpected_config_keys(
 
 
 def check_missing_config_keys(
-    provided, expected, name: str = None, warn=True, exc=False
+    provided,
+    expected,
+    name: str = None,
+    warn=True,
+    raise_exc=False,
+    exc_class=MissingKeysWarning,
 ) -> list:
 
     if isinstance(provided, dict):
@@ -151,9 +161,9 @@ def check_missing_config_keys(
             msg = msg + f" in {name}"
         keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in missing_keys)
         msg = msg + ":\n    " + keys_str
-        if exc:
+        if raise_exc:
             logger.error(msg)
-            raise MissingKeysWarning(msg)
+            raise exc_class(msg)
         if warn:
             logger.warning(msg)
             warnings.warn(MissingKeysWarning(msg))

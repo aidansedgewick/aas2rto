@@ -43,11 +43,9 @@ class Target:
     Parameters
     ----------
     target_id: str
-        the main name your object should be called by.
-    ra: float
-        Right Ascension, in decimal degrees.
-    dec: float
-        Declination, in decimal degrees.
+        the main name your target should be called by.
+    coord: astropy.coordinates.SkyCoord
+        the (latest) coordinate of the target.
     target_data: Dict[str, aas2rto.target_data.TargetData]
         A lookup of data from various sources.
         An entry for `fink` data, one for `atlas` data, one for `tns` data, etc...
