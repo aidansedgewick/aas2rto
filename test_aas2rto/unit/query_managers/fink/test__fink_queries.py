@@ -154,12 +154,23 @@ class Test__HelperFunctions:
         assert isinstance(processed_data[0], dict)
         assert set(processed_data[0].keys()) == set("key01 key02".split())
 
-    def test__process_data_df(self):
+    def test__process_data_pandas(self):
         # Arrange
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
 
         # Act
-        df = FinkCoolQuery.process_data(data, return_df=True)
+        df = FinkCoolQuery.process_data(data, return_type="pandas")
+
+        # Assert
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 2
+
+    def test__process_data_astropy(self):
+        # Arrange
+        data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
+
+        # Act
+        df = FinkCoolQuery.process_data(data, return_type="astropy")
 
         # Assert
         assert isinstance(df, pd.DataFrame)

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from astropy import units as u
+from astropy.table import Table
 from astropy.time import Time
 
 logger = getLogger(__name__.split(".")[-1])
@@ -50,13 +51,22 @@ class FinkBaseQuery(abc.ABC):
         # NO RETURN - dictionary is modified "in place"...
 
     @classmethod
-    def process_data(cls, data, fix_keys=True, return_df=True, df_kwargs=None):
+    def process_data(cls, data, fix_keys=True, return_type=None, df_kwargs=None):
         if fix_keys:
             for row in data:
                 cls.fix_dict_keys_inplace(row)
-        if not return_df:
+        if return_type is None:
             return data
-        return pd.DataFrame(data)
+        elif return_type == "pandas":
+            return pd.DataFrame(data)
+        elif return_type == "astropy":
+            return Table(rows=data)
+        else:
+            msg = (
+                f"Unknown return_type='{return_type}'.\n    "
+                "Choose None, 'pandas', or 'astropy'"
+            )
+            raise ValueError(msg)
 
     @staticmethod
     def process_kwargs(**kwargs):
@@ -69,7 +79,7 @@ class FinkBaseQuery(abc.ABC):
 
     @classmethod
     def process_response(
-        cls, response: requests.Response, fix_keys=True, return_df=True
+        cls, response: requests.Response, fix_keys=True, return_type=None
     ):
         if response.status_code in [404, 500, 504]:
             logger.error("\033[31;1mFinkQuery: error rasied\033[0m")
@@ -80,11 +90,11 @@ class FinkBaseQuery(abc.ABC):
             else:
                 raise FinkQueryError(response.content)
         data = json.loads(response.content)
-        return cls.process_data(data, fix_keys=fix_keys, return_df=return_df)
+        return cls.process_data(data, fix_keys=fix_keys, return_type=return_type)
 
     @classmethod
     def do_post(
-        cls, service: str, process=True, fix_keys=True, return_df=True, **kwargs
+        cls, service: str, process=True, fix_keys=True, return_type=None, **kwargs
     ):
         kwargs = cls.process_kwargs(**kwargs)
         response: requests.Response = requests.post(
@@ -96,7 +106,7 @@ class FinkBaseQuery(abc.ABC):
             logger.warning(msg)
         if process:
             return cls.process_response(
-                response, fix_keys=fix_keys, return_df=return_df
+                response, fix_keys=fix_keys, return_type=return_type
             )
         return response
 
@@ -118,18 +128,22 @@ class FinkBaseQuery(abc.ABC):
         return response
 
     @classmethod
-    def objects(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("objects", fix_keys=fix_keys, return_df=return_df, **kwargs)
+    def objects(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post(
+            "objects", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
 
     @classmethod
     def cutouts(cls, **kwargs):
         if kwargs.get("kind", None) not in cls.imtypes:
             raise ValueError(f"provide `kind` as one of {cls.imtypes}")
-        return cls.do_post("cutouts", fix_keys=False, return_df=False, **kwargs)
+        return cls.do_post("cutouts", fix_keys=False, **kwargs)
 
     @classmethod
-    def latests(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("latests", fix_keys=fix_keys, return_df=return_df, **kwargs)
+    def latests(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post(
+            "latests", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
 
     @classmethod
     def latests_query_and_collate(
@@ -137,7 +151,7 @@ class FinkBaseQuery(abc.ABC):
         t_start: Time,
         t_stop: Time = None,
         step=3 * u.h,
-        return_df=True,
+        return_type=None,
         fix_keys=True,
         n=1000,
         **kwargs,
@@ -157,7 +171,7 @@ class FinkBaseQuery(abc.ABC):
             payload["startdate"] = t1.iso
             payload["stopdate"] = t2.iso
             logger.info(f"start query {t1_str} - {t2_str}")
-            result = cls.latests(fix_keys=fix_keys, return_df=return_df, **payload)
+            result = cls.latests(fix_keys=fix_keys, return_type=return_type, **payload)
             if len(result) == n:
                 msg = f"{t1_str} - {t2_str} returned {n} rows. choose shorter timestep!"
                 logger.warning(msg)
@@ -170,56 +184,72 @@ class FinkBaseQuery(abc.ABC):
         return results
 
     @classmethod
-    def classes(cls, fix_keys=True, process=True, return_df=True, **kwargs):
+    def classes(cls, fix_keys=True, process=True, return_type=None, **kwargs):
         return cls.do_get("classes", process=process, **kwargs)
 
     @classmethod
-    def explorer(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("explorer", fix_keys=fix_keys, return_df=return_df, **kwargs)
-
-    @classmethod
-    def conesearch(cls, fix_keys=True, return_df=True, **kwargs):
+    def explorer(cls, fix_keys=True, return_type=None, **kwargs):
         return cls.do_post(
-            "conesearch", fix_keys=fix_keys, return_df=return_df, **kwargs
+            "explorer", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
     @classmethod
-    def sso(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("sso", fix_keys=fix_keys, return_df=return_df, **kwargs)
-
-    @classmethod
-    def ssocand(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("ssocand", fix_keys=fix_keys, return_df=return_df, **kwargs)
-
-    @classmethod
-    def resolver(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("resolver", fix_keys=fix_keys, return_df=return_df, **kwargs)
-
-    @classmethod
-    def tracklet(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("tracklet", fix_keys=fix_keys, return_df=return_df, **kwargs)
-
-    @classmethod
-    def schema(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_get("schema", fix_keys=fix_keys, return_df=return_df, **kwargs)
-
-    @classmethod
-    def skymap(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("skymap", fix_keys=fix_keys, return_df=return_df, **kwargs)
-
-    @classmethod
-    def statistics(cls, fix_keys=True, return_df=True, **kwargs):
+    def conesearch(cls, fix_keys=True, return_type=None, **kwargs):
         return cls.do_post(
-            "statistics", fix_keys=fix_keys, return_df=return_df, **kwargs
+            "conesearch", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
     @classmethod
-    def anomaly(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("anomaly", fix_keys=fix_keys, return_df=return_df, **kwargs)
+    def sso(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post("sso", fix_keys=fix_keys, return_type=return_type, **kwargs)
 
     @classmethod
-    def ssoft(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_post("ssoft", fix_keys=fix_keys, return_df=return_df, **kwargs)
+    def ssocand(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post(
+            "ssocand", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
+
+    @classmethod
+    def resolver(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post(
+            "resolver", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
+
+    @classmethod
+    def tracklet(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post(
+            "tracklet", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
+
+    @classmethod
+    def schema(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_get(
+            "schema", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
+
+    @classmethod
+    def skymap(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post(
+            "skymap", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
+
+    @classmethod
+    def statistics(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post(
+            "statistics", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
+
+    @classmethod
+    def anomaly(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post(
+            "anomaly", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
+
+    @classmethod
+    def ssoft(cls, fix_keys=True, return_type=None, **kwargs):
+        return cls.do_post(
+            "ssoft", fix_keys=fix_keys, return_type=return_type, **kwargs
+        )
 
 
 class FinkZTFQuery(FinkBaseQuery):

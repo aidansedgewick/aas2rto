@@ -400,8 +400,8 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             ##== Perform the query
             t_start = t_ref - lookback * u.day
             new_results = self.fink_query.latests_query_and_collate(
-                t_start=t_start, class_=fink_class  # trailing "_" is stripped...
-            )
+                t_start=t_start, class_=fink_class, return_type="pandas"
+            )  # trailing "_"  from 'class_' is stripped...
             if len(new_results) == 0:
                 existing_results.to_csv(query_results_filepath, index=False)
                 continue  # write empty file anyway so we don't re-query in 5 minutes!
@@ -525,7 +525,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
                     "return_df": True,
                 }
                 t1 = time.perf_counter()
-                result = self.fink_query.objects(**payload)
+                result = self.fink_query.objects(return_type="pandas", **payload)
                 chunk_results.append(result)
                 t2 = time.perf_counter()
 
