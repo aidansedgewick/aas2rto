@@ -21,6 +21,8 @@ class FinkQueryError(Exception):
 
 class FinkBaseQuery(abc.ABC):
 
+    TIMEOUT_LIKELY = 58.0
+
     @property
     @abc.abstractmethod
     def api_url(self) -> str:
@@ -45,7 +47,7 @@ class FinkBaseQuery(abc.ABC):
         for old_key, new_key in key_lookup.items():
             # Not dangerous, as not iterating over the dict we're updating.
             data[new_key] = data.pop(old_key)
-        # don't return dictionary, dict is modified inplace...
+        # NO RETURN - dictionary is modified "in place"...
 
     @classmethod
     def process_data(cls, data, fix_keys=True, return_df=True, df_kwargs=None):
@@ -56,14 +58,28 @@ class FinkBaseQuery(abc.ABC):
             return data
         return pd.DataFrame(data)
 
+    @staticmethod
+    def process_kwargs(**kwargs):
+        """Remove trailing underscores from eg. 'class_'
+        (python keywords which are) used as keywords
+        use dict unpacking (ie. **kwargs), instead of single arg as sometimes there
+        may be NO kwargs to process.
+        """
+        return {k.rstrip("_"): v for k, v in kwargs.items()}
+
     @classmethod
-    def process_response(cls, res: requests.Response, fix_keys=True, return_df=True):
-        if res.status_code in [404, 500, 504]:
-            logger.error("\033[31;1FinkQuery: error rasied\033[0m")
-            if res.elapsed.total_seconds() > 58.0:
+    def process_response(
+        cls, response: requests.Response, fix_keys=True, return_df=True
+    ):
+        if response.status_code in [404, 500, 504]:
+            logger.error("\033[31;1mFinkQuery: error rasied\033[0m")
+            if response.elapsed.total_seconds() > cls.TIMEOUT_LIKELY:
                 logger.error("likely a timeout error")
-            raise FinkQueryError(res.content.decode())
-        data = json.loads(res.content)
+            if isinstance(response.content, bytes):
+                raise FinkQueryError(response.content.decode())
+            else:
+                raise FinkQueryError(response.content)
+        data = json.loads(response.content)
         return cls.process_data(data, fix_keys=fix_keys, return_df=return_df)
 
     @classmethod
@@ -71,7 +87,9 @@ class FinkBaseQuery(abc.ABC):
         cls, service: str, process=True, fix_keys=True, return_df=True, **kwargs
     ):
         kwargs = cls.process_kwargs(**kwargs)
-        response = requests.post(f"{cls.api_url}/{service}", json=kwargs)
+        response: requests.Response = requests.post(
+            f"{cls.api_url}/{service}", json=kwargs
+        )
         if response.status_code != 200:
             time.sleep(0.1)
             msg = f"query for '{service}' returned status {response.status_code}"
@@ -83,20 +101,21 @@ class FinkBaseQuery(abc.ABC):
         return response
 
     @classmethod
-    def do_get(cls, service: str, **kwargs):
-        response = requests.get(f"{cls.api_url}/{service}", json=kwargs)
+    def do_get(cls, service: str, process=True, **kwargs):
+        response: requests.Response = requests.get(
+            f"{cls.api_url}/{service}", json=kwargs
+        )
         if response.status_code != 200:
-            raise FinkQueryError(response.content.decode())
-        try:
-            return json.loads(response.content)
-        except Exception as e:
-            return response.content.decode()
-
-    @staticmethod
-    def process_kwargs(**kwargs):
-        """Remove trailing underscores from eg. 'class_'
-        (python keywords which are) used as keywords"""
-        return {k.rstrip("_"): v for k, v in kwargs.items()}
+            if isinstance(response.content, bytes):
+                raise FinkQueryError(response.content.decode())
+            else:
+                raise FinkQueryError(response.content)
+        if process:
+            try:
+                return json.loads(response.content)
+            except Exception as e:
+                return response.content.decode()
+        return response
 
     @classmethod
     def objects(cls, fix_keys=True, return_df=True, **kwargs):
@@ -151,8 +170,8 @@ class FinkBaseQuery(abc.ABC):
         return results
 
     @classmethod
-    def classes(cls, fix_keys=True, return_df=True, **kwargs):
-        return cls.do_get("classes", **kwargs)
+    def classes(cls, fix_keys=True, process=True, return_df=True, **kwargs):
+        return cls.do_get("classes", process=process, **kwargs)
 
     @classmethod
     def explorer(cls, fix_keys=True, return_df=True, **kwargs):
