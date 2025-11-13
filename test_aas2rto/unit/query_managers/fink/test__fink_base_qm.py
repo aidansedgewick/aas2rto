@@ -47,7 +47,7 @@ def process_single_mock_alert(
     topic, alert, key = alert_data
     processed_alert = copy.deepcopy(alert["candidate"])
     processed_alert["target_id"] = alert["target_id"]
-    processed_alert["alert_id"] = alert["alert_id"]
+    processed_alert["obs_id"] = alert["obs_id"]
     processed_alert["topic"] = topic
     return processed_alert
 
@@ -62,7 +62,7 @@ class FinkExampleQM(FinkBaseQueryManager):
     id_resolving_order = ("cool_survey", "fink_cool")
     fink_query = MockFinkQuery
     target_id_key = "target_id"
-    alert_id_key = "alert_id"
+    alert_id_key = "obs_id"
 
     def add_target_from_alert(self, processed_alert: dict, t_ref: Time = None):
         target_id = processed_alert["target_id"]
@@ -77,10 +77,10 @@ class FinkExampleQM(FinkBaseQueryManager):
 
     def apply_updates_from_alert(self, processed_alert: dict, t_ref: Time = None):
         fink_id = processed_alert["target_id"]
-        alert_id = processed_alert["alert_id"]
+        alert_id = processed_alert["obs_id"]
         target = self.target_lookup[fink_id]
         target.updated = True
-        target.update_messages.append(f"{fink_id} alert with alert_id {alert_id}")
+        target.info_messages.append(f"{fink_id} alert with alert_id {alert_id}")
 
     def add_target_from_record(self, record: dict):
         fink_id = record["target_id"]
@@ -101,8 +101,18 @@ class FinkExampleQM(FinkBaseQueryManager):
         if target is None:
             return None
         if target.target_id == "T01":
-            target.update_messages.append("alerts integrated!")
+            target.info_messages.append("alerts integrated!")
             return target
+        return None
+
+    def load_cutouts_for_alert(self, fink_id: str, alert_id: int):
+        cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
+        print(cutouts_filepath)
+        if cutouts_filepath.exists():
+            print("cutouts path exists!")
+            with open(cutouts_filepath, "rb") as f:
+                cutouts = pickle.load(f)
+            return cutouts
         return None
 
 
@@ -130,7 +140,7 @@ def mock_alert_list(alert_base: dict, t_fixed: Time) -> list[FinkAlert]:
     for ii in range(10):
         # need deep copy, otherwise nested dicts are just references to the same dict!
         alert = copy.deepcopy(alert_base)
-        alert["alert_id"] = 1000 + ii
+        alert["obs_id"] = 1000 + ii
         alert["candidate"]["mjd"] = mjd + ii
         alert_list.append(("cool_sne", alert, "some_key"))
     return alert_list
@@ -152,14 +162,14 @@ def lc_fink(lc_pandas: pd.DataFrame):
     lc = lc_pandas.copy()
     lc["jd"] = Time(lc["mjd"], format="mjd").jd
     lc.drop("mjd", axis=1, inplace=True)
-    lc.rename({"candid": "alert_id"}, axis=1, inplace=True)
+    lc.rename({"candid": "obs_id"}, axis=1, inplace=True)
     lc.loc[:, "target_id"] = "T00"
     return lc
 
 
 @pytest.fixture
 def empty_classifier_results():
-    return pd.DataFrame(columns="target_id alert_id lastdate".split())
+    return pd.DataFrame(columns="target_id obs_id lastdate".split())
 
 
 @pytest.fixture
@@ -169,7 +179,7 @@ def mock_existing_classifier_results():
         ("T202", 240.0, 0.0, 202_1, date),
         ("T201", 210.0, 0.0, 201_1, date),
     ]
-    return pd.DataFrame(rows, columns="target_id ra dec alert_id lastdate".split())
+    return pd.DataFrame(rows, columns="target_id ra dec obs_id lastdate".split())
 
 
 @pytest.fixture
@@ -179,9 +189,9 @@ def mock_new_classifier_results():
     rows = [
         ("T203", 210.0, 0.0, 203_1, new_date),  # brand new
         ("T201", 210.0, 0.0, 201_1, old_date),  # same as before
-        ("T202", 240.0, 0.0, 202_2, new_date),  # updated from before: date & alert_id
+        ("T202", 240.0, 0.0, 202_2, new_date),  # updated from before: date & obs_id
     ]
-    return pd.DataFrame(rows, columns="target_id ra dec alert_id lastdate".split())
+    return pd.DataFrame(rows, columns="target_id ra dec obs_id lastdate".split())
 
 
 @pytest.fixture
@@ -223,7 +233,7 @@ def patched_qm(
             raise ValueError("failing, as asked!")
         if "T_sleep" in target_id:
             time.sleep(0.4)
-        return pd.DataFrame(columns="target_id mjd alert_id".split())
+        return pd.DataFrame(columns="target_id mjd obs_id".split())
 
     def mock_latests(*args, **kwargs):
         # need to check class_ with "_", as patched FQ does not properly prepare kwargs
@@ -243,6 +253,15 @@ def patched_qm(
     return qm
 
 
+@pytest.fixture
+def bad_qm(
+    tlookup: TargetLookup,
+    t_fixed: Time,
+    tmp_path: Path,
+):
+    return FinkBadQM({}, tlookup, parent_path=tmp_path)
+
+
 ##===== Test helper objects work as designed! =====##
 
 
@@ -254,7 +273,7 @@ class Test__HelperFunctions:
         # Assert
         assert isinstance(processed_alert, dict)
         assert processed_alert["target_id"] == "T101"
-        assert processed_alert["alert_id"] == 1000
+        assert processed_alert["obs_id"] == 1000
         assert np.isclose(processed_alert["mjd"] - 60000.0, 0.0)
 
     def test__target_from_alert(self, mock_alert_list: list, t_fixed: Time):
@@ -278,7 +297,7 @@ class Test__HelperFunctions:
         assert alert[0] == "cool_sne"
         assert isinstance(alert[1], dict)
         assert alert[1]["target_id"] == "T101"  # etc.
-        assert alert[1]["alert_id"] == 1000
+        assert alert[1]["obs_id"] == 1000
 
     def test__mock_poll(self, mock_alert_stream: AlertStream):
         # Arrange
@@ -493,7 +512,7 @@ class Test__PathMethods:
         lc_path = patched_qm.get_cutouts_filepath("test_id", "000")
 
         # Assert
-        assert lc_path == tmp_path / "fink_cool/cutouts/test_id/000.json"
+        assert lc_path == tmp_path / "fink_cool/cutouts/test_id/000.pkl"
 
 
 class Test__MissingFunctionsRaise:
@@ -507,45 +526,57 @@ class Test__MissingFunctionsRaise:
             qm = NoIdOrderFinkQM({}, tlookup, parent_path=tmp_path)
 
     def test__no_target_from_alert_raises(
-        self, mock_alert_list: list, tlookup: TargetLookup, tmp_path: Path
+        self, mock_alert_list: list, bad_qm: FinkBaseQueryManager
     ):
         # Arrange
         alert = process_single_mock_alert(mock_alert_list[0])
-        qm = FinkBadQM({}, tlookup, parent_path=tmp_path)
 
         # Act
         with pytest.raises(NotImplementedError):
-            qm.add_target_from_alert(alert)
+            bad_qm.add_target_from_alert(alert)
+
+    def test__no_target_from_record_raises(
+        self, mock_alert_list: list, bad_qm: FinkBaseQueryManager, t_fixed: Time
+    ):
+        # Arrange
+        alert = process_single_mock_alert(mock_alert_list[0])
+
+        # Act
+        with pytest.raises(NotImplementedError):
+            bad_qm.add_target_from_record(alert)
 
     def test__no_apply_updates_raises(
-        self,
-        mock_alert_list: list,
-        tlookup: TargetLookup,
-        t_fixed: Time,
-        tmp_path: Path,
+        self, mock_alert_list: list, bad_qm: FinkBaseQueryManager, t_fixed: Time
     ):
         # Arrange
         alert = process_single_mock_alert(mock_alert_list[0])
         target = target_from_mock_alert(alert, t_ref=t_fixed)
-        qm = FinkBadQM({}, tlookup, parent_path=tmp_path)
 
         # Act
         with pytest.raises(NotImplementedError):
-            qm.apply_updates_from_alert(alert)
+            bad_qm.apply_updates_from_alert(alert)
 
     def test__no_process_alert_raises(
-        self,
-        mock_alert_list: list,
-        tlookup: TargetLookup,
-        t_fixed: Time,
-        tmp_path: Path,
+        self, mock_alert_list: list, bad_qm: FinkBaseQueryManager
     ):
-        # Arrange
-        qm = FinkBadQM({}, tlookup, parent_path=tmp_path)
-
         # Act
         with pytest.raises(NotImplementedError):
-            qm.process_single_alert(mock_alert_list[0])
+            bad_qm.process_single_alert(mock_alert_list[0])
+
+    def test__no_process_fink_lc_raises(self, bad_qm: FinkBaseQueryManager):
+        # Act
+        with pytest.raises(NotImplementedError):
+            bad_qm.process_fink_lightcurve(pd.DataFrame(columns=["target_id"]))
+
+    def test__no_load_alerts_raises(self, bad_qm: FinkBaseQueryManager):
+        # Act
+        with pytest.raises(NotImplementedError):
+            bad_qm.load_missing_alerts_for_target("T00")
+
+    def test__no_load_cutouts_raises(self, bad_qm: FinkBaseQueryManager):
+        # Act
+        with pytest.raises(NotImplementedError):
+            bad_qm.load_cutouts_for_alert("T00", 1000)
 
 
 class Test__ListenForAlerts:
@@ -556,9 +587,9 @@ class Test__ListenForAlerts:
         # Assert
         len(alerts) == 10
         assert isinstance(alerts[0], dict)
-        exp_keys = "target_id alert_id topic ra dec mjd".split()
+        exp_keys = "target_id obs_id topic ra dec mjd".split()
         assert set(alerts[0].keys()) == set(exp_keys)
-        assert alerts[0]["alert_id"] == 1000
+        assert alerts[0]["obs_id"] == 1000
         assert alerts[0]["target_id"] == "T101"
         assert np.isclose(alerts[0]["mjd"] - 60000.0, 0.0)
 
@@ -616,17 +647,17 @@ class Test__TargetsFromAlerts:
 class Test__ApplyUpdateMessages:
     def test__apply_updates(self, patched_qm: FinkBaseQueryManager):
         # Arrange
-        basic_alert = {"target_id": "T00", "alert_id": 100}
+        basic_alert = {"target_id": "T00", "obs_id": 100}
         assert not patched_qm.target_lookup["T00"].updated
-        assert set(patched_qm.target_lookup["T00"].update_messages) == set()
+        assert set(patched_qm.target_lookup["T00"].info_messages) == set()
 
         # Act
-        patched_qm.apply_update_messages([basic_alert])
+        patched_qm.update_info_messages([basic_alert])
 
         # Assert
         assert patched_qm.target_lookup["T00"].updated
         exp_msg = ["T00 alert with alert_id 100"]
-        assert set(patched_qm.target_lookup["T00"].update_messages) == set(exp_msg)
+        assert set(patched_qm.target_lookup["T00"].info_messages) == set(exp_msg)
 
 
 class Test__GetFinkIdFromTarget:
@@ -691,7 +722,7 @@ class Test__UpdatesFromClassifierQueries:
         assert len(updates) == 2
 
         assert updates.iloc[0]["target_id"] == "T202"
-        assert updates.iloc[0]["alert_id"] == 2022  # NEW row is returned
+        assert updates.iloc[0]["obs_id"] == 2022  # NEW row is returned
 
         assert updates.iloc[1]["target_id"] == "T203"
 
@@ -706,7 +737,7 @@ class Test__UpdatesFromClassifierQueries:
         # Assert
         assert isinstance(updates, pd.DataFrame)
         assert len(updates) == 0
-        exp_cols = "target_id ra dec alert_id lastdate".split()
+        exp_cols = "target_id ra dec obs_id lastdate".split()
         assert set(updates.columns) == set(exp_cols)
 
 
@@ -730,11 +761,11 @@ class Test__FinkClassifierQueries:
         combined = pd.read_csv(exp_file)
         assert len(combined) == 3
         assert combined["target_id"].iloc[0] == "T201"
-        assert combined["alert_id"].iloc[0] == 201_1
+        assert combined["obs_id"].iloc[0] == 201_1
         assert combined["target_id"].iloc[1] == "T202"
-        assert combined["alert_id"].iloc[1] == 202_2  # it's the new row.
+        assert combined["obs_id"].iloc[1] == 202_2  # it's the new row.
         assert combined["target_id"].iloc[2] == "T203"
-        assert combined["alert_id"].iloc[2] == 203_1
+        assert combined["obs_id"].iloc[2] == 203_1
 
     def test__with_existing(
         self,
@@ -753,7 +784,7 @@ class Test__FinkClassifierQueries:
         assert len(updates) == 2  # we only return the updates
         assert all([isinstance(u, dict) for u in updates])
         assert updates[0]["target_id"] == "T202"
-        assert updates[0]["alert_id"] == 202_2  # the NEW alert_id
+        assert updates[0]["obs_id"] == 202_2  # the NEW obs_id
         assert updates[1]["target_id"] == "T203"
 
         #
@@ -763,11 +794,11 @@ class Test__FinkClassifierQueries:
 
         assert len(combined) == 3  # ...but we save everything!
         assert combined["target_id"].iloc[0] == "T201"
-        assert combined["alert_id"].iloc[0] == 201_1
+        assert combined["obs_id"].iloc[0] == 201_1
         assert combined["target_id"].iloc[1] == "T202"
-        assert combined["alert_id"].iloc[1] == 202_2
+        assert combined["obs_id"].iloc[1] == 202_2
         assert combined["target_id"].iloc[2] == "T203"
-        assert combined["alert_id"].iloc[2] == 203_1
+        assert combined["obs_id"].iloc[2] == 203_1
 
     def test__skip_recent_query(
         self,
@@ -921,6 +952,32 @@ class Test__QueryLCs:
         assert set(missing) == set(["T_sleep"])
         # didn't make it to T01 -- quit after 0.3 sec
 
+    def test__bulk_query(self, patched_qm: FinkBaseQueryManager, tmp_path: Path):
+        # Arrange
+        bulk_filepath = tmp_path / "bulk_lcs.csv"
+        patched_qm.config["lightcurve_chunk_size"] = 1
+
+        # Act
+        patched_qm.query_lightcurves(fink_id_list=["T00"], bulk_filepath=bulk_filepath)
+
+        # Assert
+        assert bulk_filepath.exists()
+        loaded_lc = pd.read_csv(bulk_filepath)
+        assert len(loaded_lc) == 14
+
+    def test__bulk_query_empty(self, patched_qm: FinkBaseQueryManager, tmp_path: Path):
+        # Arrange
+        bulk_filepath = tmp_path / "bulk_lcs.csv"
+        patched_qm.config["lightcurve_chunk_size"] = 1
+
+        # Act
+        patched_qm.query_lightcurves(fink_id_list=["T01"], bulk_filepath=bulk_filepath)
+
+        # Assert
+        assert bulk_filepath.exists()
+        loaded_lc = pd.read_csv(bulk_filepath)
+        assert set(loaded_lc.columns) == set(["target_id", "obs_id", "mjd"])
+
 
 class Test__IntegrateAlerts:
     def test__no_existing_lc(self, patched_qm: FinkBaseQueryManager):
@@ -930,6 +987,75 @@ class Test__IntegrateAlerts:
 
         # Assert
         assert set(modified_targets) == set(["T01"])
+
+
+class Test__LoadCutouts:
+    def test__load_cutouts(
+        self, patched_qm: FinkBaseQueryManager, lc_pandas: pd.DataFrame
+    ):
+        # Arrange
+        T00 = patched_qm.target_lookup["T00"]
+        T00.alt_ids["fink_cool"] = "T00"  # no need for "tlookup.update_id_mapping()"
+        alert01_filepath = patched_qm.get_cutouts_filepath("T00", 1000_2000_3000_4001)
+        with open(alert01_filepath, "wb+") as f:
+            pickle.dump(dict(science=100), f)
+        alert02_filepath = patched_qm.get_cutouts_filepath("T00", 1000_2000_3000_4002)
+        with open(alert02_filepath, "wb+") as f:
+            pickle.dump(dict(science=200), f)
+
+        T00_fink_data = T00.get_target_data("fink_cool")
+        T00_fink_data.add_lightcurve(lc_pandas)
+
+        # Act
+        loaded, missing, skipped = patched_qm.load_cutouts()
+
+        # Assert
+        assert set(loaded) == set(["T00"])
+        assert set(missing) == set()  # T01 does not have a fink_id, so ignore
+        assert set(skipped) == set()
+
+        assert T00_fink_data.meta["cutouts_alert_id"] == 1000_2000_3000_4002
+        assert set(T00_fink_data.cutouts.keys()) == set(["science"])
+        assert T00_fink_data.cutouts["science"] == 200
+
+    def test__skip_no_target_data(self, patched_qm: FinkBaseQueryManager):
+        # Arrange
+        T00 = patched_qm.target_lookup["T00"]
+        T00.alt_ids["fink_cool"] = "T00"
+        alert_filepath = patched_qm.get_alert_filepath("T00", 1000_2000_3000_4001)
+        with open(alert_filepath, "wb+") as f:
+            pickle.dump(dict(science=1.0), f)
+
+        # Act
+        loaded, missing, skipped = patched_qm.load_cutouts()
+
+        # Assert
+        assert set(loaded) == set()
+        assert set(missing) == set()
+        assert set(skipped) == set()
+
+    def test__skip_if_latest_loaded(
+        self, patched_qm: FinkBaseQueryManager, lc_pandas: pd.DataFrame
+    ):
+        # Arrange
+        T00 = patched_qm.target_lookup["T00"]
+        T00.alt_ids["fink_cool"] = "T00"
+        alert01_filepath = patched_qm.get_cutouts_filepath(
+            T00.target_id, 1000_2000_3000_4001
+        )
+        with open(alert01_filepath, "wb+") as f:
+            pickle.dump(dict(science=100), f)
+        T00_fink_data = T00.get_target_data("fink_cool")
+        T00_fink_data.add_lightcurve(lc_pandas)
+        patched_qm.load_cutouts()
+
+        # Act
+        loaded, missing, skipped = patched_qm.load_cutouts()
+
+        # Assert
+        assert set(loaded) == set()
+        assert set(missing) == set()
+        assert set(skipped) == set(["T00"])
 
 
 class Test__PerformAllTasks:
@@ -943,7 +1069,7 @@ class Test__PerformAllTasks:
         T00 = patched_qm.target_lookup["T00"]
         assert "fink_cool" not in T00.target_data.keys()
         T01 = patched_qm.target_lookup["T01"]
-        assert set(T01.update_messages) == set(["alerts integrated!"])
+        assert set(T01.info_messages) == set(["alerts integrated!"])
 
     def test__non_startup(self, patched_qm: FinkBaseQueryManager, t_fixed: Time):
         # Act

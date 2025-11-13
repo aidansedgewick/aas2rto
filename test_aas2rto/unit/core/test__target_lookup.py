@@ -304,7 +304,7 @@ class Test__ResetUpdatedMethod:
         # Arrange
         tl["T00"].updated = True
         tl["T00"].send_updates = True
-        tl["T00"].update_messages.append("some_msg")
+        tl["T00"].info_messages.append("some_msg")
 
         # Act
         tl.reset_updated_targets()
@@ -312,8 +312,8 @@ class Test__ResetUpdatedMethod:
         # Assert
         assert tl["T00"].updated is False
         assert tl["T00"].send_updates is False
-        assert isinstance(tl["T00"].update_messages, list)
-        assert len(tl["T00"].update_messages) == 0
+        assert isinstance(tl["T00"].info_messages, list)
+        assert len(tl["T00"].info_messages) == 0
 
 
 class Test__AddTargetFromFile:

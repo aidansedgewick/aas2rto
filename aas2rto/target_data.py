@@ -81,7 +81,7 @@ class TargetData:
 
         date_col = date_col or self.get_date_column(lightcurve)
         if isinstance(lightcurve, pd.DataFrame):
-            lightcurve.sort_values(date_col, inplace=True)
+            lightcurve.sort_values(date_col, inplace=True, ignore_index=True)
         if isinstance(lightcurve, Table):
             lightcurve.sort(date_col)
         with warnings.catch_warnings():
@@ -132,7 +132,7 @@ class TargetData:
         self.badqual = None
         self.non_detections = None
 
-    def get_date_column(self, lightcurve):
+    def get_date_column(self, lightcurve: pd.DataFrame | Table):
         date_col = None
         for col in self.date_columns:
             if col in lightcurve.columns:

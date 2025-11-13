@@ -22,9 +22,6 @@ class FinkLSSTQueryManager(FinkBaseQueryManager):
     target_id_key = "diaObjectId"
     alert_id_key = "diaSourceId"
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     def process_single_alert(
         self, alert_data: Tuple[str, Dict, str], t_ref: Time = None
     ):
@@ -38,8 +35,12 @@ class FinkLSSTQueryManager(FinkBaseQueryManager):
             t_ref=t_ref,
         )
 
-    def target_from_alert(self, alert: Dict, t_ref: Time = None):
+    def add_target_from_alert(self, alert: Dict, t_ref: Time = None):
         return target_from_lsst_alert(alert, t_ref=t_ref)
+
+    def add_target_from_record(self, query_record: dict):
+        # Wait to read FINK LSST Docs?
+        pass
 
 
 def target_from_lsst_alert(alert: dict, t_ref: Time = None):

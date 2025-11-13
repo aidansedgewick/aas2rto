@@ -183,7 +183,7 @@ class TargetLookup:
         for target_id, target in self.lookup.items():
             target.updated = False
             target.send_updates = False
-            target.update_messages = []
+            target.info_messages = []
 
     def add_target_from_file(
         self,
@@ -441,9 +441,9 @@ def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
                 warnings.warn(DuplicateDataWarning(msg))
             merged_target.alt_ids[alt_key] = alt_id
 
-        merged_target.update_messages.extend(target.update_messages)
+        merged_target.info_messages.extend(target.info_messages)
     target_ids = [t.target_id for t in targets]
     target_ids_str = ", ".join(target_ids)
-    merged_target.update_messages.append(f"merged targets: {target_ids_str}")
+    merged_target.info_messages.append(f"merged targets: {target_ids_str}")
 
     return merged_target

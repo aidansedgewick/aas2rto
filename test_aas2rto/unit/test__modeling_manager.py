@@ -123,7 +123,7 @@ class Test__BuildModels:
         assert isinstance(tl["T00"].models["mock_model"], MockModel)
 
         assert set(tl["T00"].models_t_ref.keys()) == set(["mock_model"])
-        assert np.isclose(tl["T00"].models_t_ref["mock_model"], 60000.0, rtol=1e-8)
+        assert np.isclose(tl["T00"].models_t_ref["mock_model"] - 60000.0, 0.0)
         # Model should fail for dec > 15.0 - but still add key=None
         assert set(tl["T01"].models.keys()) == set(["mock_model"])
         assert tl["T01"].models["mock_model"] is None

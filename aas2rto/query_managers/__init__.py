@@ -1,6 +1,7 @@
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.query_managers.global_query_manager import GlobalQueryManager
 
+
 # from aas2rto.query_managers.alerce import (
 #     AlerceQueryManager,
 #     process_alerce_lightcurve,

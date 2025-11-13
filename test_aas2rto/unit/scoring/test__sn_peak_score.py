@@ -31,22 +31,22 @@ def t_score():
     return Time(60010.0, format="mjd")
 
 
-@pytest.fixture
-def lc_ztf(lc_pandas: pd.DataFrame):
-    col_mapping = {
-        "obsid": "candid",
-        "mag": "magpsf",
-        "magerr": "sigmapsf",
-        "band": "fid",
-    }
-    lc_pandas.rename(col_mapping, inplace=True, axis=1)
-    lc_pandas.loc[:, "blah"] = 100.0
-    return lc_pandas
+# @pytest.fixture
+# def lc_ztf(lc_pandas: pd.DataFrame):
+#     col_mapping = {
+#         "obsid": "candid",
+#         "mag": "magpsf",
+#         "magerr": "sigmapsf",
+#         "band": "fid",
+#     }
+#     lc_pandas.rename(col_mapping, inplace=True, axis=1)
+#     lc_pandas.loc[:, "blah"] = 100.0
+#     return lc_pandas
 
 
-@pytest.fixture
-def ztf_td(lc_ztf: pd.DataFrame):
-    return TargetData(lightcurve=lc_ztf)
+# @pytest.fixture
+# def ztf_td(lc_ztf: pd.DataFrame):
+#     return TargetData(lightcurve=lc_ztf)
 
 
 @pytest.fixture

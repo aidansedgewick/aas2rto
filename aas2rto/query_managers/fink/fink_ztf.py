@@ -54,6 +54,12 @@ class FinkZTFQueryManager(FinkBaseQueryManager):
         self.target_lookup.add_target(target)
         return target
 
+    def add_target_from_record(self, query_record: dict, t_ref: Time = None) -> Target:
+        # Actually, the result of a ZTF classifier query
+        # looks just like a processed alert...
+        # therefore we can just use that function!
+        return self.add_target_from_alert(processed_alert=query_record, t_ref=t_ref)
+
     def apply_updates_from_alert(self, processed_alert: dict, t_ref=None) -> NoReturn:
         t_ref = t_ref or Time.now()
 
@@ -66,51 +72,51 @@ class FinkZTFQueryManager(FinkBaseQueryManager):
         apply_ztf_updates_to_target(target, processed_alert, t_ref=t_ref)
 
     def process_fink_lightcurve(self, unprocessed_lc: pd.DataFrame) -> pd.DataFrame:
-        return process_ztf_lc(unprocessed_lc)
+        return process_ztf_lightcurve(unprocessed_lc)
 
     def load_missing_alerts_for_target(self, fink_id: str) -> Target | None:
         target = self.target_lookup.get(fink_id, None)
         if target is None:
-            return None
+            return False
+
         fink_data = target.get_target_data(self.name)
-        alert_directory = self.get_alert_directory(fink_id)
+        alert_directory = self.get_alert_directory(fink_id, mkdir=False)
+        if not alert_directory.exists():
+            return False  # There obviously aren't any alerts here.
+
         available_alert_files = alert_directory.glob("*.json")
-        available_alert_ids = [a.stem for a in available_alert_files]
+        available_alert_ids = [int(a.stem) for a in available_alert_files]
 
         if fink_data.lightcurve is None:
             loaded_alert_ids = []
         else:
             loaded_alert_ids = fink_data.lightcurve[self.alert_id_key].values
-
         unloaded_alert_ids = set(available_alert_ids) - set(loaded_alert_ids)
-
         if not unloaded_alert_ids:
-            return None
+            return False
 
         new_alerts = []
         for alert_id in unloaded_alert_ids:
-            alert_filepath = self.get_alert_filepath(fink_id, alert_id)
+            alert_filepath = self.get_alert_filepath(fink_id, alert_id, mkdir=False)
             with open(alert_filepath, "r") as f:
                 alert = json.load(f)
             new_alerts.append(alert)
 
         new_alerts_df = pd.DataFrame(new_alerts)
-
         if fink_data.lightcurve is None:
             updated_lc = new_alerts_df
         else:
             updated_lc = pd.concat([fink_data.lightcurve, new_alerts_df])
         fink_data.add_lightcurve(updated_lc)
-        return target
+        return True
 
     def load_cutouts_for_alert(self, fink_id: int, alert_id: int):
-        cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id)
+        cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
         if not cutouts_filepath.exists():
             return None
 
         with open(cutouts_filepath, "rb") as f:
             cutouts = pickle.load(f)
-
         return cutouts
 
 
@@ -127,7 +133,7 @@ def target_from_ztf_alert(processed_alert: dict, t_ref: Time = None):
     return Target(target_id, coord, source="fink_ztf", alt_ids=alt_ids, t_ref=t_ref)
 
 
-def process_ztf_lc(unprocessed_lc: pd.DataFrame) -> pd.DataFrame:
+def process_ztf_lightcurve(unprocessed_lc: pd.DataFrame) -> pd.DataFrame:
     lightcurve = unprocessed_lc.copy(deep=True)
 
     if lightcurve.empty:
@@ -136,6 +142,8 @@ def process_ztf_lc(unprocessed_lc: pd.DataFrame) -> pd.DataFrame:
     lightcurve.sort_values("jd", inplace=True, ignore_index=True)
     mjd = Time(lightcurve["jd"], format="jd").mjd
     lightcurve.insert(1, "mjd", mjd)
+    if "candid" not in lightcurve.columns:
+        lightcurve.loc[:, "candid"] = -1  # INTEGER!
     return lightcurve
 
 
@@ -144,7 +152,7 @@ def apply_ztf_updates_to_target(
 ):
     t_ref = t_ref or Time.now()
 
-    fink_id = processed_alert["fink_id"]
+    fink_id = processed_alert["objectId"]
     topic = processed_alert["topic"]
     candid = processed_alert["candid"]
     mag = processed_alert["magpsf"]
@@ -154,10 +162,10 @@ def apply_ztf_updates_to_target(
 
     msg = (
         f"New FINK-ZTF alert for {target.target_id} ({fink_id}) from {topic}!"
-        f"\n    mag={mag:.1f} in band {band} at {mjd} (alert_id={candid})"
+        f"\n    mag={mag:.1f} in band '{band}' at {t_str} (alert_id={candid})"
     )
     target.updated = True
-    target.update_messages.append(msg)
+    target.info_messages.append(msg)
     return
 
 
@@ -212,7 +220,7 @@ def process_ztf_alert(
             cutout = readstamp(cutout_data, return_type="array")
             cutouts[imtype.lower()] = cutout
         if len(cutouts) > 0:
-            with open(cutouts_filepath) as f:
+            with open(cutouts_filepath, "wb+") as f:
                 pickle.dump(cutouts, f)
     return alert
 

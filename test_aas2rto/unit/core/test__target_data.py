@@ -78,15 +78,15 @@ class Test__AddLightcurvePandas:
 
         assert isinstance(tdata.detections, pd.DataFrame)
         assert len(tdata.detections) == 6
-        assert np.isclose(tdata.detections["mjd"].iloc[0], 60004.0)
+        assert np.isclose(tdata.detections["mjd"].iloc[0] - 60000.0, 4.0)
 
         assert isinstance(tdata.badqual, pd.DataFrame)
         assert len(tdata.badqual) == 4
-        assert np.isclose(tdata.badqual["mjd"].iloc[0], 60002.0)
+        assert np.isclose(tdata.badqual["mjd"].iloc[0] - 60000.0, 2.0)
 
         assert isinstance(tdata.non_detections, pd.DataFrame)
         assert len(tdata.non_detections) == 4
-        assert np.isclose(tdata.non_detections["mjd"].iloc[0], 60000.0)
+        assert np.isclose(tdata.non_detections["mjd"].iloc[0] - 60000.0, 0.0)
 
     def test__det_with_badqual(self, tdata: TargetData, lc_pandas: pd.DataFrame):
         # Act
@@ -98,14 +98,14 @@ class Test__AddLightcurvePandas:
 
         assert isinstance(tdata.detections, pd.DataFrame)
         assert len(tdata.detections) == 10
-        assert np.isclose(tdata.detections["mjd"].iloc[0], 60002.0)
+        assert np.isclose(tdata.detections["mjd"].iloc[0] - 60000.0, 2.0)
 
         assert isinstance(tdata.badqual, pd.DataFrame)
         assert len(tdata.badqual) == 0
 
         assert isinstance(tdata.non_detections, pd.DataFrame)
         assert len(tdata.non_detections) == 4
-        assert np.isclose(tdata.non_detections["mjd"].iloc[0], 60000.0)
+        assert np.isclose(tdata.non_detections["mjd"].iloc[0] - 60000.0, 0.0)
 
     def test__new_tags(self, lc_pandas: pd.DataFrame):
         # Arrange
@@ -124,15 +124,15 @@ class Test__AddLightcurvePandas:
 
         assert isinstance(td.detections, pd.DataFrame)
         assert len(td.detections) == 6
-        assert np.isclose(td.detections["mjd"].iloc[0], 60004.0)
+        assert np.isclose(td.detections["mjd"].iloc[0] - 60000.0, 4.0)
 
         assert isinstance(td.badqual, pd.DataFrame)
         assert len(td.badqual) == 4
-        assert np.isclose(td.badqual["mjd"].iloc[0], 60002.0)
+        assert np.isclose(td.badqual["mjd"].iloc[0] - 60000.0, 2.0)
 
         assert isinstance(td.non_detections, pd.DataFrame)
         assert len(td.non_detections) == 4
-        assert np.isclose(td.non_detections["mjd"].iloc[0], 60000.0)
+        assert np.isclose(td.non_detections["mjd"].iloc[0] - 60000.0, 0.0)
 
     def test__unknown_tags_warns(self, tdata: TargetData, lc_pandas: pd.DataFrame):
         # Arrange
@@ -188,15 +188,15 @@ class Test__AddLightcurveAstropy:
 
         assert isinstance(tdata.detections, Table)
         assert len(tdata.detections) == 6
-        assert np.isclose(tdata.detections["mjd"][0], 60004.0)
+        assert np.isclose(tdata.detections["mjd"][0] - 60000.0, 4.0)
 
         assert isinstance(tdata.badqual, Table)
         assert len(tdata.badqual) == 4
-        assert np.isclose(tdata.badqual["mjd"][0], 60002.0)
+        assert np.isclose(tdata.badqual["mjd"][0] - 60000.0, 2.0)
 
         assert isinstance(tdata.non_detections, Table)
         assert len(tdata.non_detections) == 4
-        assert np.isclose(tdata.non_detections["mjd"][0], 60000.0)
+        assert np.isclose(tdata.non_detections["mjd"][0] - 60000.0, 0.0)
 
     def test__new_tags(self, lc_astropy: Table):
         # Arrange
@@ -215,15 +215,15 @@ class Test__AddLightcurveAstropy:
 
         assert isinstance(td.detections, Table)
         assert len(td.detections) == 6
-        assert np.isclose(td.detections["mjd"][0], 60004.0)
+        assert np.isclose(td.detections["mjd"][0] - 60000.0, 4.0)
 
         assert isinstance(td.badqual, Table)
         assert len(td.badqual) == 4
-        assert np.isclose(td.badqual["mjd"][0], 60002.0)
+        assert np.isclose(td.badqual["mjd"][0] - 60000.0, 2.0)
 
         assert isinstance(td.non_detections, Table)
         assert len(td.non_detections) == 4
-        assert np.isclose(td.non_detections["mjd"][0], 60000.0)
+        assert np.isclose(td.non_detections["mjd"][0] - 60000.0, 0.0)
 
     def test__setting_directly_warns(self, tdata: TargetData, lc_astropy: Table):
         # Act

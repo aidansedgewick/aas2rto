@@ -102,13 +102,13 @@ class Test__TargetInit:
         assert set(target.alt_ids.keys()) == set(["<unknown>"])
         assert target.alt_ids["<unknown>"] == "mock_target"
 
-        assert np.isclose(target.creation_time.mjd, 60000.0)
+        assert np.isclose(target.creation_time.mjd - 60000.0, 0.0)
 
         assert target.target_of_opportunity is False
         assert target.updated is False
         assert target.to_reject is False
 
-        assert isinstance(target.update_messages, list)
+        assert isinstance(target.info_messages, list)
         assert isinstance(target.sudo_messages, list)
 
     def test__init_with_source(self):
@@ -186,7 +186,7 @@ class Test__UpdateScoreHistMethods:
         assert isinstance(score_hist0, tuple)
         assert len(score_hist0) == 2
         assert np.isclose(score_hist0[0], 1.0)
-        assert np.isclose(score_hist0[1], 60000.0)
+        assert np.isclose(score_hist0[1] - 60000.0, 0.0)
 
     def test__update_obs_score_hist_observer(
         self, mock_target: Target, lasilla: Observer, t_ref: Time
@@ -206,7 +206,7 @@ class Test__UpdateScoreHistMethods:
         assert isinstance(score_hist0, tuple)
         assert len(score_hist0) == 2
         assert np.isclose(score_hist0[0], 1.0)
-        assert np.isclose(score_hist0[1], 60000.0)
+        assert np.isclose(score_hist0[1] - 60000.0, 0.0)
 
     def test__update_obs_score_history_str(
         self, mock_target: Target, lasilla: Observer, t_ref: Time
@@ -226,7 +226,7 @@ class Test__UpdateScoreHistMethods:
         assert isinstance(score_hist0, tuple)
         assert len(score_hist0) == 2
         assert np.isclose(score_hist0[0], 1.0)
-        assert np.isclose(score_hist0[1], 60000.0)
+        assert np.isclose(score_hist0[1] - 60000.0, 0.0)
 
 
 class Test__GetScoreHistMethods:
@@ -370,7 +370,7 @@ class Test__UpdateRankHistMethods:
         assert isinstance(rank_hist0, tuple)
         assert len(rank_hist0) == 2
         assert np.isclose(rank_hist0[0], 1)
-        assert np.isclose(rank_hist0[1], 60000.0)
+        assert np.isclose(rank_hist0[1] - 60000.0, 0.0)
 
     def test__update_obs_rank_hist_str(self, mock_target: Target, t_ref: Time):
         # Arrange
@@ -388,7 +388,7 @@ class Test__UpdateRankHistMethods:
         assert isinstance(rank_hist0, tuple)
         assert len(rank_hist0) == 2
         assert np.isclose(rank_hist0[0], 99)
-        assert np.isclose(rank_hist0[1], 60000.0)
+        assert np.isclose(rank_hist0[1] - 60000.0, 0.0)
 
     def test__update_obs_rank_history_observer(
         self, mock_target: Target, lasilla: Observer, t_ref: Time
@@ -405,7 +405,7 @@ class Test__UpdateRankHistMethods:
         assert isinstance(rank_hist0, tuple)
         assert len(rank_hist0) == 2
         assert np.isclose(rank_hist0[0], 1)
-        assert np.isclose(rank_hist0[1], 60000.0)
+        assert np.isclose(rank_hist0[1] - 60000.0, 0.0)
 
 
 class Test__GetRankHistMethods:
@@ -521,7 +521,7 @@ class Test__GetRankHistMethods:
 
         # Assert
         assert last_rank == 2
-        assert np.isclose(mjd, 60001.0)
+        assert np.isclose(mjd - 60000.0, 1.0)
 
     def test__get_last_rank_missing_obs_no_fail(self, mock_target_with_history: Target):
         # Arrange

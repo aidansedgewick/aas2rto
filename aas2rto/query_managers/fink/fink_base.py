@@ -82,14 +82,17 @@ def updates_from_classifier_queries(
     return pd.DataFrame(updated_rows)
 
 
-# re-inherit from abc.ABC to indicate that FBQM should be subclassed...
+# re-inherit from abc.ABC to indicate that FinkBaseQM should be subclassed...
 class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
-
     name: str = "fink"
     id_resolving_order: tuple[str] = None
     target_id_key: str = None
     alert_id_key: str = None
     fink_query: FinkBaseQuery = None
+
+    DEFAULT_TASKS = ("alerts", "queries", "lightcurves", "cutouts", "stale_files")
+    REQUIRED_KAFKA_PARAMS = ("username", "group.id", "bootstrap.servers", "topics")
+    required_directories = ("lightcurves", "cutouts", "alerts", "query_results")
 
     default_config = {
         "max_failed_queries": 10,
@@ -103,23 +106,22 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
         "query_interval": 1.0,
         "query_lookback": 20.0,
         "stale_file_age": 60.0,
+        "tasks": DEFAULT_TASKS,
     }
     config_comments = {
         "max_failed_queries": "Quit after how many failed queries?",
         "max_query_time": "Quit after how long spent making queries?",
         "lightcurve_update_interval": "How often [DAYS] to check for updated LCs?",
         "lightcurve_chunk_size": "How many LCs to query at once? [MAX=25]",
-        "kafka": "dict(username=<>, group.id=<>, bootstrap.servers=<>, topics=<>)",
+        "kafka": f"dict: must provide {REQUIRED_KAFKA_PARAMS}",
         "n_alerts": "How many alerts to listen for [PER KAFKA TOPIC] per loop?",
         "alert_timeout": "How long to listen for new alerts?",
         "fink_classes": "To query with 'latests' - try eg. FinkZTFQuery.classes()",
         "query_interval": "How long [DAYS] to wait until new 'latests' query?",
         "query_lookback": "How far back [DAYS] to query for",
         "stale_file_age": "How old [DAYS] should files be deleted?",
+        "tasks": f"which steps of {DEFAULT_TASKS}",
     }
-
-    required_directories = ("lightcurves", "cutouts", "alerts", "query_results")
-    required_kafka_params = ("username", "group.id", "bootstrap.servers", "topics")
 
     ##===== initialisation here =====##
 
@@ -131,7 +133,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
         self.config.update(fink_config)
 
         check_unexpected_config_keys(
-            self.config, self.default_config, name="fink_config", raise_exc=True
+            self.config, self.default_config, name=f"{self.name}_config", raise_exc=True
         )
         self.process_kafka_config()
 
@@ -151,7 +153,13 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             )
             raise NotImplementedError(msg)
 
-        self.fink_latests_query_results = {}
+        self.tasks = self.config.get("tasks")
+        check_unexpected_config_keys(
+            self.tasks,
+            self.DEFAULT_TASKS,
+            name=f"{self.name}.config.tasks",
+            raise_exc=True,
+        )
 
     def process_kafka_config(self):
         self.kafka_config = self.config.get("kafka", None)
@@ -161,7 +169,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
         else:
             missing_keys = check_missing_config_keys(
                 self.kafka_config,
-                self.required_kafka_params,
+                self.REQUIRED_KAFKA_PARAMS,
                 name="fink.kafka",
                 raise_exc=True,
                 exc_class=BadKafkaConfigError,
@@ -181,30 +189,36 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
 
     ##===== Path methods here =====##
 
-    def get_alert_directory(self, fink_id: str):
+    def get_alert_directory(self, fink_id: str, mkdir: bool = True):
         alert_dir = self.paths_lookup["alerts"] / fink_id
-        alert_dir.mkdir(exist_ok=True, parents=True)
+        if mkdir:
+            alert_dir.mkdir(exist_ok=True, parents=True)
         return alert_dir
 
-    def get_alert_filepath(self, fink_id: str, alert_id: int):
-        alert_dir = self.get_alert_directory(fink_id)
-        return alert_dir / f"{alert_id}.json"
+    def get_alert_filepath(
+        self, fink_id: str, alert_id: int, mkdir: bool = True, fmt="json"
+    ):
+        alert_dir = self.get_alert_directory(fink_id, mkdir=mkdir)
+        return alert_dir / f"{alert_id}.{fmt}"
 
-    def get_cutouts_directory(self, fink_id: str):
+    def get_cutouts_directory(self, fink_id: str, mkdir: bool = True):
         cutouts_dir = self.paths_lookup["cutouts"] / fink_id
-        cutouts_dir.mkdir(exist_ok=True, parents=True)
+        if mkdir:
+            cutouts_dir.mkdir(exist_ok=True, parents=True)
         return cutouts_dir
 
-    def get_cutouts_filepath(self, fink_id: str, alert_id: int):
-        cutouts_dir = self.get_cutouts_directory(fink_id)
-        return cutouts_dir / f"{alert_id}.json"
+    def get_cutouts_filepath(
+        self, fink_id: str, alert_id: int, mkdir: bool = True, fmt="pkl"
+    ):
+        cutouts_dir = self.get_cutouts_directory(fink_id, mkdir=mkdir)
+        return cutouts_dir / f"{alert_id}.{fmt}"
 
-    def get_lightcurve_filepath(self, fink_id: str):
-        return self.paths_lookup["lightcurves"] / f"{fink_id}.csv"
+    def get_lightcurve_filepath(self, fink_id: str, fmt="csv"):
+        return self.paths_lookup["lightcurves"] / f"{fink_id}.{fmt}"
 
-    def get_query_results_filepath(self, fink_class: str):
+    def get_query_results_filepath(self, fink_class: str, fmt="csv"):
         file_stem = fink_class.replace(" ", "_")
-        return self.paths_lookup["query_results"] / f"{file_stem}.csv"
+        return self.paths_lookup["query_results"] / f"{file_stem}.{fmt}"
 
     ##===== Methods for subclasses to define here =====##
 
@@ -221,8 +235,8 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
 
     def apply_updates_from_alert(self, processed_alert: dict):
         help_msg = (
-            f"Accept a processed alert (from your process_single_alert()) method,\n    "
-            f"which you can use to mark any targets as updated, and add messages\n    "
+            f"Accept a processed alert (from your process_single_alert() method),\n    "
+            f"which you can use to  mark any targets as updated, and add messages\n    "
             f"that will be sent out by eg. slack or telegram."
         )
         raise NotImplementedError(
@@ -230,10 +244,16 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             f"    not implemented for {self.name}:\n    {help_msg}"
         )
 
-    def add_target_from_record(self, query_row: pd.Series):
+    def add_target_from_alert(self, alert: dict, t_ref: Time = None) -> Target:
+        raise NotImplementedError(
+            f"add_target_from_alert(self, alert: dict, t_ref: Time)\n"
+            f"     not implemented for {self.name}"
+        )
+
+    def add_target_from_record(self, query_record: dict):
         help_msg = (
             f"Create new targets from dict - the result of a fink 'latests'\n    "
-            f"query, with whatever attributes it may have."
+            f"query, with whatever attributes this query result may have."
         )
         raise NotImplementedError(
             f"add_target_from_alert(self, alert: dict, t_ref: Time):\n"
@@ -317,13 +337,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
         logger.info(f"added {len(targets_added)} new targets")
         return targets_added
 
-    def add_target_from_alert(self, alert: dict, t_ref: Time = None) -> Target:
-        raise NotImplementedError(
-            f"add_target_from_alert(self, alert: dict, t_ref: Time)\n"
-            f"     not implemented for {self.name}"
-        )
-
-    def apply_update_messages(self, processed_alerts: list[dict], t_ref: Time = None):
+    def update_info_messages(self, processed_alerts: list[dict], t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
         for alert in processed_alerts:
@@ -366,6 +380,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
 
         results_list = []
         for fink_class in fink_classes:
+            ##== Decide if we need to make the query
             query_results_filepath = self.get_query_results_filepath(fink_class)
             file_age = calc_file_age(query_results_filepath, t_ref)
             if file_age < query_interval:
@@ -373,6 +388,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
                 continue
             logger.info(f"query 'latests' for class '{fink_class}'")
 
+            ##== Are there any existing results? Decides how far back we need to query
             if query_results_filepath.exists():
                 existing_results = pd.read_csv(query_results_filepath)
                 lookback = file_age
@@ -381,20 +397,22 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
                 existing_results = pd.DataFrame(columns=empty_df_keys)
                 lookback = self.config["query_lookback"]
 
+            ##== Perform the query
             t_start = t_ref - lookback * u.day
             new_results = self.fink_query.latests_query_and_collate(
                 t_start=t_start, class_=fink_class  # trailing "_" is stripped...
             )
             if len(new_results) == 0:
-                # Re-write the file so we don't re-query in 5 minutes!
                 existing_results.to_csv(query_results_filepath, index=False)
-                continue
+                continue  # write empty file anyway so we don't re-query in 5 minutes!
 
+            ##== Combine with any existing results
             if existing_results.empty:
                 combined_results = new_results
             else:
                 combined_results = pd.concat([existing_results, new_results])
 
+            ##== Only keep the latest row for each target in the combined df.
             key_cols = [self.target_id_key, "lastdate"]
             combined_results.sort_values(key_cols, inplace=True, ignore_index=True)
             combined_results.drop_duplicates(
@@ -402,6 +420,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             )
             combined_results.to_csv(query_results_filepath, index=False)
 
+            ##== Check what's different from the exisi
             classifier_updates = updates_from_classifier_queries(
                 existing_results, new_results, id_key=self.target_id_key
             )
@@ -507,6 +526,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
                 }
                 t1 = time.perf_counter()
                 result = self.fink_query.objects(**payload)
+                chunk_results.append(result)
                 t2 = time.perf_counter()
 
             except Exception as e:
@@ -535,7 +555,11 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
                 processed_lc.to_csv(lightcurve_filepath, index=False)
 
         if bulk_filepath is not None:
-            bulk_lc = pd.concat(chunk_results)
+            if len(chunk_results) > 0:
+                bulk_lc = pd.concat(chunk_results)
+            else:
+                cols = [self.target_id_key, self.alert_id_key, "mjd"]
+                bulk_lc = pd.DataFrame(columns=cols)
             bulk_lc.to_csv(bulk_filepath, index=False)
             logger.info(f"written bulk results to {bulk_filepath}")
 
@@ -550,8 +574,8 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             fink_id = self.get_fink_id_from_target(target)
             if fink_id is None:
                 continue
-            target = self.load_missing_alerts_for_target(fink_id)
-            if isinstance(target, Target):
+            alerts_loaded = self.load_missing_alerts_for_target(fink_id)
+            if alerts_loaded:
                 targets_modified.append(target_id)
         logger.info(f"loaded missing alerts for {len(targets_modified)} targets")
         return targets_modified
@@ -559,70 +583,80 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
     def load_cutouts(self):
         loaded_cutouts = []
         missing_cutouts = []
-        skipped = []
+        skipped_reload = []
         for target_id, target in self.target_lookup.items():
             fink_id = self.get_fink_id_from_target(target)
+            if fink_id is None:
+                continue
             fink_data = target.target_data.get(self.name, None)
             if fink_data is None:
                 continue
             if fink_data.detections is None:
                 continue
             if self.alert_id_key not in fink_data.detections:
-                msg = (
-                    f"{target_id}: for {self.name} "
-                    f"\033[33;1m'{self.alert_id_key}' not in fink_data.detections \033[0m"
-                )
+                highlight = f"'{self.alert_id_key}' not in {self.name}_data.lightcurve"
+                msg = f"{target_id}: for {self.name} \033[33;1m{highlight}\033[0m"
                 logger.warning(msg)
                 continue
 
-            current_cutouts_id = fink_data.meta.get("cutout_alert_id", -1)
-            # Step through alert_id from most recent to oldest.
-            for alert_id in fink_data.detections[self.alert_id_key].values[::-1]:
+            current_cutouts_id = fink_data.meta.get("cutouts_alert_id", -1)
+            for alert_id in fink_data.lightcurve[self.alert_id_key].values[::-1]:
+                # Step through alert_id from most recent to oldest.
                 if alert_id < 0:
                     continue
-                if current_cutouts_id == alert_id:
-                    skipped.append(target)
+                if alert_id == current_cutouts_id:
+                    skipped_reload.append(target_id)
                     break  # We've already loaded this one.
                 cutouts = self.load_cutouts_for_alert(fink_id, alert_id)
                 if cutouts is not None:
+                    fink_data.cutouts = cutouts
+                    fink_data.meta["cutouts_alert_id"] = alert_id
+                    loaded_cutouts.append(target_id)
                     break
+            else:
+                missing_cutouts.append(target_id)  # executed if no break statement met!
 
-            if cutouts is None:
-                missing_cutouts.append(fink_id)
-                continue
-            fink_data.cutouts = cutouts
-            fink_data.meta["cutouts_alert_id"] = alert_id
-            loaded_cutouts.append(target_id)
+        N_loaded = len(loaded_cutouts)
+        N_skipped = len(skipped_reload)
+        logger.info(f"loaded cutouts for {N_loaded} targets (skipped {N_skipped})")
+        if len(missing_cutouts) > 0:
+            logger.info(f"missing cutouts for {len(missing_cutouts)}!!")
+        return loaded_cutouts, missing_cutouts, skipped_reload
 
     def perform_all_tasks(self, iteration: int, t_ref: Time = None):
         # Are we in startup?
         if iteration == 0:
-            # If yes, we don't want to do anything other than load the alerts.
+            # If yes, we don't want to do anything other than load existing data.
             self.load_target_lightcurves()
             self.integrate_alerts()
             self.load_cutouts()
             return
 
         # Are there any new alerts?
-        processed_alerts = self.listen_for_alerts()
-        self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
-        self.apply_update_messages(processed_alerts, t_ref=t_ref)
+        if "alerts" in self.tasks:
+            processed_alerts = self.listen_for_alerts()
+            self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
+            self.update_info_messages(processed_alerts, t_ref=t_ref)
 
         # Any targets flagged as interesting *not* from alerts.
-        updated_query_records = self.fink_classifier_queries()
-        self.new_targets_from_query_records(updated_query_records)
+        if "queries" in self.tasks:
+            updated_query_records = self.fink_classifier_queries()
+            self.new_targets_from_query_records(updated_query_records)
 
         # Who needs a lightcurve updating?
-        success, missing, failed = self.query_lightcurves()
-
-        # Load all the lightcurves
-        self.load_target_lightcurves()  # This is defined in BaseQueryManager!
+        if "lightcurves" in self.tasks:
+            success, missing, failed = self.query_lightcurves()
+            self.load_target_lightcurves()  # This is defined in BaseQueryManager!
 
         # Are there any fresh alerts not included in the lightcurves?
-        self.integrate_alerts()
+        if "alerts" in self.tasks:
+            self.integrate_alerts()
 
         # Load any cutouts
-        self.load_cutouts()
+
+        if "cutouts" in self.tasks:
+            self.load_cutouts()
 
         # Clear stale files
         self.clear_stale_files(self.config["stale_file_age"])
+        return

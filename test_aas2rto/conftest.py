@@ -82,7 +82,7 @@ def missing_id():
 
 @pytest.fixture
 def ulim_rows(missing_id: int, t_fixed: Time):
-    # obsid mjd mag magerr maglim filt tag
+    # obs_id mjd mag magerr maglim filt tag
     return [
         [missing_id, t_fixed.mjd + 0.0, np.nan, np.nan, 22.0, 1, "ulim"],
         [missing_id, t_fixed.mjd + 0.1, np.nan, np.nan, 21.8, 2, "ulim"],
@@ -104,7 +104,7 @@ def badqual_rows(missing_id: int, t_fixed: Time):
 @pytest.fixture
 def det_rows(t_fixed: Time, id0: int):
     return [
-        [id0 + 1, t_fixed.mjd + 4.1, 21.0, 0.05, 21.8, 2, "valid"],
+        [id0 + 1, t_fixed.mjd + 4.1, 21.0, 0.05, 21.8, 2, "valid"],  # note wrong order!
         [id0 + 0, t_fixed.mjd + 4.0, 21.0, 0.08, 22.0, 1, "valid"],
         [id0 + 2, t_fixed.mjd + 5.0, 20.0, 0.08, 22.0, 1, "valid"],
         [id0 + 3, t_fixed.mjd + 5.1, 20.0, 0.05, 21.8, 2, "valid"],
@@ -120,7 +120,7 @@ def lc_rows(ulim_rows: list, badqual_rows: list, det_rows: list):
 
 @pytest.fixture
 def lc_col_names():
-    return "obsid mjd mag magerr diffmaglim band tag".split()
+    return "obs_id mjd mag magerr diffmaglim band tag".split()
 
 
 @pytest.fixture
@@ -245,7 +245,7 @@ def lc_compiler():
 @pytest.fixture
 def lc_ztf(lc_pandas: pd.DataFrame):
     col_mapping = {
-        "obsid": "candid",
+        "obs_id": "candid",
         "mag": "magpsf",
         "magerr": "sigmapsf",
         "band": "fid",

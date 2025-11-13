@@ -71,7 +71,7 @@ class Test__MessagingTasks:
         # Arrange
         msg_mgr.target_lookup["T00"].update_science_score_history(1.0, t_fixed)
         msg_mgr.target_lookup["T00"].updated = True
-        msg_mgr.target_lookup["T00"].update_messages.append("here's a message!")
+        msg_mgr.target_lookup["T00"].info_messages.append("here's a message!")
 
         # Act
         sent, skipped, no_updates = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
@@ -98,7 +98,7 @@ class Test__MessagingTasks:
         # Arrange
         # DON'T update score.
         msg_mgr.target_lookup["T00"].updated = True
-        msg_mgr.target_lookup["T00"].update_messages.append("here's a message!")
+        msg_mgr.target_lookup["T00"].info_messages.append("here's a message!")
 
         # Act
         sent, skipped, no_updates = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
@@ -112,7 +112,7 @@ class Test__MessagingTasks:
         # Arrange
         msg_mgr.target_lookup["T00"].update_science_score_history(-1.0, t_fixed)
         msg_mgr.target_lookup["T00"].updated = True
-        msg_mgr.target_lookup["T00"].update_messages.append("here's a message!")
+        msg_mgr.target_lookup["T00"].info_messages.append("here's a message!")
 
         # Act
         sent, skipped, no_updates = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)

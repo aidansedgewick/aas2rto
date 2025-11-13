@@ -132,7 +132,7 @@ class Target:
         self.updated = False
         self.to_reject = False
         self.send_updates = False
-        self.update_messages = []
+        self.info_messages = []
         self.sudo_messages = []
 
     # def update_coordinates(self, ra: float, dec: float):

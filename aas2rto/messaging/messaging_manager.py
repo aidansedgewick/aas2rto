@@ -92,7 +92,7 @@ class MessagingManager:
                 skipped.append(target_id)
                 continue
 
-            if len(target.update_messages) == 0:
+            if len(target.info_messages) == 0:
                 logger.debug(f"no messages")
                 no_updates.append(target_id)
                 continue
@@ -108,7 +108,7 @@ class MessagingManager:
                 logger.debug(f"last score: {last_score} < {minimum_score}; skip")
                 continue
 
-            messages = [target.get_info_string()] + target.update_messages
+            messages = [target.get_info_string()] + target.info_messages
             message_text = "\n".join(msg for msg in messages)
 
             lc_fig_path = target.lc_fig_path
