@@ -8,7 +8,7 @@ from astropy.time import Time
 
 from aas2rto.exc import MissingCoordinatesError
 from aas2rto.query_managers.fink.fink_base import FinkBaseQueryManager
-from aas2rto.query_managers.fink.fink_queries import FinkLSSTQuery
+from aas2rto.query_managers.fink.fink_query import FinkLSSTQuery
 from aas2rto.target import Target
 
 

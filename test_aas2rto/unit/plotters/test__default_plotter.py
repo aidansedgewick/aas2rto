@@ -26,6 +26,18 @@ def lc_plotter(t_plot: Time):
     return DefaultLightcurvePlotter(t_ref=t_plot)
 
 
+@pytest.fixture(autouse=True)
+def close_all_plots():
+    # Arrange
+    pass  # Code BEFORE yield in fixture is setup. No setup here...
+
+    # Act
+    yield  # Test is run here
+
+    # Cleanup
+    plt.close("all")  # Code AFTER yield in fixture is cleanup/teardown
+
+
 class Test__PlotterInit:
     def test__plotter_init(self, t_plot: Time):
         # Act
@@ -65,7 +77,7 @@ class Test__PlotPhotomMethod:
         assert lc_plotter.photometry_plotted
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
     def test__no_lc_no_fail(
         self, lc_plotter: DefaultLightcurvePlotter, basic_target: Target
@@ -78,7 +90,7 @@ class Test__PlotPhotomMethod:
         assert not lc_plotter.photometry_plotted
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
     def test__no_band_col(
         self, lc_plotter: DefaultLightcurvePlotter, target_to_plot: Target
@@ -94,7 +106,7 @@ class Test__PlotPhotomMethod:
         assert lc_plotter.photometry_plotted
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
     def test__no_tag_no_fail(
         self, lc_plotter: DefaultLightcurvePlotter, target_to_plot: Target
@@ -110,7 +122,7 @@ class Test__PlotPhotomMethod:
         assert lc_plotter.photometry_plotted
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
     def test__bad_tag_no_fail(
         self, lc_plotter: DefaultLightcurvePlotter, target_to_plot: Target
@@ -126,7 +138,7 @@ class Test__PlotPhotomMethod:
         lc_plotter.photometry_plotted = True
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
 
 class Test__CutoutsMethod:
@@ -140,7 +152,7 @@ class Test__CutoutsMethod:
         assert lc_plotter.cutouts_added
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
     def test__no_cutouts_no_fail(
         self, lc_plotter: DefaultLightcurvePlotter, target_to_plot: Target
@@ -155,7 +167,7 @@ class Test__CutoutsMethod:
         assert not lc_plotter.cutouts_added
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
     def test__cutouts_bad_keys_no_fail(
         self, lc_plotter: DefaultLightcurvePlotter, target_to_plot: Target
@@ -170,7 +182,7 @@ class Test__CutoutsMethod:
         assert not lc_plotter.cutouts_added
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
 
 class Test__CommentsMethod:
@@ -185,7 +197,7 @@ class Test__CommentsMethod:
         assert lc_plotter.comments_added
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
     def test__no_comms_no_fail(
         self, lc_plotter: DefaultLightcurvePlotter, target_to_plot: Target
@@ -201,7 +213,7 @@ class Test__CommentsMethod:
         assert not lc_plotter.comments_added
 
         # Cleanup
-        plt.close(lc_plotter.fig)
+        # plt.close(lc_plotter.fig)
 
 
 class Test__PlotMethod:

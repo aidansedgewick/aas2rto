@@ -12,7 +12,12 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto.exc import UnexpectedKeysWarning, MissingKeysWarning
+from aas2rto.exc import (
+    MissingKeysError,
+    MissingKeysWarning,
+    UnexpectedKeysError,
+    UnexpectedKeysWarning,
+)
 
 logger = getLogger("aas2rto_utils")
 
@@ -116,7 +121,7 @@ def check_unexpected_config_keys(
     name: str = None,
     warn=True,
     raise_exc=False,
-    exc_class=UnexpectedKeysWarning,
+    exc_class=UnexpectedKeysError,
 ) -> list:
     if isinstance(provided, dict):
         provided = provided.keys()
@@ -146,7 +151,7 @@ def check_missing_config_keys(
     name: str = None,
     warn=True,
     raise_exc=False,
-    exc_class=MissingKeysWarning,
+    exc_class=MissingKeysError,
 ) -> list:
 
     if isinstance(provided, dict):

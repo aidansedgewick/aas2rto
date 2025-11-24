@@ -17,14 +17,14 @@ from astropy.time import Time
 
 from fink_client.consumer import AlertConsumer
 
-from aas2rto.exc import UnexpectedKeysWarning
+from aas2rto.exc import UnexpectedKeysError, UnexpectedKeysWarning
 from aas2rto.query_managers.fink.fink_base import (
     FinkAlert,
     FinkBaseQueryManager,
     BadKafkaConfigError,
     updates_from_classifier_queries,
 )
-from aas2rto.query_managers.fink.fink_queries import FinkBaseQuery
+from aas2rto.query_managers.fink.fink_query import FinkBaseQuery
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
@@ -125,7 +125,7 @@ class FinkBadQM(FinkBaseQueryManager):
 
 
 @pytest.fixture
-def alert_base():
+def alert_base() -> dict:
     return {
         "target_id": "T101",
         "candidate": {"ra": 60.0, "dec": -45.0},
@@ -158,7 +158,7 @@ def mock_alert_stream(mock_alert_list: list[FinkAlert]) -> AlertStream:
 
 
 @pytest.fixture
-def lc_fink(lc_pandas: pd.DataFrame):
+def lc_fink(lc_pandas: pd.DataFrame) -> pd.DataFrame:
     lc = lc_pandas.copy()
     lc["jd"] = Time(lc["mjd"], format="mjd").jd
     lc.drop("mjd", axis=1, inplace=True)
@@ -168,12 +168,12 @@ def lc_fink(lc_pandas: pd.DataFrame):
 
 
 @pytest.fixture
-def empty_classifier_results():
+def empty_classifier_results() -> pd.DataFrame:
     return pd.DataFrame(columns="target_id obs_id lastdate".split())
 
 
 @pytest.fixture
-def mock_existing_classifier_results():
+def mock_existing_classifier_results() -> pd.DataFrame:
     date = "2025-02-25 12:00:00.000"
     rows = [
         ("T202", 240.0, 0.0, 202_1, date),
@@ -183,7 +183,7 @@ def mock_existing_classifier_results():
 
 
 @pytest.fixture
-def mock_new_classifier_results():
+def mock_new_classifier_results() -> pd.DataFrame:
     old_date = "2025-02-25 12:00:00.000"
     new_date = "2025-02-26 12:00:00.000"
     rows = [
@@ -438,7 +438,7 @@ class Test__FinkBaseQMInit:
         fink_config["blah"] = 100.0
 
         # Act
-        with pytest.raises(UnexpectedKeysWarning):
+        with pytest.raises(UnexpectedKeysError):
             qm = FinkBaseQueryManager(fink_config, tlookup, parent_path=tmp_path)
 
 

@@ -64,6 +64,17 @@ def lc_plotter(t_plot: Time):
     return SncosmoLightcurvePlotter(t_ref=t_plot)
 
 
+@pytest.fixture(autouse=True)
+def close_all_plots():
+    # Arrange
+    pass  # Code BEFORE yield in fixture is setup. No setup here...
+
+    yield  # Test is run here
+
+    # Cleanup
+    plt.close("all")  # Clean-up runs after each test
+
+
 class Test__SampleQuartilesHelper:
     def test__get_samples(self, salt_model_with_samples: sncosmo.Model):
         # Arrange
@@ -113,9 +124,6 @@ class Test__PlotterInit:
         assert not plotter.models_plotted
         assert not plotter.samples_plotted
 
-        # Cleanup
-        plt.close(plotter.fig)
-
 
 class Test__PlotModel:
     def test__plot_model(
@@ -128,9 +136,6 @@ class Test__PlotModel:
         assert not lc_plotter.photometry_plotted
         assert lc_plotter.models_plotted
         assert not lc_plotter.samples_plotted
-
-        # Cleanup
-        plt.close(lc_plotter.fig)
 
     def test__no_model_no_fail(
         self, target_to_plot: Target, lc_plotter: SncosmoLightcurvePlotter
@@ -146,9 +151,6 @@ class Test__PlotModel:
         assert not lc_plotter.models_plotted
         assert not lc_plotter.samples_plotted
 
-        # Cleanup
-        plt.close(lc_plotter.fig)
-
     def test__no_lc_no_fail(
         self, target_with_models: Target, lc_plotter: SncosmoLightcurvePlotter
     ):
@@ -161,9 +163,6 @@ class Test__PlotModel:
         # Assert
         assert not lc_plotter.models_plotted
 
-        # Cleanup
-        plt.close(lc_plotter.fig)
-
 
 class Test__PlotWithSamples:
     def test__plot_with_samples(
@@ -175,9 +174,6 @@ class Test__PlotWithSamples:
         # Assert
         assert lc_plotter.models_plotted
         assert lc_plotter.samples_plotted
-
-        # Cleanup
-        plt.close(lc_plotter.fig)
 
 
 class Test__PlotMethod:
@@ -192,9 +188,6 @@ class Test__PlotMethod:
         assert plotter.comments_added
         assert plotter.models_plotted
         assert plotter.samples_plotted
-
-        # Cleanup
-        plt.close(plotter.fig)
 
 
 class Test__PlotFunc:
@@ -214,15 +207,9 @@ class Test__PlotFunc:
         assert plotter.models_plotted
         assert plotter.samples_plotted
 
-        # Cleanup
-        plt.close(plotter.fig)
-
     def test__figure(self, target_with_samples: Target, t_plot: Time):
         # Act
         result = plot_sncosmo_lightcurve(target_with_samples, t_ref=t_plot)
 
         # Assert
         assert isinstance(result, plt.Figure)
-
-        # Cleanup
-        plt.close(result)

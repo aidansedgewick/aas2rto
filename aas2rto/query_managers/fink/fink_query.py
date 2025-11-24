@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from astropy import units as u
-from astropy.table import Table
+from astropy.table import Table, vstack
 from astropy.time import Time
 
 logger = getLogger(__name__.split(".")[-1])
@@ -51,22 +51,23 @@ class FinkBaseQuery(abc.ABC):
         # NO RETURN - dictionary is modified "in place"...
 
     @classmethod
-    def process_data(cls, data, fix_keys=True, return_type=None, df_kwargs=None):
+    def process_data(cls, data, fix_keys=True, return_type="records", df_kwargs=None):
         if fix_keys:
             for row in data:
+                print(row)
                 cls.fix_dict_keys_inplace(row)
-        if return_type is None:
+        if return_type == "records":
             return data
         elif return_type == "pandas":
             return pd.DataFrame(data)
         elif return_type == "astropy":
             return Table(rows=data)
         else:
-            msg = (
-                f"Unknown return_type='{return_type}'.\n    "
-                "Choose None, 'pandas', or 'astropy'"
+            return_type_err_msg = (
+                f"Unknown return_type='\033[33;1m{return_type}\033[0m'. Choose from:\n    "
+                "'pandas', 'astropy', 'records'"
             )
-            raise ValueError(msg)
+            raise ValueError(return_type_err_msg)
 
     @staticmethod
     def process_kwargs(**kwargs):
@@ -89,7 +90,10 @@ class FinkBaseQuery(abc.ABC):
                 raise FinkQueryError(response.content.decode())
             else:
                 raise FinkQueryError(response.content)
+        print(response.content)
         data = json.loads(response.content)
+        print(type(data))
+        print(data)
         return cls.process_data(data, fix_keys=fix_keys, return_type=return_type)
 
     @classmethod
@@ -177,11 +181,19 @@ class FinkBaseQuery(abc.ABC):
                 logger.warning(msg)
             if len(result) > 0:
                 results.append(result)
-        if return_df:
+        if return_type is None:
+            return sum(results)  # sum([[1], [2,3]]) == [1,2,3]
+        elif return_type == "pandas":
             if len(results) > 0:
                 return pd.concat(results)
             return pd.DataFrame(columns=[cls.id_key])
-        return results
+        elif return_type == "astropy":
+            if len(results) > 0:
+                return vstack(results)
+            return Table(names=[cls.id_key])
+        else:
+            msg = f"Unknown return_type='{return_type}': Use None, 'pandas', 'astropy'"
+            raise ValueError(msg)
 
     @classmethod
     def classes(cls, fix_keys=True, process=True, return_type=None, **kwargs):

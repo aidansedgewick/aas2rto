@@ -1,3 +1,4 @@
+import copy
 import pytest
 from pathlib import Path
 from typing import Dict, List
@@ -25,6 +26,29 @@ from aas2rto.scoring.scoring_manager import ScoringManager
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
+
+
+def remove_empty_filetree(dirpath: Path, depth=0, max_depth=6):
+    if depth > max_depth:
+        return
+    for filepath in dirpath.iterdir():
+        if filepath.is_dir():
+            remove_empty_filetree(filepath, depth=depth + 1, max_depth=max_depth)
+    dirpath_is_empty = not list(dirpath.iterdir())
+    if dirpath_is_empty:
+        dirpath.rmdir()
+
+
+@pytest.fixture()  # do NOT auto use. Sometimes we want to check the empty dirs exist.
+def remove_tmp_dirs(tmp_path: Path):
+    # Arrange
+    pass  # Code BEFORE yield in fixture is setup. No setup here...
+
+    # Act
+    yield  # Test is run here.
+
+    # Cleanup
+    remove_empty_filetree(tmp_path)  # Code AFTER yield in fixture is cleanup/teardown
 
 
 @pytest.fixture(scope="session")
@@ -472,3 +496,37 @@ def msg_mgr(
     mgr.slack_messenger = slack_msgr
     mgr.telegram_messenger = telegram_msgr
     return mgr
+
+
+@pytest.fixture
+def fink_kafka_config():
+    return {
+        "username": "user",
+        "group.id": 1234,
+        "bootstrap.servers": "http://fink.blah.org",
+        "topics": ["cool_sne"],
+    }
+
+
+@pytest.fixture
+def fink_config(fink_kafka_config: dict):
+    return {"kafka": fink_kafka_config, "fink_classes": "cool_sne"}
+
+
+@pytest.fixture
+def atlas_credentials():
+    return {"token": 1234}
+
+
+@pytest.fixture
+def atlas_config(atlas_credentials: dict):
+    return {"credentials": atlas_credentials, "project_identifier": "test"}
+
+
+@pytest.fixture
+def global_qm_config(fink_config: dict, atlas_config: dict):
+    return {
+        "fink_lsst": copy.deepcopy(fink_config),
+        "fink_ztf": copy.deepcopy(fink_config),
+        "atlas": copy.deepcopy(atlas_config),
+    }

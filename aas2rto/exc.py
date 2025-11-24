@@ -9,6 +9,10 @@ class MissingDateError(Exception):
     pass
 
 
+class MissingKeysError(Exception):
+    pass
+
+
 class MissingRequiredConfigKeyError(Exception):
     pass
 
@@ -18,6 +22,10 @@ class MissingTargetIdError(Exception):
 
 
 class NotATargetError(Exception):
+    pass
+
+
+class UnexpectedKeysError(Exception):
     pass
 
 

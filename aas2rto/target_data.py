@@ -22,6 +22,13 @@ class TargetData:
 
     date_columns = ("jd", "mjd", "JD", "MJD")
 
+    setting_lc_msg = (
+        "\nYou should use the `target_data.add_lightcurve(lc, tag_col=<tag>)` method."
+        "\nIf the column `tag` is avalable, this will correctly set  extra attributes:"
+        "    `target_data.detections`, `target_data.badqual` and `target_data.non_detections`"
+        "\nYou can choose to include badqual in `detections` with `include_badqual=True`"
+    )
+
     def __init__(
         self,
         lightcurve: pd.DataFrame = None,
@@ -59,13 +66,7 @@ class TargetData:
 
     def __setattr__(self, name, value):
         if name == "lightcurve":
-            msg = (
-                "\nYou should use the `target_data.add_lightcurve(lc, tag_col=<tag>)` method."
-                "\nIf the column `tag` is avalable, this will correctly set the attributes:"
-                "    `target_data.detections`, `target_data.badqual` and `target_data.non_detections`"
-                "\nYou can choose to include badqual "
-            )
-            warnings.warn(SettingLightcurveDirectlyWarning(msg))
+            warnings.warn(SettingLightcurveDirectlyWarning(self.setting_lc_msg))
         super().__setattr__(name, value)
 
     def add_lightcurve(
@@ -75,7 +76,16 @@ class TargetData:
         date_col=None,
         include_badqual=False,
     ):
-        """Does NOT mark a target as updated."""
+        """
+        Set the attribute `lightcurve`, and if `tag_col` is present, also add
+        attributes `detections`, `badqual` and `non_detections`.
+
+        Does NOT mark a target as updated.
+        Parameters
+        ----------
+        lightcurve : `pd.DataFrame` | `astropy.table.Table`
+
+        """
 
         lightcurve = lightcurve.copy()
 
@@ -124,6 +134,11 @@ class TargetData:
         return
 
     def remove_lightcurve(self):
+        """
+        Set all attributes `lightcurve`, `detections`, `badqual`, `nondetections`
+        to `None`.
+        """
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=SettingLightcurveDirectlyWarning)
             # Here we're allowed

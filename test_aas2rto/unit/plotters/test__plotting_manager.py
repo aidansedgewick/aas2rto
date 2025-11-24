@@ -32,6 +32,17 @@ def mod_tl(tlookup: TargetLookup, t_fixed: Time):
     return tlookup
 
 
+@pytest.fixture(autouse=True)
+def close_all_plots():
+    # Arrange
+    pass  # Code BEFORE yield in fixture is setup. No setup here...
+
+    yield  # Test is run here
+
+    # Cleanup
+    plt.close("all")  # Code AFTER yield in fixture is cleanup/teardown
+
+
 # ===== define some test plotters here ===== #
 
 

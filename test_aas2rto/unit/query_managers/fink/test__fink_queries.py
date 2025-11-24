@@ -3,7 +3,9 @@ import pytest
 
 import pandas as pd
 
-from aas2rto.query_managers.fink.fink_queries import (
+from astropy.table import Table
+
+from aas2rto.query_managers.fink.fink_query import (
     FinkBaseQuery,
     FinkLSSTQuery,
     FinkZTFQuery,
@@ -106,9 +108,6 @@ class Test__ExampleFinkQuery:
 
 ##====== Actual tests start here! =====###
 
-# class Test__BadQuery:
-#    def test__
-
 
 class Test__QueriesInit:
     def test__ztf_query_init(self):
@@ -146,7 +145,7 @@ class Test__HelperFunctions:
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
 
         # Act
-        processed_data = FinkCoolQuery.process_data(data, return_df=False)
+        processed_data = FinkCoolQuery.process_data(data, return_type="records")
 
         # Assert
         assert isinstance(processed_data, list)
@@ -170,22 +169,24 @@ class Test__HelperFunctions:
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
 
         # Act
-        df = FinkCoolQuery.process_data(data, return_type="astropy")
+        table = FinkCoolQuery.process_data(data, return_type="astropy")
 
         # Assert
-        assert isinstance(df, pd.DataFrame)
-        assert len(df) == 2
+        assert isinstance(table, Table)
+        assert len(table) == 2
 
     def test__process_response(self):
         # Arrange
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
-        res = MockPostResponse(json=dict(content=json_tools.dumps(data)))
+        res = MockPostResponse(json=dict(content=data))  # json.dumps INSIDE __init__
 
         # Act
-        df = FinkCoolQuery.process_response(res, process=True, return_df=True)
+        processed = FinkCoolQuery.process_response(res, return_type="records")
 
         # Assert
-        assert isinstance(df, pd.DataFrame)
+        assert isinstance(processed, list)
+        assert isinstance(processed[0], dict)
+        assert set(processed[0].keys()) == set("key01 key02".split())
 
 
 class Test__BasicServices:
@@ -231,6 +232,14 @@ class Test__BasicServices:
         assert isinstance(res, MockGetResponse)
         assert res.args[0].split("/")[-1] == "classes"
 
+    def test_explorer(self):
+        # Act
+        res = FinkCoolQuery.explorer(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "explorer"
+
     def test_conesearch(self):
         # Act
         res = FinkCoolQuery.conesearch(process=False)
@@ -238,6 +247,14 @@ class Test__BasicServices:
         # Assert
         assert isinstance(res, MockPostResponse)
         assert res.args[0].split("/")[-1] == "conesearch"
+
+    def test_sso(self):
+        # Act
+        res = FinkCoolQuery.sso(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "sso"
 
     def test__ssocand(self):
         # Act
@@ -295,10 +312,10 @@ class Test__BasicServices:
         assert isinstance(res, MockPostResponse)
         assert res.args[0].split("/")[-1] == "anomaly"
 
-    def test__statistics(self):
+    def test__ssoft(self):
         # Act
-        res = FinkCoolQuery.anomaly(process=False)
+        res = FinkCoolQuery.ssoft(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
-        assert res.args[0].split("/")[-1] == "anomaly"
+        assert res.args[0].split("/")[-1] == "ssoft"

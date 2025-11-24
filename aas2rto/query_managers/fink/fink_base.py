@@ -20,7 +20,7 @@ from astropy.time import Time
 
 from aas2rto.exc import MissingCoordinatesError, MissingTargetIdError
 from aas2rto.query_managers.base import BaseQueryManager
-from aas2rto.query_managers.fink.fink_queries import FinkBaseQuery
+from aas2rto.query_managers.fink.fink_query import FinkBaseQuery
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.utils import (

@@ -17,7 +17,7 @@ from astropy.time import Time
 
 from aas2rto.exc import MissingCoordinatesError
 from aas2rto.query_managers.fink.fink_base import FinkBaseQueryManager, FinkAlert
-from aas2rto.query_managers.fink.fink_queries import FinkZTFQuery
+from aas2rto.query_managers.fink.fink_query import FinkZTFQuery
 from aas2rto.target import Target
 from aas2rto.utils import check_missing_config_keys
 

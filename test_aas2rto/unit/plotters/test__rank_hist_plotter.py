@@ -29,6 +29,18 @@ def mod_tl(tlookup: TargetLookup, t_fixed: Time):
     return tlookup
 
 
+@pytest.fixture(autouse=True)
+def close_all_plots():
+    # Arrange
+    pass  # Code BEFORE yield in fixture is setup. No setup here...
+
+    # Act
+    yield  # Test is run here
+
+    # Cleanup
+    plt.close("all")  # Code AFTER yield in fixture is cleanup/teardown
+
+
 class Test__PlotterInit:
 
     def test__plotter_init(self):
@@ -44,9 +56,6 @@ class Test__PlotterInit:
         assert len(plotter.targets_skipped) == 0
         assert not plotter.axes_formatted
 
-        # Cleanup
-        plt.close(plotter.fig)
-
 
 class Test__PlotRanksMethod:
     def test__plot_ranks(self, mod_tl: TargetLookup, t_fixed: Time):
@@ -57,9 +66,6 @@ class Test__PlotRanksMethod:
         t_plotted, t_skipped = plotter.plot_ranks(mod_tl, t_ref=t_fixed)
         assert set(t_plotted) == set(["T00", "T01"])
         assert set(t_skipped) == set()
-
-        # Cleanup
-        plt.close(plotter.fig)
 
     def test__plot_if_prev_high_rank(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange
@@ -72,9 +78,6 @@ class Test__PlotRanksMethod:
         assert set(t_plotted) == set(["T00", "T01"])
         assert set(t_skipped) == set()
 
-        # Cleanup
-        plt.close(plotter.fig)
-
     def test__plot_high_rank_recent_only(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange
         plotter = RankHistoryPlotter(minimum_rank=5, lookback=1.5)
@@ -85,9 +88,6 @@ class Test__PlotRanksMethod:
         # Assert
         assert set(t_plotted) == set(["T00"])
         assert set(t_skipped) == set(["T01"])
-
-        # Cleanup
-        plt.close(plotter.fig)
 
     def test__no_fail_no_rank_hist(self, tlookup: TargetLookup, t_fixed: Time):
         # Arrange
@@ -100,9 +100,6 @@ class Test__PlotRanksMethod:
         # Assert]
         assert set(t_plotted) == set()
         assert set(t_skipped) == set(["T00", "T01"])
-
-        # Cleanup
-        plt.close(plotter.fig)
 
     def test__plot_ranks_at_obs(
         self, mod_tl: TargetLookup, lasilla: Observer, t_fixed: Time
@@ -120,9 +117,6 @@ class Test__PlotRanksMethod:
         assert set(t_plotted) == set(["T00"])
         assert set(t_skipped) == set(["T01"])
 
-        # Cleanup
-        plt.close(plotter.fig)
-
     def test__plot_ranks_obs_name(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange()
         plotter = RankHistoryPlotter()
@@ -137,9 +131,6 @@ class Test__PlotRanksMethod:
         assert set(t_plotted) == set(["T00"])
         assert set(t_skipped) == set(["T01"])
 
-        # Cleanup
-        plt.close(plotter.fig)
-
 
 class Test__FormatAxesMethod:
     def test__fmt_axes_no_fail(self, mod_tl: TargetLookup, t_fixed: Time):
@@ -150,9 +141,6 @@ class Test__FormatAxesMethod:
         # Act
         plotter.format_axes()
 
-        # Cleanup
-        plt.close(plotter.fig)
-
     def test__fmt_axes_many_days(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange
         plotter = RankHistoryPlotter(lookback=23)
@@ -161,9 +149,6 @@ class Test__FormatAxesMethod:
         # Act
         plotter.format_axes()
 
-        # Cleanup
-        plt.close(plotter.fig)
-
     def test__fmt_axes_few_days(self, mod_tl: TargetLookup, t_fixed: Time):
         # Arrange
         plotter = RankHistoryPlotter(lookback=3)
@@ -171,9 +156,6 @@ class Test__FormatAxesMethod:
 
         # Act
         plotter.format_axes()
-
-        # Cleanup
-        plt.close(plotter.fig)
 
 
 class Test__PlotClassMethod:
@@ -185,9 +167,6 @@ class Test__PlotClassMethod:
         assert set(plotter.targets_plotted) == set(["T00", "T01"])
         assert plotter.axes_formatted
 
-        # Cleanup
-        plt.close(plotter.fig)
-
 
 class Test__PlotFunc:
     def test__rank_hist_func(self, mod_tl: TargetLookup, t_fixed: Time):
@@ -196,6 +175,3 @@ class Test__PlotFunc:
 
         # Assert
         assert isinstance(fig, plt.Figure)
-
-        # Cleanup
-        plt.close(fig)

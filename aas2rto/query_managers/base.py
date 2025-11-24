@@ -173,8 +173,9 @@ class BaseQueryManager(abc.ABC):
             except Exception as e:
                 pass
 
-            # get eg. target.target_data["fink_ztf"], target.target_data["yse"], ...
             qm_data = target.get_target_data(self.name)
+            # get eg. target.target_data["fink_ztf"], target.target_data["yse"], ...
+
             existing_lightcurve = qm_data.lightcurve
             if existing_lightcurve is not None:
                 if len(lightcurve) <= len(existing_lightcurve):
@@ -217,7 +218,8 @@ class BaseQueryManager(abc.ABC):
             N_dirs, N_files = utils.clear_stale_files(
                 top_level_dir, t_ref=t_ref, stale_age=stale_age, max_depth=max_depth
             )
-            logger.info(
-                f"{dir_name}: Removed {N_files} stale files >{stale_age:1f}d old "
-                f"({N_dirs} empty subdirs)"
-            )
+            if N_dirs > 0 or N_files > 0:
+                logger.info(
+                    f"Removing stale files in {dir_name}:\n    "
+                    f"del {N_files} files >{stale_age:.1f}d old, {N_dirs} empty subdirs"
+                )

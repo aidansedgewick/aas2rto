@@ -11,8 +11,8 @@ from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.target_lookup import TargetLookup
 
 # from aas2rto.query_managers.alerce import AlerceQueryManager
-# from aas2rto.query_managers.atlas import AtlasQueryManager
-# from aas2rto.query_managers.fink import FinkQueryManager
+from aas2rto.query_managers.atlas import AtlasQueryManager
+from aas2rto.query_managers.fink import FinkLSSTQueryManager, FinkZTFQueryManager
 
 # from aas2rto.query_managers.lasair import LasairQueryManager
 # from aas2rto.query_managers.tns import TnsQueryManager
@@ -25,8 +25,9 @@ logger = getLogger(__name__.split(".")[-1])
 
 EXPECTED_QUERY_MANAGERS = {
     # "alerce": AlerceQueryManager,
-    # "atlas": AtlasQueryManager,
-    # "fink_ztf": FinkZTFQueryManager,
+    "atlas": AtlasQueryManager,
+    "fink_lsst": FinkZTFQueryManager,
+    "fink_ztf": FinkZTFQueryManager,
     # "lasair": LasairQueryManager,
     # "tns": TnsQueryManager,
     # "yse": YseQueryManager,
@@ -40,17 +41,18 @@ class GlobalQueryManager:
         config: Dict,
         target_lookup: TargetLookup,
         path_manager: PathManager,
-        create_paths=True,
     ):
 
         self.config = config
         unknown_qm_configs = utils.check_unexpected_config_keys(
-            self.config.keys(), EXPECTED_QUERY_MANAGERS.keys(), name="QM_configs"
+            self.config.keys(), EXPECTED_QUERY_MANAGERS.keys(), name="query_managers"
         )
         if len(unknown_qm_configs):
+            unk_qms_str = ", ".join(f"'{x}'" for x in unknown_qm_configs)
+            exp_qms_str = ", ".join(f"'{x}'" for x in EXPECTED_QUERY_MANAGERS.keys())
             msg = (
-                f"\033[31;1mUnknown QueryManager config(s)\033[0m:\n    {unknown_qm_configs}"
-                f"Currently known:\n    {EXPECTED_QUERY_MANAGERS.keys()}"
+                f"\033[31;1mUnknown QueryManager config(s)\033[0m:\n    {unk_qms_str}\n"
+                f"Currently known:\n    {exp_qms_str}"
             )
             logger.error(msg)
             raise ValueError(msg)
@@ -59,13 +61,13 @@ class GlobalQueryManager:
         self.path_manager = path_manager
 
         self.query_managers = self._initialise_query_manager_lookup()
-        self.initialize_query_managers(create_paths=create_paths)
+        self.initialize_query_managers()
 
     def _initialise_query_manager_lookup(self) -> Dict[str, BaseQueryManager]:
         """Only for type hinting..."""
         return {}
 
-    def initialize_query_managers(self, create_paths=True):
+    def initialize_query_managers(self):
         self.query_managers = self._initialise_query_manager_lookup()
         self.qm_order = []
         for qm_name, qm_config in self.config.items():
@@ -81,10 +83,7 @@ class GlobalQueryManager:
 
             QMClass = EXPECTED_QUERY_MANAGERS[qm_name]
             qm = QMClass(
-                qm_config,
-                self.target_lookup,
-                parent_path=self.path_manager.data_path,
-                create_paths=create_paths,
+                qm_config, self.target_lookup, parent_path=self.path_manager.data_path
             )
             self.query_managers[qm_name] = qm
 
@@ -92,7 +91,7 @@ class GlobalQueryManager:
             logger.warning("no query managers initialised!")
 
     def add_query_manager(
-        self, qm_config: Dict, QueryManagerClass, create_paths=True, **kwargs
+        self, qm_config: Dict, QueryManagerClass: BaseQueryManager, **kwargs
     ):
         qm_name = getattr(QueryManagerClass, "name", None)
         if qm_name is None:
@@ -108,17 +107,14 @@ class GlobalQueryManager:
 
         qm_config.update(kwargs)
         qm = QueryManagerClass(
-            qm_config,
-            self.target_lookup,
-            parent_path=self.path_manager.data_path,
-            create_paths=create_paths,
+            qm_config, self.target_lookup, parent_path=self.path_manager.data_path
         )
         self.query_managers[qm_name] = qm
 
-    def perform_all_query_manager_tasks(self, iteration, t_ref: Time = None):
+    def perform_all_query_manager_tasks(self, iteration: int, t_ref: Time = None):
         """
         for each of the query managers `qm` in target_selector.query_managers,
-        call the method `qm.perform_all_tasks(t_ref=t_ref)`
+        call the method `qm.perform_all_tasks(iteration=iteration, t_ref=t_ref)`
 
         Parameters
         ----------
