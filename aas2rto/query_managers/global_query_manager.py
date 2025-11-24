@@ -15,7 +15,8 @@ from aas2rto.query_managers.atlas import AtlasQueryManager
 from aas2rto.query_managers.fink import FinkLSSTQueryManager, FinkZTFQueryManager
 
 # from aas2rto.query_managers.lasair import LasairQueryManager
-# from aas2rto.query_managers.tns import TnsQueryManager
+from aas2rto.query_managers.tns import TNSQueryManager
+
 # from aas2rto.query_managers.yse import YseQueryManager
 
 # from aas2rto.query_managers.sdss import SdssQueryManager
@@ -26,10 +27,10 @@ logger = getLogger(__name__.split(".")[-1])
 EXPECTED_QUERY_MANAGERS = {
     # "alerce": AlerceQueryManager,
     "atlas": AtlasQueryManager,
-    "fink_lsst": FinkZTFQueryManager,
+    "fink_lsst": FinkLSSTQueryManager,
     "fink_ztf": FinkZTFQueryManager,
     # "lasair": LasairQueryManager,
-    # "tns": TnsQueryManager,
+    "tns": TNSQueryManager,
     # "yse": YseQueryManager,
 }
 
@@ -45,7 +46,10 @@ class GlobalQueryManager:
 
         self.config = config
         unknown_qm_configs = utils.check_unexpected_config_keys(
-            self.config.keys(), EXPECTED_QUERY_MANAGERS.keys(), name="query_managers"
+            self.config.keys(),
+            EXPECTED_QUERY_MANAGERS.keys(),
+            warn=False,
+            name="query_managers",
         )
         if len(unknown_qm_configs):
             unk_qms_str = ", ".join(f"'{x}'" for x in unknown_qm_configs)

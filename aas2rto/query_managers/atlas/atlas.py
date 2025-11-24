@@ -31,6 +31,10 @@ def process_atlas_lightcurve(lc: pd.DataFrame):
     return processed_lc
 
 
+class AtlasCredentialError(Exception):
+    pass
+
+
 class AtlasQueryManager(BaseQueryManager):
     name = "atlas"
 
@@ -109,7 +113,7 @@ class AtlasQueryManager(BaseQueryManager):
             "credentials: {username: myuser, password: mypass}"  # NO f-str
         )
         if credentials is None:
-            raise ValueError(bad_credential_msg)
+            raise AtlasCredentialError(bad_credential_msg)
 
         self.token = credentials.get("token", None)  # attr mainly for testing.
         username = credentials.get("username", None)  # Not an attr
@@ -119,16 +123,16 @@ class AtlasQueryManager(BaseQueryManager):
             if username is not None or password is not None:
                 msg = f"IGNORING usr '{username}' pwd '***': using provided token"
                 logger.warning(msg)
-            self.atlas_headers = AtlasQuery.build_headers(self.token)
+            self.atlas_query = AtlasQuery(self.token)
             return
 
         # Have to try to retrieve using the usr/pwd combo provided.
         if username is None or password is None:
-            raise ValueError(bad_credential_msg)
+            raise AtlasCredentialError(bad_credential_msg)
         self.token = AtlasQuery.get_atlas_token(
             username=username, password=password, display=False
         )
-        self.atlas_headers = AtlasQuery.build_headers(self.token)
+        self.atlas_query = AtlasQuery(self.token)
 
     def recover_query_data(
         self, target_id: str, task_url: str, timeout: float = None, t_ref: Time = None
@@ -138,9 +142,8 @@ class AtlasQueryManager(BaseQueryManager):
         """
         t_ref = t_ref or Time.now()
 
-        status, unprocessed_lightcurve = AtlasQuery.recover_task_data(
+        status, unprocessed_lightcurve = self.atlas_query.recover_task_data(
             task_url,
-            headers=self.atlas_headers,
             return_type="pandas",
             timeout=timeout,
             delete_finished=False,  # NO - delete them all in one go.
@@ -173,8 +176,8 @@ class AtlasQueryManager(BaseQueryManager):
         finished_task_urls = []
 
         start_time = time.perf_counter()
-        for task_result in AtlasQuery.iterate_existing_queries(
-            headers=self.atlas_headers, max_query_time=max_query_time
+        for task_result in self.atlas_query.iterate_existing_queries(
+            max_query_time=max_query_time
         ):
             # Is this task relevant to us?
             query_comment: str = task_result.get("comment", None)
@@ -211,7 +214,7 @@ class AtlasQueryManager(BaseQueryManager):
                 error_queries.append(target_id)
 
         if delete_finished_queries:
-            AtlasQuery.delete_tasks(finished_task_urls, headers=self.atlas_headers)
+            self.atlas_query.delete_tasks(finished_task_urls)
 
         logger.info(f"{len(finished_queries)} finished, {len(ongoing_queries)} ongoing")
         return finished_queries, ongoing_queries, error_queries
@@ -288,9 +291,7 @@ class AtlasQueryManager(BaseQueryManager):
             )
             return None
 
-        res = AtlasQuery.submit_forced_photom_query(
-            query_data, headers=self.atlas_headers, timeout=timeout
-        )
+        res = self.atlas_query.submit_forced_photom_query(query_data, timeout=timeout)
         if res.status_code == AtlasQuery.QUERY_SUBMITTED:
             self.submitted_queries[target.target_id] = res.json()["url"]
         elif res.status_code == AtlasQuery.QUERY_THROTTLED:

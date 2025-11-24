@@ -524,9 +524,20 @@ def atlas_config(atlas_credentials: dict):
 
 
 @pytest.fixture
-def global_qm_config(fink_config: dict, atlas_config: dict):
+def tns_credentials():
+    return {"user": "test_user", "uid": 1234}
+
+
+@pytest.fixture
+def tns_config(tns_credentials: dict):
+    return {"credentials": tns_credentials}
+
+
+@pytest.fixture
+def global_qm_config(fink_config: dict, atlas_config: dict, tns_config: dict):
     return {
         "fink_lsst": copy.deepcopy(fink_config),
         "fink_ztf": copy.deepcopy(fink_config),
         "atlas": copy.deepcopy(atlas_config),
+        "tns": copy.deepcopy(tns_config),
     }

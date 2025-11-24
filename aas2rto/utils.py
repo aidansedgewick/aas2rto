@@ -66,7 +66,7 @@ def clear_stale_files(dir: Path, t_ref=None, stale_age=60.0, depth=0, max_depth=
             N_files = N_files + N_subfiles
             subdir_is_empty = not list(filepath.iterdir())
             if subdir_is_empty:
-                logger.info(f"removing empty subdir {filepath.name}")
+                logger.debug(f"removing empty subdir {filepath.name}")
                 filepath.rmdir()
                 N_dirs = N_dirs + 1
         else:

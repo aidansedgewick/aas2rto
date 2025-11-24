@@ -12,6 +12,7 @@ from astropy.time import Time
 from aas2rto.exc import UnknownTargetWarning
 from aas2rto.lightcurve_compilers import prepare_atlas_data
 from aas2rto.query_managers.atlas.atlas import (
+    AtlasCredentialError,
     AtlasQueryManager,
     process_atlas_lightcurve,
 )
@@ -91,7 +92,7 @@ class Test__InitAtlasQM:
 
         # Assert
         assert qm.token == 1234
-        assert qm.atlas_headers.keys() == set(["Authorization", "Accept"])
+        assert qm.atlas_query.headers.keys() == set(["Authorization", "Accept"])
 
         exp_path = tmp_path / "atlas"
         assert exp_path.exists()
@@ -122,7 +123,7 @@ class Test__InitAtlasQM:
         config = {}  # Missing 'credentials' kw
 
         # Act
-        with pytest.raises(ValueError):
+        with pytest.raises(AtlasCredentialError):
             qm = AtlasQueryManager(config, tlookup, tmp_path)
 
     def test__bad_credentials_raises(self, tlookup: TargetLookup, tmp_path: Path):
@@ -130,7 +131,7 @@ class Test__InitAtlasQM:
         config = {"credentials": {"blah": 100}}  # missing all relevant keys
 
         # Act
-        with pytest.raises(ValueError):
+        with pytest.raises(AtlasCredentialError):
             qm = AtlasQueryManager(config, tlookup, tmp_path)
 
     def test__bad_config_raises(
