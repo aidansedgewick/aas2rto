@@ -129,10 +129,10 @@ class TargetSelector:
         self.recovery_config = self.selector_config.get("recovery", {})
         self.messaging_config = self.selector_config.get("messaging", {})
 
-        # to keep the targets. Do this here as other configs depend on it.
-        self.target_lookup = TargetLookup()  # self._create_empty_target_lookup()
+        # to keep the targets. Do this here as other Managers depend on it.
+        self.target_lookup = TargetLookup()
 
-        # Initialise PathManager first - others depend on it.
+        # Initialise PathManager first - others Managers depend on it.
         self.path_manager = PathManager(self.paths_config)
 
         # Initialise ObservatoryManager next - others depend on obs_manager and path_manager
@@ -185,11 +185,6 @@ class TargetSelector:
             selector_config = yaml.load(f, Loader=yaml.FullLoader)
         selector = cls(selector_config, create_paths=create_paths)
         return selector
-
-    def add_target(self, target: Target):
-        if target.target_id in self.target_lookup:
-            raise ValueError(f"obj {target.target_id} already in target_lookup")
-        self.target_lookup[target.target_id] = target
 
     def check_for_targets_of_opportunity(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -273,13 +268,13 @@ class TargetSelector:
                 for plot in plot_dir.glob(f"*.{fig_fmt}"):
                     os.remove(plot)
 
-    def perform_web_tasks(self, t_ref: Time = None):
-        # TODO: somehow move to messaging_manager
-        t_ref = t_ref or Time.now()
-        if self.messaging_manager.html_webpage_manager is not None:
-            self.messaging_manager.html_webpage_manager.update_webpages(
-                self.target_lookup, self.outputs_manager.ranked_lists, t_ref=t_ref
-            )
+    # def perform_web_tasks(self, t_ref: Time = None):
+    #     # TODO: somehow move to messaging_manager
+    #     t_ref = t_ref or Time.now()
+    #     if self.messaging_manager.html_webpage_manager is not None:
+    #         self.messaging_manager.html_webpage_manager.update_webpages(
+    #             self.target_lookup, self.outputs_manager.ranked_lists, t_ref=t_ref
+    #         )
 
     def send_crash_reports(self, text: str = None):
         self.messaging_manager.send_crash_reports(text=text)
@@ -362,10 +357,9 @@ class TargetSelector:
         perf_times["qm_tasks"] = time.perf_counter() - t1
 
         # ================== Merge + sort duplicated targets ================= #
-        if isinstance(self.target_lookup, TargetLookup):
-            self.target_lookup.consolidate_targets(seplimit=seplimit)
-            self.target_lookup.update_target_id_mappings()
-            self.target_lookup.update_to_preferred_target_id()
+        self.target_lookup.consolidate_targets(seplimit=seplimit)
+        self.target_lookup.update_target_id_mappings()
+        self.target_lookup.update_to_preferred_target_id()
 
         # ================= Prep before modeling and scoring ================= #
         t1 = time.perf_counter()
@@ -540,6 +534,7 @@ class TargetSelector:
             It should return:\n
                 `score : float`
                 `comments : List of str, optional`
+
         observatory_scoring_function : Callable, optional
             The scoring function to evaluate at observatories.
             If not provided, defaults to `aas2rto.scoring.DefaultObsScore`.
@@ -553,6 +548,7 @@ class TargetSelector:
                 obs_factors : float
                     from scoring_function, to get the score for this observatory.
                 comms : list of str, optional
+
         modeling_function : Callable or list of Callable
             Functions which produce models based on target.
             Exceptions in modeling_function are caught, and the model will be set to None.
@@ -561,25 +557,29 @@ class TargetSelector:
                 `model` : `Any`\n
                     the model which describes your source. You can access it in
                     (eg.) scoring functions with target.models[<your_func_name>]
+
         lightcurve_compiler : Callable
             Function which produces a convenient single lightcurve including all data
             sources. Helpful in scoring, plotting.
             It should have the 'standard' signature defined above.
             It should return:
                 `compiled_lc` : `pd.DataFrame` or `astropy.table.Table`
+
         lc_plotting_function : Callable
             Generate a lightcurve figure for each target.
             It should have the 'standard' signature defined above.
             it should return:
                 figure : matplotlib.pyplot.Figure
+
         skip_tasks : list of str, optional
             Task(s) which should be skipped.
             Must be one of
                 "qm_tasks", "obs_info", "pre_check", "modeling", "evaluate",
                 "ranking", "reject", "plotting", "write_targets", "messaging",
+
         iterations : int, optional
             How many iterations to perform before exiting
-            default infinite loop.
+            default None (infinite loop).
 
         Examples
         --------

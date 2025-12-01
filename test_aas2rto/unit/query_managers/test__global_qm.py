@@ -30,7 +30,7 @@ class Test__InitGlobalQM:
         gqm = GlobalQueryManager(global_qm_config, tlookup, path_mgr)
 
         # Assert
-        exp_qms = ["fink_ztf", "fink_lsst", "atlas"]
+        exp_qms = ["atlas", "fink_ztf", "fink_lsst", "tns"]
         assert set(gqm.query_managers.keys()) == set(exp_qms)
 
         untested_qms = set(EXPECTED_QUERY_MANAGERS.keys()) - set(

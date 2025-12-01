@@ -66,7 +66,7 @@ class AtlasQuery:
             raise
 
     @staticmethod
-    def check_return_type(return_type):
+    def check_return_type(return_type: str):
         known_types_str = ", ".join(f"'{x}'" for x in AtlasQuery.known_return_types)
         return_type_err_msg = (
             f"Unknown return_type='\033[33;1m{return_type}\033[0m'. Choose from:\n    "
@@ -76,7 +76,7 @@ class AtlasQuery:
             raise ValueError(return_type_err_msg)
 
     @staticmethod
-    def get_empty_lightcurve(return_type: str):
+    def get_empty_lightcurve(return_type: str = "pandas"):
         AtlasQuery.check_return_type(return_type)
 
         columns = "MJD m dm uJy duJy F err chi/N RA Dec x y maj min phi apfit mag5sig Sky Obs".split()
@@ -103,7 +103,7 @@ class AtlasQuery:
             warnings.warn(AtlasQueryWarning(msg))
 
     @staticmethod
-    def process_task_data(photom_data: str, return_type="records"):
+    def process_task_data(photom_data: str, return_type: str = "pandas"):
         AtlasQuery.check_return_type(return_type)
 
         if isinstance(photom_data, requests.Response):
@@ -122,7 +122,7 @@ class AtlasQuery:
         elif return_type == "astropy":
             return Table.read(rows, data_start=1, format="ascii", delimiter=r"\s")
         else:
-            raise Exception("How did we get here?")
+            raise Exception("How did we get here?")  # Exc raised in check_return_type()
 
     def __init__(self, token: str):
         self.token = token
