@@ -157,11 +157,17 @@ class TNSQueryManager(BaseQueryManager):
         )
 
         # Remove any hourly deltas from yday, day before, etc.
-        today_datestr = t_ref.strftime("%y%m%d")
+        relevant_stem = self.get_daily_delta_filepath(t_ref).stem
         for filepath in existing_hourly_deltas:
-            if today_datestr in filepath.name:
+            if relevant_stem in filepath.name:
                 continue  # it's still relevant
+            logger.info(f"unlink {filepath.name}")
             filepath.unlink()  # Otherwise it's old, and we'll have the daily one.
+
+        remaining_hourly_deltas = sorted(
+            list(self.paths_lookup["query_results"].glob(glob_patten))
+        )
+        logger.info(f"there are {len(remaining_hourly_deltas)} hourly deltas already")
 
         ref_dt = t_ref.datetime
         curr_hour = ref_dt.hour
@@ -173,7 +179,7 @@ class TNSQueryManager(BaseQueryManager):
             delta_filepath = self.get_hourly_delta_filepath(t_delta)
             if delta_filepath.exists():
                 continue
-            logger.info(f"query for {delta_filepath.name}")
+            logger.info(f"query for {delta_filepath}")
             df = self.tns_query.get_tns_hourly_delta(hour)
             df.to_csv(delta_filepath, index=False)
             new_deltas.append(df)

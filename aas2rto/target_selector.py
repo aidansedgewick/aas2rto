@@ -114,7 +114,7 @@ class TargetSelector:
 
         # Top level section
         self.selector_config = self.default_selector_config.copy()
-        selector_config = self.selector_config.get("selector", {})
+        selector_config = aas2rto_config.get("selector", {})
         self.selector_config.update(selector_config)
         utils.check_unexpected_config_keys(
             self.selector_config,

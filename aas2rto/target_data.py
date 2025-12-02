@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from logging import getLogger
 from typing import Union, Dict
 
 import numpy as np
@@ -16,6 +17,8 @@ from aas2rto.exc import (
     UnknownPhotometryTagWarning,
 )
 
+
+logger = getLogger(__name__.split(".")[-1])
 
 class TargetData:
     default_valid_tags = ("valid", "detection", "det")
@@ -93,7 +96,11 @@ class TargetData:
 
         date_col = date_col or self.get_date_column(lightcurve)
         if isinstance(lightcurve, pd.DataFrame):
-            lightcurve.sort_values(date_col, inplace=True, ignore_index=True)
+            try:
+                lightcurve.sort_values(date_col, inplace=True, ignore_index=True)
+            except Exception as e:
+                print(lightcurve[date_col])
+                raise
         if isinstance(lightcurve, Table):
             lightcurve.sort(date_col)
         with warnings.catch_warnings():
@@ -121,12 +128,14 @@ class TargetData:
 
             known_tag_mask = np.isin(lightcurve[tag_col], all_tags)
             if not all(known_tag_mask):
-                unknown_tags = self.lightcurve[tag_col][~known_tag_mask]
+                unknown_data = self.lightcurve[~known_tag_mask]
+                logger.info(f"unknown data!\n{unknown_data}")
+                unknown_tags = np.unique(unknown_data[tag_col])
                 msg = (
-                    f"\nin {tag_col}: {unknown_tags}\nexpected:"
-                    f"    valid: {self.valid_tags}"
-                    f"    badqual: {self.badqual_tags}"
-                    f"    nondet: {self.nondet_tags}"
+                    f"\nin {tag_col}: {unknown_tags}\nexpected:\n"
+                    f"    valid: {self.valid_tags}\n"
+                    f"    badqual: {self.badqual_tags}\n"
+                    f"    nondet: {self.nondet_tags}\n"
                 )
                 warnings.warn(UnknownPhotometryTagWarning(msg))
         else:

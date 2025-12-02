@@ -123,7 +123,6 @@ class TelegramMessenger:
             msg = f"{type(e).__name__} in read_users_file {e}"
             logger.warning(msg)
             warnings.warn(UserWarning(msg))
-        print(new_users)
 
         users = self.users.copy()
         users.update(new_users)
@@ -156,10 +155,14 @@ class TelegramMessenger:
         sent_messages = []
         for text in texts:
             bot = self.get_bot()
-            sent = asyncio.run(
-                bot.send_message(chat_id=user, text=text, disable_web_page_preview=True)
-            )
-            sent_messages.append(sent)
+            try:
+                sent = asyncio.run(
+                    bot.send_message(chat_id=user, text=text, disable_web_page_preview=True)
+                )
+                sent_messages.append(sent)
+            except ValueError:
+                # Catch weird co-routine error from py3.9
+                pass
 
         # Some explainers...
         # Cannot use send_media_group() for list of imgs which has len==1
@@ -181,18 +184,25 @@ class TelegramMessenger:
                     media_ii = telegram.InputMediaPhoto(img, filename=str(img_path))
                     media_list.append(media_ii)
                 bot = self.get_bot()
-                sent = asyncio.run(bot.send_media_group(chat_id=user, media=media_list))
-                sent_messages.append(sent)
+                try:
+                    sent = asyncio.run(bot.send_media_group(chat_id=user, media=media_list))
+                    sent_messages.append(sent)
+                except ValueError:
+                    # Catch weird co-routine error in py3.9
+                    pass
             else:
                 for img_path in img_chunk:
                     with open(img_path, "rb") as f:
                         img = f.read()
                     bot = self.get_bot()
-                    sent = asyncio.run(
-                        bot.send_photo(chat_id=user, photo=img, caption=caption)
-                    )
-                    sent_messages.append(sent)
-
+                    try:
+                        sent = asyncio.run(
+                            bot.send_photo(chat_id=user, photo=img, caption=caption)
+                        )
+                        sent_messages.append(sent)
+                    except ValueError:
+                        # Catch weird co-routine error in py3.9
+                        pass
         return sent_messages
 
     def message_users(
