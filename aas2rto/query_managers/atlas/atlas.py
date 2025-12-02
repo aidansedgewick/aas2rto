@@ -186,8 +186,8 @@ class AtlasQueryManager(BaseQueryManager):
                 continue
 
             comment_split = query_comment.split(self.comment_delim)
-            if comment_split != 2:
-                continue # Malformed comment - maybe webform.
+            if len(comment_split) != 2:
+                continue  # Malformed comment - maybe webform.
 
             target_id, task_project = comment_split
             if task_project != self.project_identifier:

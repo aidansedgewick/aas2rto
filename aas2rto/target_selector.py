@@ -105,7 +105,10 @@ class TargetSelector:
     def __init__(self, aas2rto_config: dict, create_paths=True):
         # Check config sections
         utils.check_unexpected_config_keys(
-            aas2rto_config, self.expected_config_keys, name="selector_config", raise_exc=True
+            aas2rto_config,
+            self.expected_config_keys,
+            name="selector_config",
+            raise_exc=True,
         )
         self.aas2rto_config = aas2rto_config
 
@@ -117,7 +120,7 @@ class TargetSelector:
             self.selector_config,
             self.default_selector_config,
             name="selector",
-            raise_exc=True
+            raise_exc=True,
         )
 
         # Unpack configs
@@ -125,12 +128,12 @@ class TargetSelector:
         self.observatories_config = aas2rto_config.get("observatories", {})
 
         self.query_managers_config = aas2rto_config.get("query_managers", {})
-        self.scoring_config = selector_config.get("scoring", {})
-        self.modeling_config = selector_config.get("modeling", {})
-        self.plotting_config = selector_config.get("plotting", {})
-        self.outputs_config = selector_config.get("outputs", {})
-        self.recovery_config = selector_config.get("recovery", {})
-        self.messaging_config = selector_config.get("messaging", {})
+        self.scoring_config = aas2rto_config.get("scoring", {})
+        self.modeling_config = aas2rto_config.get("modeling", {})
+        self.plotting_config = aas2rto_config.get("plotting", {})
+        self.outputs_config = aas2rto_config.get("outputs", {})
+        self.recovery_config = aas2rto_config.get("recovery", {})
+        self.messaging_config = aas2rto_config.get("messaging", {})
 
         # to keep the targets. Do this here as other Managers depend on it.
         self.target_lookup = TargetLookup()
@@ -272,6 +275,7 @@ class TargetSelector:
 
     def perform_web_tasks(self, t_ref: Time = None):
         pass
+
     #     # TODO: somehow move to messaging_manager
     #     t_ref = t_ref or Time.now()
     #     if self.messaging_manager.html_webpage_manager is not None:
@@ -430,7 +434,7 @@ class TargetSelector:
                 )
                 self.outputs_manager.write_target_comments(
                     target_list=removed_targets,
-                    outdir=self.path_manager.rejected_targets_path
+                    outdir=self.path_manager.rejected_targets_path,
                 )
 
             logger.info(f"rejected {len(removed_targets)} targets")
@@ -638,6 +642,7 @@ class TargetSelector:
             f"scoring_function:\n    {scoring_function.__name__}\n"
             f"observatory_scoring_function:\n    {observatory_scoring_function.__name__}\n"
         )
+        logger.info("sending startup message")
         self.messaging_manager.send_sudo_messages(texts=msg)
 
         # ========================= loop indefinitely ======================== #

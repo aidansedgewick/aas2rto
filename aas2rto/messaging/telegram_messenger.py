@@ -135,9 +135,7 @@ class TelegramMessenger:
         texts: List[str] = None,
         img_paths: List[Path] = None,
         caption=None,
-        min_media_group_size=2,
     ) -> List:
-
         texts = texts or []
         if isinstance(texts, str):
             texts = [texts]
