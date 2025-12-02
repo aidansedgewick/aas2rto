@@ -32,8 +32,8 @@ def get_target_summary_data(target):
     dec = target.coord.dec
     data = dict(
         target_id=target.target_id,
-        ra=ra.to_string(unit=u.hourangle, sep=":", precision=2),
-        dec=dec.to_string(unit=u.deg, sep=":", precision=2, alwayssign=True),
+        ra=ra.to_string(unit=u.hourangle, sep=":", precision=2, pad=True),
+        dec=dec.to_string(unit=u.deg, sep=":", precision=2, alwayssign=True, pad=True),
         ra_deg=f"{target.coord.ra.deg:010.6f}",
         dec_deg=f"{target.coord.dec.deg:+09.5f}",
     )
@@ -77,7 +77,7 @@ class OutputsManager:
 
     def write_target_comments(
         self,
-        target_id_list: List[Target] = None,
+        target_list: List[Target] = None,
         outdir: Path = None,
         t_ref: Time = None,
     ):
@@ -88,11 +88,10 @@ class OutputsManager:
         outdir = outdir or self.path_manager.comments_path
         outdir = Path(outdir)
 
-        if target_id_list is None:
-            target_id_list = list(self.target_lookup.keys())
+        if target_list is None:
+            target_list = list(self.target_lookup.values())
 
-        for target_id in target_id_list:
-            target = self.target_lookup.get(target_id)
+        for target in target_list:
             if target is None:
                 msg = f"cannot write comments for non-existant target {target_id}"
                 logger.warning(msg)
@@ -110,6 +109,10 @@ class OutputsManager:
             plots=plots, write_list=write_list, t_ref=t_ref
         )
         self.science_ranked_list = ranked_list
+
+        if ranked_list.empty:
+            logger.info("Skip attempt obs ranked lists...")
+            return
 
         for obs_name, observatory in self.observatory_manager.sites.items():
             ranked_list = self.rank_targets_on_obs_score(
@@ -132,6 +135,12 @@ class OutputsManager:
             data = get_target_summary_data(target)
             data["score"] = target.get_latest_science_score()
             data_list.append(data)
+
+        if len(data_list) == 0:
+            score_df = pd.DataFrame(columns=["score"])
+            logger.warning("no targets in initial score df!")
+            return score_df
+
         score_df = pd.DataFrame(data_list)
 
         score_df.sort_values("score", ascending=False, inplace=True)
@@ -292,7 +301,6 @@ class OutputsManager:
             if not lc_fig_file.exists():
                 logger.warning(f"{target_id}: lc figure missing!")
             else:
-                logger.info(f"copy lc to {new_lc_fig_file}")
                 try:
                     shutil.copy(lc_fig_file, new_lc_fig_file)
                 except Exception:

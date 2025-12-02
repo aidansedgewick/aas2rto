@@ -30,7 +30,7 @@ from aas2rto.exc import (
     UnknownPhotometryTagWarning,
 )
 from aas2rto.ephem_info import EphemInfo
-from aas2rto.target import Target, DEFAULT_ZTF_BROKER_PRIORITY
+from aas2rto.target import Target
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -123,7 +123,9 @@ class DefaultLightcurvePlotter:
 
         self.band_col = "band"
 
-        self.cutouts_priority = (*DEFAULT_ZTF_BROKER_PRIORITY, "ztf", "yse", "atlas")
+        self.cutouts_priority = (
+            "ztf_lsst", "ztf_fink", "ztf_alerce", "ztf_lasair", "ztf", "yse", "atlas"
+        )
         self.cutout_keys = ["science", "template", "difference"]
 
     def init_fig(self, figsize: tuple = None):
@@ -179,9 +181,6 @@ class DefaultLightcurvePlotter:
                 detections = band_lc[det_mask]
                 ulimits = band_lc[ulim_mask]
                 badqual = band_lc[badqual_mask]
-
-                print(band_lc[["mjd", "band", "tag"]])
-
                 other = band_lc[~(det_mask | ~ulim_mask | ~badqual_mask)]
 
                 if len(ulimits) > 0:

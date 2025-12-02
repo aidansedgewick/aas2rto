@@ -8,7 +8,6 @@ from astropy.time import Time
 from astroplan import Observer
 
 from aas2rto import Target
-from aas2rto.target import DEFAULT_ZTF_BROKER_PRIORITY
 
 logger = getLogger("kn_score")
 
@@ -16,18 +15,21 @@ gal_center = SkyCoord(frame="galactic", l=0.0, b=0.0, unit="deg")
 
 
 class KilonovaDiscReject:
+
+    default_broker_priority = ("ztf", "alerce")
+
     def __init__(
         self,
         min_b: float = 5.0,
         min_bulge_sep: float = 10.0,
         max_timespan: float = 15.0,
-        ztf_priority: list = None,
+        broker_priority: list = None,
     ):
         self.__name__ = "kilonova_disc_reject"
         self.min_b = min_b
         self.min_bulge_sep = min_bulge_sep
         self.max_timespan = max_timespan
-        self.ztf_priority = ztf_priority or DEFAULT_ZTF_BROKER_PRIORITY
+        self.broker_priority = ztf_priority or self.default_broker_priority
 
     def __call__(self, target: Target, observatory: Observer, t_ref: Time) -> float:
         reject = False
@@ -53,8 +55,8 @@ class KilonovaDiscReject:
             )
 
         ztf_data = None
-        for broker in self.ztf_priority:
-            data_name = f"{broker}_data"
+        for broker in self.broker_priority:
+            data_name = f"ztf_{broker}"
             source_data = getattr(target, data_name, None)
             if source_data is None:
                 continue

@@ -60,6 +60,7 @@ VALID_SKIP_TASKS = (
     "plotting",
     "write_targets",
     "messaging",
+    "sleep",
 )
 
 
@@ -75,7 +76,7 @@ class TargetSelector:
     """
 
     expected_config_keys = (
-        "selector_parameters",
+        "selector",
         "query_managers",
         "observatories",
         "messaging",
@@ -86,7 +87,7 @@ class TargetSelector:
         "plotting",
         "outputs",
     )
-    default_selector_parameters = {
+    default_selector_config = {
         "project_name": None,
         "sleep_time": 600.0,
         "ncpu": None,
@@ -101,33 +102,35 @@ class TargetSelector:
     }
     # expected_messenger_keys = ("telegram", "slack", "web")
 
-    def __init__(self, selector_config: dict, create_paths=True):
-        # Unpack configs.
-        self.selector_config = selector_config
+    def __init__(self, aas2rto_config: dict, create_paths=True):
+        # Check config sections
         utils.check_unexpected_config_keys(
-            selector_config, self.expected_config_keys, name="selector_config"
+            aas2rto_config, self.expected_config_keys, name="selector_config", raise_exc=True
         )
+        self.aas2rto_config = aas2rto_config
 
-        self.selector_parameters = self.default_selector_parameters.copy()
-        selector_parameters = self.selector_config.get("selector_parameters", {})
-        self.selector_parameters.update(selector_parameters)
+        # Top level section
+        self.selector_config = self.default_selector_config.copy()
+        selector_config = self.selector_config.get("selector", {})
+        self.selector_config.update(selector_config)
         utils.check_unexpected_config_keys(
-            selector_parameters,
-            self.default_selector_parameters,
-            name="selector_parameters",
+            self.selector_config,
+            self.default_selector_config,
+            name="selector",
+            raise_exc=True
         )
 
         # Unpack configs
-        self.paths_config = self.selector_config.get("paths", {})
-        self.observatories_config = self.selector_config.get("observatories", {})
+        self.paths_config = aas2rto_config.get("paths", {})
+        self.observatories_config = aas2rto_config.get("observatories", {})
 
-        self.query_managers_config = self.selector_config.get("query_managers", {})
-        self.scoring_config = self.selector_config.get("scoring", {})
-        self.modeling_config = self.selector_config.get("modeling", {})
-        self.plotting_config = self.selector_config.get("plotting", {})
-        self.outputs_config = self.selector_config.get("outputs", {})
-        self.recovery_config = self.selector_config.get("recovery", {})
-        self.messaging_config = self.selector_config.get("messaging", {})
+        self.query_managers_config = aas2rto_config.get("query_managers", {})
+        self.scoring_config = selector_config.get("scoring", {})
+        self.modeling_config = selector_config.get("modeling", {})
+        self.plotting_config = selector_config.get("plotting", {})
+        self.outputs_config = selector_config.get("outputs", {})
+        self.recovery_config = selector_config.get("recovery", {})
+        self.messaging_config = selector_config.get("messaging", {})
 
         # to keep the targets. Do this here as other Managers depend on it.
         self.target_lookup = TargetLookup()
@@ -148,7 +151,6 @@ class TargetSelector:
             self.query_managers_config,
             self.target_lookup,
             self.path_manager,
-            create_paths=create_paths,
         )
         self.modeling_manager = ModelingManager(
             self.modeling_config, self.target_lookup, self.path_manager
@@ -268,7 +270,8 @@ class TargetSelector:
                 for plot in plot_dir.glob(f"*.{fig_fmt}"):
                     os.remove(plot)
 
-    # def perform_web_tasks(self, t_ref: Time = None):
+    def perform_web_tasks(self, t_ref: Time = None):
+        pass
     #     # TODO: somehow move to messaging_manager
     #     t_ref = t_ref or Time.now()
     #     if self.messaging_manager.html_webpage_manager is not None:
@@ -323,16 +326,16 @@ class TargetSelector:
         perf_times = {}
 
         # ================= Get some parameters from config ================= #
-        write_comments = self.selector_parameters.get("write_comments", True)
-        obs_info_dt = self.selector_parameters.get("obs_info_dt", 0.5 / 24.0)
+        write_comments = self.selector_config.get("write_comments", True)
+        obs_info_dt = self.selector_config.get("obs_info_dt", 0.5 / 24.0)
         # lazy_modeling = self.selector_parameters.get("lazy_modeling", True)
-        lazy_compile = self.selector_parameters.get("lazy_compile", False)
+        lazy_compile = self.selector_config.get("lazy_compile", False)
         # lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
-        seplimit = self.selector_parameters.get("consolidate_seplimit", 5 * u.arcsec)
+        seplimit = self.selector_config.get("consolidate_seplimit", 5.0) * u.arcsec
         # self.clear_scratch_plots() # NO - lazy plotting re-uses existing plots.
 
         # =============== Are there any tasks we should skip? =============== #
-        config_skip_tasks = self.selector_parameters.get("skip_tasks", [])
+        config_skip_tasks = self.selector_config.get("skip_tasks", [])
         skip_tasks = skip_tasks or []
         skip_tasks = skip_tasks + config_skip_tasks
         invalid_skip_tasks = utils.check_unexpected_config_keys(
@@ -387,10 +390,10 @@ class TargetSelector:
             )
             if write_comments:
                 self.outputs_manager.write_target_comments(
-                    pre_removed_targets, t_ref=t_ref
+                    target_list=pre_removed_targets, t_ref=t_ref
                 )
                 self.outputs_manager.write_target_comments(
-                    pre_removed_targets,
+                    target_list=pre_removed_targets,
                     outdir=self.path_manager.rejected_targets_path,
                     t_ref=t_ref,
                 )
@@ -422,9 +425,12 @@ class TargetSelector:
         if "reject" not in skip_tasks:
             removed_targets = self.target_lookup.remove_rejected_targets(t_ref=t_ref)
             if write_comments:
-                self.outputs_manager.write_target_comments(removed_targets, t_ref=t_ref)
                 self.outputs_manager.write_target_comments(
-                    removed_targets, outdir=self.path_manager.rejected_targets_path
+                    target_list=removed_targets, t_ref=t_ref
+                )
+                self.outputs_manager.write_target_comments(
+                    target_list=removed_targets,
+                    outdir=self.path_manager.rejected_targets_path
                 )
 
             logger.info(f"rejected {len(removed_targets)} targets")
@@ -465,7 +471,9 @@ class TargetSelector:
             self.outputs_manager.build_ranked_target_lists(
                 t_ref=t_ref, plots=True, write_list=True
             )
-            # self.build_visible_target_lists(t_ref=t_ref, plots=True, write_list=True)
+            self.outputs_manager.create_visible_target_lists(
+                t_ref=t_ref, plots=True, write_list=True
+            )
         perf_times["ranking"] = time.perf_counter() - t1
 
         # =============== Checkpoint the current target list ================ #
@@ -595,7 +603,7 @@ class TargetSelector:
         t_ref = Time.now()
 
         # ===================== Get and set some parameters ================== #
-        sleep_time = self.selector_parameters.get("sleep_time")
+        sleep_time = self.selector_config["sleep_time"]
 
         if scoring_function is None:
             msg = "You must provide scoring_function=<some-callable>."
@@ -665,7 +673,6 @@ class TargetSelector:
                 sys.exit()
 
             # Some post-loop tasks
-            iteration_idx = iteration_idx + 1
             if iterations is not None:
                 if iteration_idx >= iterations:
                     break
@@ -679,3 +686,6 @@ class TargetSelector:
                 logger.info(f"loop execution time = {exc_time:.1f}sec")
                 logger.info(f"...so sleep for {sleep_time_actual:.1f}sec")
                 time.sleep(sleep_time_actual)
+
+            # ...don't forget to increment the iterations counter!
+            iteration_idx = iteration_idx + 1

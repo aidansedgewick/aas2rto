@@ -185,7 +185,11 @@ class AtlasQueryManager(BaseQueryManager):
                 # This must be a query put by hand in the webform... Don't delete it!
                 continue
 
-            target_id, task_project = query_comment.split(self.comment_delim, 1)
+            comment_split = query_comment.split(self.comment_delim)
+            if comment_split != 2:
+                continue # Malformed comment - maybe webform.
+
+            target_id, task_project = comment_split
             if task_project != self.project_identifier:
                 # This task doesn't belong to our project. Don't retrieve it!
                 # Otherwise, if the other project looks for this task, it might crash!

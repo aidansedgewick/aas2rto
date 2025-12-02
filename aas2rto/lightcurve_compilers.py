@@ -9,10 +9,8 @@ import pandas as pd
 
 from astropy.time import Time
 
-from aas2rto.target import DEFAULT_ZTF_BROKER_PRIORITY
-from aas2rto import Target, TargetData
-
-# from dk154_targets.query_managers import atlas
+from aas2rto.target import Target
+from aas2rto.target_data import TargetData
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -194,10 +192,11 @@ class DefaultLightcurveCompiler:
     valid_tag = DEFAULT_VALID_TAG
     badqual_tag = DEFAULT_BADQUAL_TAG
     ulimit_tag = DEFAULT_ULIMIT_TAG
+    default_broker_priority = ("fink", "lasair", "alerce")
 
-    def __init__(self, average_atlas_epochs=True, ztf_broker_priority=None):
+    def __init__(self, average_atlas_epochs=True, broker_priority=None):
         self.average_atlas_epochs = average_atlas_epochs
-        self.ztf_broker_priority = ztf_broker_priority or DEFAULT_ZTF_BROKER_PRIORITY
+        self.broker_priority = broker_priority or self.default_broker_priority
 
     def __call__(self, target: Target, t_ref: Time):
         lightcurve_dfs = []
@@ -214,8 +213,9 @@ class DefaultLightcurveCompiler:
         ztf_data = target.target_data.get("ztf", None)
 
         if ztf_data is None:
-            for broker in self.ztf_broker_priority:
-                broker_data = target.target_data.get(broker, None)
+            for broker in self.broker_priority:
+                source_name = f"{broker}_ztf"
+                broker_data = target.target_data.get(source_name, None)
                 if broker_data is None:
                     continue
                 if not isinstance(broker_data, TargetData):
@@ -235,7 +235,7 @@ class DefaultLightcurveCompiler:
                 ztf_lc = prepare_ztf_data(ztf_data, **tags)
                 lightcurve_dfs.append(ztf_lc)
             except Exception as e:
-                print(e)
+                logger.error(e)
                 msg = f"can't process ztf_source {broker}: {target.target_id}"
                 raise ValueError(msg)
 

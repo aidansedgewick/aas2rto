@@ -21,7 +21,7 @@ class PathManager:
     default_config = {
         "base_path": default_base_path,
         "project_path": "default",
-        "project_name": "default",
+        "project_base": "default",
         "paths": {},
     }
 
@@ -30,7 +30,7 @@ class PathManager:
         self.config = self.default_config.copy()
         self.config.update(config.copy())
         utils.check_unexpected_config_keys(
-            self.config, self.default_config, name="path_manager"
+            self.config, self.default_config, name="path_manager", raise_exc=True
         )
 
         self.paths_config = self.config["paths"]
@@ -41,7 +41,7 @@ class PathManager:
         self.base_path = Path(base_path)
 
         project_path = self.config["project_path"] or "default"
-        project_name = self.config["project_name"] or "default"
+        project_name = self.config["project_base"] or "default"
         if project_path == "default":
             if project_name == "default":
                 msg = (

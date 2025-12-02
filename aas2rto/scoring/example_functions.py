@@ -6,15 +6,13 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto.target import Target, DEFAULT_ZTF_BROKER_PRIORITY
-
+from aas2rto.target import Target
 
 def constant_score(target: Target, t_ref: Time):
     return 1.0
 
 
 def base_score(target: Target, t_ref: Time):
-    print(target.base_score)
     return target.base_score, ["just return base_score"]
 
 
@@ -26,7 +24,9 @@ def latest_flux(target: Target, t_ref: Time) -> float:
     exclude = False
     reject = False
 
-    for broker in DEFAULT_ZTF_BROKER_PRIORITY:
+    broker_priority = ("ztf", "alerce")
+
+    for broker in broker_priority:
         source_name = f"ztf_{broker}"
         source_data = target.target_data.get(source_name)
         if source_data is None:
@@ -40,7 +40,7 @@ def latest_flux(target: Target, t_ref: Time) -> float:
     if ztf_data is None:
         exclude = True
         score_comments.append(
-            f"no ztf data from {DEFAULT_ZTF_BROKER_PRIORITY}. only {target.target_data.keys()}"
+            f"no ztf data from {broker_priority}. only {target.target_data.keys()}"
         )
         return -1.0, score_comments
     else:

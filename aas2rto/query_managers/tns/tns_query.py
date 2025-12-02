@@ -162,6 +162,8 @@ class TNSQuery:
 
         self.check_return_type(return_type)
 
+        filename = url.split("/")[-1]
+
         self.wait_after_request(response)
         if response.status_code == 200:
             if process:
@@ -169,11 +171,16 @@ class TNSQuery:
                     response.content, return_type=return_type
                 )
             return response
+
+        if response.status_code == 404:
+            logger.info(f"filename {filename} failed, reason: {response.reason}")
+            return self.get_empty_delta_results(return_type=return_type)
+
         if response.status_code in [404, 429] and retries < max_retries:
 
             msg = (
                 f"status {response.status_code}: resubmit this request!"
-                f" try {retries}/{max_retries} {url.split('/')[-1]}"
+                f" try {retries}/{max_retries} {filename}"
             )
             logger.error(msg)
             return self.request_delta(
@@ -187,7 +194,7 @@ class TNSQuery:
             msg = (
                 f"{url}:\n    "
                 f"response {response.status_code}, failed after {max_retries} tries"
-                f" (reason {response.reason})"
+                f" (reason '{response.reason}')"
             )
             logger.error(msg)
             warnings.warn(TNSQueryWarning(msg))

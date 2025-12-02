@@ -133,6 +133,7 @@ class TNSQueryManager(BaseQueryManager):
             delta_filepath = self.get_daily_delta_filepath(t_delta)
             if delta_filepath.exists():
                 continue
+            logger.info(f"query for {delta_filepath.name}")
             df = self.tns_query.get_tns_daily_delta(t_delta)
             if df is not None:
                 if df.empty:
@@ -164,17 +165,15 @@ class TNSQueryManager(BaseQueryManager):
 
         ref_dt = t_ref.datetime
         curr_hour = ref_dt.hour
-        print("CURR HOUR", curr_hour)
         t_floor_data = dict(year=ref_dt.year, month=ref_dt.month, day=ref_dt.day)
         t_floor = Time(t_floor_data)
         new_deltas = []
         for hour in range(curr_hour + 1):
             t_delta = t_floor + hour * u.hour
             delta_filepath = self.get_hourly_delta_filepath(t_delta)
-            print(f"GET HOURLY DELTA {hour}, {delta_filepath}")
             if delta_filepath.exists():
-                print("ALREADY EXISTS!!")
                 continue
+            logger.info(f"query for {delta_filepath.name}")
             df = self.tns_query.get_tns_hourly_delta(hour)
             df.to_csv(delta_filepath, index=False)
             new_deltas.append(df)
@@ -232,6 +231,7 @@ class TNSQueryManager(BaseQueryManager):
             target_candidate_target_ids.append(target_id)
         if len(target_candidate_coords) == 0:
             logger.info("no targets in target_lookup to match!")
+            return
 
         target_candidate_coords = SkyCoord(target_candidate_coords)
 

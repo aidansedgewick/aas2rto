@@ -32,8 +32,6 @@ logger = getLogger(__name__.split(".")[-1])
 
 matplotlib.use("Agg")
 
-DEFAULT_ZTF_BROKER_PRIORITY = ("fink", "alerce", "lasair", "antares")
-
 
 class Target:
     """

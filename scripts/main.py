@@ -55,7 +55,7 @@ if __name__ == "__main__":
         models_path = None  # selector.path_manager.project_path / "sncosmo_salt_models"
         modeling_function = SncosmoSaltModeler(
             existing_models_path=models_path,
-            use_emcee=True,
+            use_emcee=False,
             show_traceback=True,
         )
         lc_plotting_function = plot_sncosmo_lightcurve

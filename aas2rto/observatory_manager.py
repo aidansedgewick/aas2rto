@@ -57,12 +57,8 @@ class ObservatoryManager:
         self.config["dt"] = self.config["dt"] * dt_unit
         print(self.config["dt"])
 
-    def _get_empty_observing_site_lookup(self) -> Dict[str, Observer]:
-        """Only for type hinting..."""
-        return {}
-
     def init_observing_sites(self):
-        self.sites = self._get_empty_observing_site_lookup()
+        self.sites: dict[str, Observer] = {}
 
         for site_name, site_location in self.sites_config.items():
             if isinstance(site_location, str):

@@ -54,7 +54,6 @@ class FinkBaseQuery(abc.ABC):
     def process_data(cls, data, fix_keys=True, return_type="records", df_kwargs=None):
         if fix_keys:
             for row in data:
-                print(row)
                 cls.fix_dict_keys_inplace(row)
         if return_type == "records":
             return data
@@ -90,10 +89,7 @@ class FinkBaseQuery(abc.ABC):
                 raise FinkQueryError(response.content.decode())
             else:
                 raise FinkQueryError(response.content)
-        print(response.content)
         data = json.loads(response.content)
-        print(type(data))
-        print(data)
         return cls.process_data(data, fix_keys=fix_keys, return_type=return_type)
 
     @classmethod

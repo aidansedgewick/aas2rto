@@ -16,7 +16,6 @@ from astroplan import Observer
 import sncosmo
 
 from aas2rto.target import Target
-from aas2rto.target import DEFAULT_ZTF_BROKER_PRIORITY
 
 logger = getLogger("supernova_peak")
 
@@ -181,7 +180,6 @@ class SupernovaPeakScore:
         max_chisq_nu: float = 10.0,
         min_mw_sep: float = 15.0,
         min_gal_lat: float = 5.0,
-        # broker_priority: tuple = DEFAULT_ZTF_BROKER_PRIORITY,
         use_compiled_lightcurve=True,
         scoring_sources: tuple = DEFAULT_SCORING_SOURCES,
         # scoring_bands: tuple = DEFAULT_SCORING_BANDS,
@@ -200,7 +198,6 @@ class SupernovaPeakScore:
         self.max_chisq_nu = max_chisq_nu
         self.min_mw_sep = min_mw_sep
         self.min_gal_lat = min_gal_lat
-        # self.broker_priority = tuple(broker_priority)
         self.use_compiled_lightcurve = use_compiled_lightcurve
         self.scoring_sources = scoring_sources
         # self.scoring_bands = scoring_bands
@@ -464,7 +461,6 @@ class SupernovaPeakScore:
 
         scoring_factors = np.array(list(factors.values()))
         if not all(scoring_factors > 0):
-            print(detections)
             neg_factors = "EXCLUDE:\n" + "\n".join(
                 f"    {k}={v}" for k, v in factors.items() if not v > 0
             )

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import abc
 import gzip
 import io
@@ -518,16 +520,16 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
 
             chunk_str = ",".join(fink_id_chunk)
             logger.info(f"start LC query chunk {ii+1} ({len(fink_id_chunk)} LCs)")
+            payload = {
+                self.target_id_key: chunk_str,
+                "withupperlim": True,
+            }
             try:
-                payload = {
-                    self.target_id_key: chunk_str,
-                    "withupperlim": True,
-                    "return_df": True,
-                }
                 t1 = time.perf_counter()
                 result = self.fink_query.objects(return_type="pandas", **payload)
                 chunk_results.append(result)
                 t2 = time.perf_counter()
+                logger.info(f"LC query chunk {ii+1} in {t2-t1:.1f}s")
 
             except Exception as e:
                 msg = f"LC query chunk {ii+1} failed:\n    {type(e).__name__}: {e}"

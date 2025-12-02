@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging.config
 
 import yaml
@@ -12,3 +13,6 @@ if default_logging_config.exists():
     with open(default_logging_config, "rt") as f:
         log_config = yaml.safe_load(f.read())
     logging.config.dictConfig(log_config)
+
+from astropy.utils.iers import conf
+conf.auto_max_age = None
