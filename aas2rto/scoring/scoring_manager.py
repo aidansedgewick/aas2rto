@@ -9,7 +9,7 @@ from astropy.time import Time
 from astroplan import Observer
 
 from aas2rto import utils
-from aas2rto.observatory_manager import ObservatoryManager
+from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
 from aas2rto.target import Target

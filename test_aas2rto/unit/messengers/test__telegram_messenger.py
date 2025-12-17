@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 
 import telegram
 
+from aas2rto.exc import MissingKeysError
 from aas2rto.messaging.telegram_messenger import TelegramMessenger
 
 
@@ -43,6 +44,13 @@ class Test__TelegramInit:
 
         assert set(msgr.sudoers.keys()) == set([801])
         assert msgr.sudoers[801] == "unknown_sudoer"
+
+    def test__no_token_raises(self, telegram_config: dict):
+        # Arrange
+        telegram_config.pop("token")
+
+        with pytest.raises(MissingKeysError):
+            msgr = TelegramMessenger(telegram_config)
 
 
 class Test__GetBot:

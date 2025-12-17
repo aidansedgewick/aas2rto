@@ -21,7 +21,7 @@ class PathManager:
     default_config = {
         "base_path": default_base_path,
         "project_path": "default",
-        "project_base": "default",
+        "project_name": "default",
         "paths": {},
     }
 
@@ -36,12 +36,14 @@ class PathManager:
         self.paths_config = self.config["paths"]
         self.process_paths(create_paths=create_paths)
 
+        self.web_templates_path = paths.base_path / "aas2rto/web/templates"
+
     def process_paths(self, create_paths=True):
         base_path = self.config["base_path"]
         self.base_path = Path(base_path)
 
         project_path = self.config["project_path"] or "default"
-        project_name = self.config["project_base"] or "default"
+        project_name = self.config["project_name"] or "default"
         if project_path == "default":
             if project_name == "default":
                 msg = (
@@ -105,6 +107,10 @@ class PathManager:
         if "recovery" not in self.lookup:
             self.lookup["recovery"] = self.project_path / "recovery_files"
         self.recovery_path = self.lookup["recovery"]
+
+        if "web" not in self.lookup:
+            self.lookup["web"] = self.project_path / "web"
+        self.web_path = self.lookup["web"]
 
         if create_paths:
             self.create_paths()

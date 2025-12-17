@@ -3,7 +3,9 @@ import pytest
 
 import pandas as pd
 
+from astropy import units as u
 from astropy.table import Table
+from astropy.time import Time
 
 from aas2rto.query_managers.fink.fink_query import (
     FinkBaseQuery,
@@ -188,6 +190,15 @@ class Test__HelperFunctions:
         assert isinstance(processed[0], dict)
         assert set(processed[0].keys()) == set("key01 key02".split())
 
+    def test__process_bad_return_fals(self):
+        # Arrange
+        data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
+        res = MockPostResponse(json=dict(content=data))  # json.dumps INSIDE __init__
+
+        # Act
+        with pytest.raises(ValueError):
+            processed = FinkCoolQuery.process_response(res, return_type="blah")
+
 
 class Test__BasicServices:
     def test__objects(self):
@@ -319,3 +330,32 @@ class Test__BasicServices:
         # Assert
         assert isinstance(res, MockPostResponse)
         assert res.args[0].split("/")[-1] == "ssoft"
+
+
+class Test__QueryAndCollate:
+    def test__query_and_collate_pandas(self, t_fixed: Time):
+        # Arrange
+        t_later = t_fixed + 1.0 * u.day
+
+        # Act
+        FinkCoolQuery.latests_query_and_collate(
+            t_fixed, t_stop=t_later, n=10, return_type="pandas"
+        )
+
+    def test__query_and_collate_astropy(self, t_fixed: Time):
+        # Arrange
+        t_later = t_fixed + 1.0 * u.day
+
+        # Act
+        FinkCoolQuery.latests_query_and_collate(
+            t_fixed, t_stop=t_later, n=10, return_type="astropy"
+        )
+
+    def test__query_and_collate_records(self, t_fixed: Time):
+        # Arrange
+        t_later = t_fixed + 1.0 * u.day
+
+        # Act
+        FinkCoolQuery.latests_query_and_collate(
+            t_fixed, t_stop=t_later, n=10, return_type="astropy"
+        )

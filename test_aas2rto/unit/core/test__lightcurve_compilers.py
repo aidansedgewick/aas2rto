@@ -120,7 +120,7 @@ class Test__DefaultLCCompiler:
         t_fixed: Time,
     ):
         # Arrange
-        basic_target.target_data["alerce"] = ztf_td
+        basic_target.target_data["alerce_ztf"] = ztf_td
 
         # Act
         result = lc_compiler(basic_target, t_ref=t_fixed)

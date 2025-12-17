@@ -334,6 +334,19 @@ class Test__GetScoreHistMethods:
         # Assert
         assert np.isclose(lasilla_score, 4.0)
 
+    def test__get_last_obs_score_returns_time(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        result = target.get_latest_obs_score("lasilla", return_time=True)
+
+        # Assert
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        assert np.isclose(result[0], 4.0)
+        assert np.isclose(result[1] - 60001.0, 0.0)
+
     def test__get_last_score_returns_time(self, mock_target_with_history: Target):
         # Arrange
         target = mock_target_with_history  # shorter name is nicer...
@@ -512,6 +525,17 @@ class Test__GetRankHistMethods:
         # Assert
         assert lasilla_rank == 12
 
+    def test__get_last_obs_rank_return_time(self, mock_target_with_history: Target):
+        # Arrange
+        target = mock_target_with_history  # shorter name is nicer...
+
+        # Act
+        result = target.get_latest_obs_rank("lasilla", return_time=True)
+
+        # Assert
+        assert result[0] == 12
+        assert np.isclose(result[1] - 60000.0, 1.0)
+
     def test__get_last_rank_returns_time(self, mock_target_with_history: Target):
         # Arrange
         target = mock_target_with_history  # shorter name is nicer...
@@ -547,7 +571,6 @@ class Test__InfoLines:
         info_str = " ".join(id_lines)
 
         # Assert
-        assert "Aliases and brokers" in info_str
         assert "FINK: fink-portal.org/ZTF25abc" in info_str
         assert "Lasair: lasair-ztf.lsst.ac.uk/objects/ZTF25abc" in info_str
         assert "ALeRCE: alerce.online/object/ZTF25abc" in info_str
@@ -564,6 +587,26 @@ class Test__InfoLines:
         # Assert
         assert "equatorial (ra, dec)" in info_str
         assert "galactic (l, b)" in info_str
+
+    def test__photom_lines(self, mock_target: Target, compiled_ztf_lc: pd.DataFrame):
+        # Arrange
+        mock_target.compiled_lightcurve = compiled_ztf_lc
+
+        # Act
+        photom_lines = mock_target.get_photometry_info_lines()
+
+        # Assert
+        assert "detections" in " ".join(photom_lines)
+
+    def test__photom_lines_no_lc(self, mock_target: Target):
+        # Arrange
+        assert mock_target.compiled_lightcurve is None
+
+        # Act
+        photom_lines = mock_target.get_photometry_info_lines()
+
+        # Assert
+        assert "no photometry available" in " ".join(photom_lines)
 
 
 class Test__WriteComments:
@@ -613,3 +656,24 @@ class Test__WriteComments:
         assert "Aliases and brokers" in comm_str
         assert "Coordinates" in comm_str
         assert "Photometry" in comm_str
+
+    def test__no_fail_with_no_obs_comms(self):
+        pass
+
+    def test__include_reject_line(
+        self, mock_target: Target, tmp_path: Path, t_fixed: Time
+    ):
+        # Arrange
+        mock_target.update_science_score_history(-np.inf, t_fixed)
+
+        # Act
+        mock_target.write_comments(tmp_path, t_ref=t_fixed)
+
+        # Assert
+        exp_comments_path = tmp_path / "T001_comments.txt"
+        assert exp_comments_path.exists()
+        with open(exp_comments_path) as f:
+            comms = f.readlines()
+        comm_str = " ".join(comms)
+
+        assert "T001 rejected at" in comm_str

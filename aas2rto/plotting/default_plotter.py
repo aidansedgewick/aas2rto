@@ -29,7 +29,7 @@ from aas2rto.exc import (
     MissingDateError,
     UnknownPhotometryTagWarning,
 )
-from aas2rto.ephem_info import EphemInfo
+from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.target import Target
 
 logger = getLogger(__name__.split(".")[-1])
@@ -124,7 +124,13 @@ class DefaultLightcurvePlotter:
         self.band_col = "band"
 
         self.cutouts_priority = (
-            "ztf_lsst", "ztf_fink", "ztf_alerce", "ztf_lasair", "ztf", "yse", "atlas"
+            "ztf_lsst",
+            "ztf_fink",
+            "ztf_alerce",
+            "ztf_lasair",
+            "ztf",
+            "yse",
+            "atlas",
         )
         self.cutout_keys = ["science", "template", "difference"]
 

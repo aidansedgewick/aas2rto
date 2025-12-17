@@ -8,7 +8,7 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto.observatory_manager import ObservatoryManager
+from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting.default_plotter import plot_default_lightcurve
 from aas2rto.plotting.rank_hist_plotter import plot_rank_histories

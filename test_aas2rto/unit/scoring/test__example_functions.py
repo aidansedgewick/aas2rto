@@ -35,7 +35,7 @@ class Test__ExampleScoringFunctions:
 class Test__LatestFlux:
     def test__no_ztf_data(self, basic_target: Target, t_fixed: Time):
         # Arrange
-        assert "ztf_fink" not in basic_target.target_data.keys()
+        assert "fink_ztf" not in basic_target.target_data.keys()
 
         # Act
         score, comms = latest_flux(basic_target, t_fixed)
@@ -48,7 +48,7 @@ class Test__LatestFlux:
         self, basic_target: Target, ztf_td: TargetData, t_fixed: Time
     ):
         # Arrange
-        basic_target.target_data["ztf_fink"] = ztf_td
+        basic_target.target_data["fink_ztf"] = ztf_td
 
         # Act
         score, comms = latest_flux(basic_target, t_fixed)

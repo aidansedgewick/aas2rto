@@ -11,9 +11,9 @@ from astropy.time import Time
 
 from aas2rto.exc import (
     DuplicateDataWarning,
-    MissingKeysWarning,
+    MissingKeysError,
     NotATargetError,
-    UnexpectedKeysWarning,
+    UnexpectedKeysError,
 )
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
@@ -361,7 +361,7 @@ class Test__AddTargetFromFile:
         assert np.isclose(target.coord.ra.deg, 225.0)
         assert np.isclose(target.coord.dec.deg, -15.5)
 
-    def test__malformed_config_returns_none(
+    def test__malformed_config_raises(
         self, tl: TargetLookup, target_config_example: dict, tmp_path: Path
     ):
         # Arrange
@@ -371,13 +371,10 @@ class Test__AddTargetFromFile:
             yaml.dump(target_config_example, f)
 
         # Act
-        with pytest.warns(MissingKeysWarning):
-            target = tl.add_target_from_file(target_config_path)
+        with pytest.raises(MissingKeysError):
+            tl.add_target_from_file(target_config_path)
 
-        # Assert
-        assert target is None
-
-    def test__unexpected_config_returns_none(
+    def test__unexpected_config_raise(
         self, tl: TargetLookup, target_config_example: dict, tmp_path: Path
     ):
         # Arrange
@@ -387,12 +384,8 @@ class Test__AddTargetFromFile:
             yaml.dump(target_config_example, f)
 
         # Act
-        with pytest.warns(UnexpectedKeysWarning):
+        with pytest.raises(UnexpectedKeysError):
             target = tl.add_target_from_file(target_config_path)
-
-        # Assert
-        assert target is None
-        assert "T99" not in tl
 
     def test__modify_existing(
         self, tl: TargetLookup, target_config_example: dict, tmp_path: Path
@@ -591,8 +584,9 @@ class Test__MergeTargetsUtil:
         assert basic_target.creation_time > other_target.creation_time
 
         # Act
-        merged = merge_targets([basic_target, other_target], sort=True)
-        # 'other_target' should be 'base'
+        with pytest.warns(DuplicateDataWarning):
+            merged = merge_targets([basic_target, other_target], sort=True)
+            # 'other_target' should be 'base'
 
         # Assert
         assert merged.target_id == "T01"  # from 'other_target'

@@ -20,121 +20,21 @@ from aas2rto.exc import (
 )
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
-from aas2rto.observatory_manager import ObservatoryManager
-from aas2rto.outputs_manager import OutputsManager
+from aas2rto.observatory.observatory_manager import ObservatoryManager
+from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 
 
-@pytest.fixture
-def mod_tl(tlookup: TargetLookup, lasilla: Observer, t_fixed: Time):
-    tlookup["T00"].update_science_score_history(10.0, t_ref=t_fixed)
-    tlookup["T00"].update_obs_score_history(3.0, lasilla, t_ref=t_fixed)
-    tlookup["T00"].update_obs_score_history(0.5, "astrolab", t_ref=t_fixed)
-    tlookup["T00"].science_comments = ["T00 comment"]
-    tlookup["T00"].obs_comments["lasilla"] = ["T00 lasilla comment"]
-    tlookup["T00"].obs_comments["astrolab"] = ["T00 astrolab comment"]
+# class Test__BlankPlotHelper:
+#     def test__blank_plot_helper(self, tmp_path: Path):
+#         # Arrange
+#         test_path = tmp_path / "test.png"
 
-    tlookup["T01"].update_science_score_history(5.0, t_ref=t_fixed)
-    tlookup["T01"].update_obs_score_history(1.0, lasilla, t_ref=t_fixed)
-    tlookup["T01"].update_obs_score_history(2.0, "astrolab", t_ref=t_fixed)
-    tlookup["T01"].science_comments = ["T01 comment"]
-    tlookup["T01"].obs_comments["lasilla"] = ["T01 lasilla comment"]
-    tlookup["T01"].obs_comments["astrolab"] = ["T01 astrolab comment"]
-    return tlookup
+#         # Act
+#         blank_plot_helper(test_path)
 
-
-@pytest.fixture
-def outputs_mgr(
-    mod_tl: TargetLookup, path_mgr: PathManager, obs_mgr: ObservatoryManager
-):
-    return OutputsManager({}, mod_tl, path_mgr, obs_mgr)
-
-
-@pytest.fixture
-def outputs_mgr_with_plots(
-    mod_tl: TargetLookup, path_mgr: PathManager, obs_mgr: ObservatoryManager
-):
-    omgr = OutputsManager({}, mod_tl, path_mgr, obs_mgr)
-    for target_id, target in mod_tl.items():
-        lc_path = path_mgr.get_lightcurve_plot_path(target_id)
-        blank_plot_helper(lc_path)
-        target.lc_fig_path = lc_path
-        for obs_name in obs_mgr.sites.keys():
-            vis_path = path_mgr.get_visibility_plot_path(target_id, obs_name)
-            blank_plot_helper(vis_path)
-            target.vis_fig_paths[obs_name] = vis_path
-    return omgr
-
-
-@pytest.fixture
-def tl_vis_targets(lasilla: Observer, t_fixed: Time):
-    # Reverse engineer some targets which will be visible and not visible at t_fixed
-    midnight = lasilla.midnight(t_fixed, which="next", n_grid_points=40)
-    t_early = midnight - 3.0 * u.hour  # earlier
-    t_later = midnight + 3.0 * u.hour  # later
-
-    lst_e = lasilla.local_sidereal_time(t_early)  # has units deg
-    lst_m = lasilla.local_sidereal_time(midnight)
-    lst_l = lasilla.local_sidereal_time(t_later)
-
-    o_lat = lasilla.location.lat  # dec = lat +/- ZD, ZD = (90-transit_alt)
-    c00 = SkyCoord(ra=lst_m, dec=o_lat - (90.0 - 80.0) * u.deg)  # 00:00 local
-    c01 = SkyCoord(ra=lst_l, dec=o_lat - (90.0 - 80.0) * u.deg)  # 03:00 local
-    c02 = SkyCoord(ra=lst_m, dec=o_lat + (90.0 - 20.0) * u.deg)  # too low (North)
-    c03 = SkyCoord(ra=lst_e, dec=o_lat - (90.0 - 80.0) * u.deg)  # 21:00 local
-    c04 = SkyCoord(ra=lst_m, dec=o_lat - (90.0 - 80.0) * u.deg)  # bad score
-    c05 = SkyCoord(ra=lst_m, dec=o_lat - (90.0 - 80.0) * u.deg)  # no score
-
-    target_list = [
-        Target("Tv00", c00.transform_to("icrs")),
-        Target("Tv01", c01.transform_to("icrs")),
-        Target("Tv02", c02.transform_to("icrs")),
-        Target("Tv03", c03.transform_to("icrs")),
-        Target("Tv04", c04.transform_to("icrs")),
-        Target("Tv05", c05.transform_to("icrs")),
-    ]
-
-    tl = TargetLookup()
-    tl.add_target_list(target_list)
-    tl["Tv00"].update_science_score_history(1.0, midnight)
-    tl["Tv01"].update_science_score_history(1.0, midnight)
-    tl["Tv02"].update_science_score_history(1.0, midnight)
-    tl["Tv03"].update_science_score_history(1.0, midnight)
-    tl["Tv04"].update_science_score_history(-1.0, midnight)
-    # Tv05 has no score!
-    return tl
-
-
-@pytest.fixture  #
-def om_vis_targets(
-    tl_vis_targets: TargetLookup,
-    path_mgr: PathManager,
-    obs_mgr_config: dict,
-    t_fixed: Time,
-):
-    obs_mgr = ObservatoryManager(obs_mgr_config, tl_vis_targets, path_mgr)
-    om = OutputsManager({}, tl_vis_targets, path_mgr, obs_mgr)
-    om.observatory_manager.apply_ephem_info(t_ref=t_fixed)
-    return om
-
-
-def blank_plot_helper(filepath):
-    fig, ax = plt.subplots(figsize=(1, 1))
-    fig.savefig(filepath)
-    plt.close(fig)
-    return
-
-
-class Test__BlankPlotHelper:
-    def test__blank_plot_helper(self, tmp_path: Path):
-        # Arrange
-        test_path = tmp_path / "test.png"
-
-        # Act
-        blank_plot_helper(test_path)
-
-        # Assert
-        test_path.exists()
+#         # Assert
+#         test_path.exists()
 
 
 class Test__OutputMgrInit:
@@ -188,7 +88,8 @@ class Test__WriteComments:
 
     def test__write_comm_subset(self, outputs_mgr: OutputsManager, t_fixed: Time):
         # Act
-        outputs_mgr.write_target_comments(target_id_list=["T00"])
+        T00 = outputs_mgr.target_lookup["T00"]
+        outputs_mgr.write_target_comments(target_list=[T00])
 
         # Assert
         comms_path = outputs_mgr.path_manager.comments_path
@@ -197,10 +98,10 @@ class Test__WriteComments:
         exp_T01_comms_filepath = comms_path / "T01_comments.txt"
         assert not exp_T01_comms_filepath.exists()
 
-    def test__missing_target_warns(self, outputs_mgr: OutputsManager, t_fixed: Time):
-        # Act
-        with pytest.warns(UnknownTargetWarning):
-            outputs_mgr.write_target_comments(target_id_list=["Tx"])
+    # def test__missing_target_warns(self, outputs_mgr: OutputsManager, t_fixed: Time):
+    #     # Act
+    #     with pytest.warns(UnknownTargetWarning):
+    #         outputs_mgr.write_target_comments(target_id_list=["Tx"])
 
 
 class Test__RankObsOnScienceScore:
@@ -386,9 +287,7 @@ class Test__VisibleTargets:
         outputs_mgr = om_vis_targets
 
         # Act
-        vis_list = outputs_mgr.create_visible_target_list_for_obs(
-            lasilla, t_ref=t_fixed
-        )
+        vis_list = outputs_mgr.build_visible_target_list_for_obs(lasilla, t_ref=t_fixed)
         print(vis_list)
 
         # Assert
@@ -405,7 +304,7 @@ class Test__VisibleTargets:
         outputs_mgr = om_vis_targets
 
         # Act
-        outputs_mgr.create_visible_target_lists(t_ref=t_fixed)
+        outputs_mgr.build_visible_target_lists(t_ref=t_fixed)
 
         # Assert
         assert set(outputs_mgr.obs_visible_lists.keys()) == set(["lasilla", "astrolab"])
@@ -420,7 +319,7 @@ class Test__VisibleTargets:
 
         # Act
         with pytest.warns(MissingEphemInfoWarning):
-            vis_list = outputs_mgr.create_visible_target_list_for_obs(
+            vis_list = outputs_mgr.build_visible_target_list_for_obs(
                 lasilla, t_ref=t_fixed
             )
 

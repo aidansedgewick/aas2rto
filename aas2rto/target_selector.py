@@ -31,14 +31,15 @@ from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
 from aas2rto.messaging.messaging_manager import MessagingManager
 from aas2rto.modeling.modeling_manager import ModelingManager
 from aas2rto.scoring.scoring_manager import ScoringManager
-from aas2rto.ephem_info import EphemInfo
-from aas2rto.observatory_manager import ObservatoryManager
-from aas2rto.outputs_manager import OutputsManager
+from aas2rto.observatory.ephem_info import EphemInfo
+from aas2rto.observatory.observatory_manager import ObservatoryManager
+from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
-from aas2rto.query_managers import GlobalQueryManager
+from aas2rto.query_managers.primary import PrimaryQueryManager
 from aas2rto.plotting import PlottingManager, plot_default_lightcurve, plot_visibility
-from aas2rto.recovery_manager import RecoveryManager
+from aas2rto.recovery.recovery_manager import RecoveryManager
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
+from aas2rto.web.web_manager import WebManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
@@ -86,6 +87,7 @@ class TargetSelector:
         "recovery",
         "plotting",
         "outputs",
+        "web",
     )
     default_selector_config = {
         "project_name": None,
@@ -99,10 +101,11 @@ class TargetSelector:
         "lazy_compile": True,
         "consolidate_seplim": 5 * u.arcsec,
         "write_comments": True,
+        "delete_opp_target_configs": True,
     }
     # expected_messenger_keys = ("telegram", "slack", "web")
 
-    def __init__(self, aas2rto_config: dict, create_paths=True):
+    def __init__(self, aas2rto_config: dict, create_paths: bool = True):
         # Check config sections
         utils.check_unexpected_config_keys(
             aas2rto_config,
@@ -134,12 +137,13 @@ class TargetSelector:
         self.outputs_config = aas2rto_config.get("outputs", {})
         self.recovery_config = aas2rto_config.get("recovery", {})
         self.messaging_config = aas2rto_config.get("messaging", {})
+        self.web_config = aas2rto_config.get("web", {})
 
-        # to keep the targets. Do this here as other Managers depend on it.
+        # Init TargetLookup first as everything else depends on it.
         self.target_lookup = TargetLookup()
 
-        # Initialise PathManager first - others Managers depend on it.
-        self.path_manager = PathManager(self.paths_config)
+        # Initialise PathManager next - others Managers depend on it.
+        self.path_manager = PathManager(self.paths_config, create_paths=create_paths)
 
         # Initialise ObservatoryManager next - others depend on obs_manager and path_manager
         self.observatory_manager = ObservatoryManager(
@@ -150,7 +154,7 @@ class TargetSelector:
         self.recovery_manager = RecoveryManager(
             self.recovery_config, self.target_lookup, self.path_manager
         )
-        self.global_query_manager = GlobalQueryManager(
+        self.primary_query_manager = PrimaryQueryManager(
             self.query_managers_config,
             self.target_lookup,
             self.path_manager,
@@ -182,8 +186,14 @@ class TargetSelector:
             self.observatory_manager,
         )
 
+        # Finally - web manager is a little peculiar in that it depends
+        # on OUTPUTS_MANAGER, not target_lookup
+        self.web_manager = WebManager(
+            self.web_config, self.outputs_manager, self.path_manager
+        )
+
     @classmethod
-    def from_config(cls, config_path, create_paths=True):
+    def from_config(cls, config_path: Path, create_paths: bool = True):
         config_path = Path(config_path)
 
         with open(config_path, "r") as f:
@@ -191,34 +201,37 @@ class TargetSelector:
         selector = cls(selector_config, create_paths=create_paths)
         return selector
 
-    def check_for_targets_of_opportunity(self, t_ref: Time = None):
+    def load_targets_of_opportunity(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        logger.info("check for targets of opportunity")
+        logger.info("load targets of opportunity")
         opp_target_file_list = self.path_manager.opp_targets_path.glob("*.yaml")
         failed_targets = []
-        existing_targets = []
         successful_targets = []
         for opp_target_filepath in opp_target_file_list:
-            target = self.target_lookup.add_target_from_file(
-                opp_target_filepath, target_of_opportunity=True, t_ref=t_ref
-            )
-            if target is None:
+            try:
+                self.target_lookup.add_target_from_file(
+                    opp_target_filepath, t_ref=t_ref
+                )
+                successful_targets.append(opp_target_filepath)
+            except Exception as e:
+                logger.error(f"target in file '{opp_target_filepath.name}' failed")
+                logger.error(f"{type(e)}: {e}")
                 failed_targets.append(opp_target_filepath)
-            else:
-                successful_targets.append(target.target_id)
-        if len(failed_targets) > 0:
-            failed_list = [f.name for f in failed_targets]
-            logger.warning(f"failed to add some targets: ")
-            logger.warning(f"{len(failed_targets)} failed targets:\n    {failed_list}")
-        msg = f"{len(successful_targets)} new opp targets"
-        if len(existing_targets) > 0:
-            msg = msg + f" ({len(existing_targets)} already exist)"
-        for target_file in successful_targets + existing_targets:
-            os.remove(target_file)
-            assert not target_file.exists()
 
-        return successful_targets, existing_targets, failed_targets
+        if len(failed_targets) > 0:
+            failed_list = "\n".join(f"    {f.name}" for f in failed_targets)
+            msg = f"failed to add {len(failed_targets)} targets:\n{failed_targets}"
+            logger.warning(msg)
+        if len(successful_targets) > 0:
+            logger.info(f"{len(successful_targets)} new opp targets")
+
+        if self.selector_config.get("delete_opp_target_configs", True):
+            for target_file in successful_targets:
+                os.remove(target_file)
+                assert not target_file.exists()
+
+        return successful_targets, failed_targets
 
     def compile_target_lightcurves(
         self, lightcurve_compiler: Callable = None, lazy=False, t_ref=None
@@ -354,9 +367,9 @@ class TargetSelector:
 
         # =========================== Get new data =========================== #
         t1 = time.perf_counter()
-        self.check_for_targets_of_opportunity()
+        self.load_targets_of_opportunity(t_ref=t_ref)
         if not "qm_tasks" in skip_tasks:
-            self.global_query_manager.perform_all_query_manager_tasks(
+            self.primary_query_manager.perform_all_query_manager_tasks(
                 iteration=iteration, t_ref=t_ref
             )
         else:
@@ -510,7 +523,7 @@ class TargetSelector:
         logger.info(
             f"time summary:\n    "
             + f"\n    ".join(f"{k:10} = {v: 6.2f}s" for k, v in perf_times.items())
-        )
+        )  # space in f string formatter is for float padding!
 
         return None
 
@@ -568,7 +581,7 @@ class TargetSelector:
             It should return:\n
                 `model` : `Any`\n
                     the model which describes your source. You can access it in
-                    (eg.) scoring functions with target.models[<your_func_name>]
+                    (eg.) scoring functions with `target.models[<your_func_name>]`
 
         lightcurve_compiler : Callable
             Function which produces a convenient single lightcurve including all data
@@ -619,7 +632,7 @@ class TargetSelector:
             lightcurve_compiler = DefaultLightcurveCompiler()
 
         if recovery_file:
-            recovered_target = self.recovery_manager.recover_targets_from_file(
+            recovered_targets = self.recovery_manager.recover_targets_from_file(
                 recovery_file=recovery_file
             )
 
@@ -630,7 +643,7 @@ class TargetSelector:
             nodename = "<unknown node>"
         t_start_str = t_ref.strftime("%Y-%m-%d %H:%M:%S UTC")
         obs_list = list(self.observatory_manager.sites.keys())
-        qm_list = list(self.global_query_manager.query_managers.keys())
+        qm_list = list(self.primary_query_manager.query_managers.keys())
         if not isinstance(modeling_function, list):
             modeling_function = [modeling_function]
         model_func_list = [f.__name__ for f in modeling_function]

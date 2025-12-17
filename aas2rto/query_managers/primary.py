@@ -35,7 +35,7 @@ EXPECTED_QUERY_MANAGERS = {
 }
 
 
-class GlobalQueryManager:
+class PrimaryQueryManager:
 
     def __init__(
         self,

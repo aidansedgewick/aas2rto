@@ -42,6 +42,7 @@ class Test__PathManagerInit:
             "comments",
             "rejected_targets",
             "recovery",
+            "web",
         ]
         assert set(pm.lookup.keys()) == set(expected_keys)
 

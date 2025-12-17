@@ -3,38 +3,38 @@ import pytest
 from aas2rto.path_manager import PathManager
 
 from aas2rto.query_managers.base import BaseQueryManager
-from aas2rto.query_managers.global_query_manager import (
+from aas2rto.query_managers.primary import (
     EXPECTED_QUERY_MANAGERS,
-    GlobalQueryManager,
+    PrimaryQueryManager,
 )
 
 from aas2rto.target_lookup import TargetLookup
 
 
-class Test__InitGlobalQM:
+class Test__InitPrimaryQM:
     def test__no_qms(self, tlookup: TargetLookup, path_mgr: PathManager):
         # Arrange
         empty_config = {}
 
         # Act
-        gqm = GlobalQueryManager(empty_config, tlookup, path_mgr)
+        pqm = PrimaryQueryManager(empty_config, tlookup, path_mgr)
 
         # Assert
-        assert isinstance(gqm.query_managers, dict)
-        assert set(gqm.query_managers.keys()) == set()
+        assert isinstance(pqm.query_managers, dict)
+        assert set(pqm.query_managers.keys()) == set()
 
     def test__all_qms_init(
         self, global_qm_config: dict, tlookup: TargetLookup, path_mgr: PathManager
     ):
         # Act
-        gqm = GlobalQueryManager(global_qm_config, tlookup, path_mgr)
+        pqm = PrimaryQueryManager(global_qm_config, tlookup, path_mgr)
 
         # Assert
         exp_qms = ["atlas", "fink_ztf", "fink_lsst", "tns"]
-        assert set(gqm.query_managers.keys()) == set(exp_qms)
+        assert set(pqm.query_managers.keys()) == set(exp_qms)
 
         untested_qms = set(EXPECTED_QUERY_MANAGERS.keys()) - set(
-            gqm.query_managers.keys()
+            pqm.query_managers.keys()
         )
         if untested_qms:
             msg = (
@@ -52,9 +52,9 @@ class Test__InitGlobalQM:
         config["atlas"]["use"] = False
 
         # Act
-        gqm = GlobalQueryManager(config, tlookup, path_mgr)
+        pqm = PrimaryQueryManager(config, tlookup, path_mgr)
         # Assert
-        assert set(gqm.query_managers.keys()) == set()
+        assert set(pqm.query_managers.keys()) == set()
 
     def test__unknown_qm_raises(self, tlookup: TargetLookup, path_mgr: PathManager):
         # Arrange
@@ -62,4 +62,4 @@ class Test__InitGlobalQM:
 
         # Act
         with pytest.raises(ValueError):
-            gqm = GlobalQueryManager(config, tlookup, path_mgr)
+            pqm = PrimaryQueryManager(config, tlookup, path_mgr)

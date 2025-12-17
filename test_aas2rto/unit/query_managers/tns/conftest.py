@@ -131,7 +131,7 @@ def monkeypatched_tns_query(
         if "bad_request" in url:
             reas = "Bad request"
             return MockPostResponse(
-                url, req_headers=headers, status_code=404, content=reas, reason=reas
+                url, req_headers=headers, status_code=400, content=reas, reason=reas
             )
         else:
             filename = url.split("/")[-1]

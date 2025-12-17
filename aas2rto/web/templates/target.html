@@ -1,0 +1,30 @@
+<html lang="en">
+    <head>
+        <title>{{ target_id }}</title>
+    </head>
+
+    <body>
+        <h1>{{ target_id }}</h1>
+        
+        <p>{{ target_text }}</p>
+
+        <h2>Lightcurve</h2>
+        <img src="{{ lc_fig_path }}"><br>
+
+        <h2>Visibility</h2>
+        {% for vis_fig_path in vis_fig_path_list %}
+            <img src="{{ vis_fig_path }}"><br><br>
+        {% endfor %}
+
+        <h2>Additional plots</h2>
+        {% for fig_path in additional_fig_path_list %}
+            <img src="{{ fig_path }}"><br><br>
+        {% endfor %}      
+    </body>
+
+    <footer>
+        <br>
+        <small><a href="{{ index_url }}">Back to home page</a></small><br>
+        <small>Last updated {{ update_time_str }} </small>
+    </footer>
+</html>
