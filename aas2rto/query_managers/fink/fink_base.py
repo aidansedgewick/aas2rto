@@ -101,6 +101,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
         "max_query_time": 300.0,
         "lightcurve_update_interval": 2.0,
         "lightcurve_chunk_size": 25,
+        "lightcurve_columns": None,
         "kafka": None,
         "n_alerts": 10,
         "alert_timeout": 10.0,
@@ -524,6 +525,9 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
                 self.target_id_key: chunk_str,
                 "withupperlim": True,
             }
+            lightcurve_columns = self.config["lightcurve_columns"]
+            if lightcurve_columns is not None:
+                payload["columns"] = lightcurve_columns
             try:
                 t1 = time.perf_counter()
                 result = self.fink_query.objects(return_type="pandas", **payload)
