@@ -11,7 +11,7 @@ from aas2rto.exc import MissingFileWarning, UnexpectedKeysWarning
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
-from aas2rto.recovery_manager import RecoveryManager
+from aas2rto.recovery.recovery_manager import RecoveryManager
 
 
 @pytest.fixture

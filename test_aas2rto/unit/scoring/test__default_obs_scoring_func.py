@@ -8,8 +8,8 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto.ephem_info import EphemInfo
 from aas2rto.exc import InvalidEphemWarning
+from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.scoring.default_obs_scoring import (
     DefaultObservatoryScoring,
     compute_visibility_integral,

@@ -206,17 +206,19 @@ class TargetLookup:
         target_filepath = Path(target_filepath)
         with open(target_filepath, "r") as f:
             target_config = yaml.load(f, Loader=yaml.FullLoader)
-        missing_keys = utils.check_missing_config_keys(
-            target_config, self.REQUIRED_TARGET_CONFIG_KEYS, name=target_filepath.stem
+        utils.check_missing_config_keys(
+            target_config,
+            self.REQUIRED_TARGET_CONFIG_KEYS,
+            name=target_filepath.stem,
+            raise_exc=True,
         )
-        if missing_keys:
-            return None
 
-        unexpected_keys = utils.check_unexpected_config_keys(
-            target_config, self.EXPECTED_TARGET_CONFIG_KEYS, name=target_filepath.stem
+        utils.check_unexpected_config_keys(
+            target_config,
+            self.EXPECTED_TARGET_CONFIG_KEYS,
+            name=target_filepath.stem,
+            raise_exc=True,
         )
-        if unexpected_keys:
-            return None
 
         target_id = target_config["target_id"]
 
@@ -241,7 +243,7 @@ class TargetLookup:
             target.update_coordinates(coord)
             alt_ids = target_config.get("alt_ids", {})
             target.alt_ids.update(alt_ids)
-            opp_target = target_config.get("target_of_opportunity", None)
+            opp_target = target_config.get("target_of_opportunity", True)
             target.target_of_opportunity = opp_target
         else:
             target = Target(**target_config)

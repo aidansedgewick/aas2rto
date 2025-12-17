@@ -175,22 +175,7 @@ def check_missing_config_keys(
     return list(missing_keys)
 
 
-def haversine(loc1: EarthLocation, loc2: EarthLocation, r=6371):
-    dlon = loc2.lon.rad - loc1.lon.rad
-    dlat = loc2.lat.rad - loc1.lat.rad
-    sin_hdlat = np.sin(dlat / 2.0)
-    sin_hdlon = np.sin(dlon / 2.0)
-    print(sin_hdlat, sin_hdlon)
-
-    a = sin_hdlat**2 + np.cos(loc1.lat.rad) * np.cos(loc2.lat.rad) * sin_hdlon**2
-
-    c = 2.0 * np.arcsin(np.sqrt(a))
-    return r * c
-
-
 def get_observatory_name(observatory: Union[Observer, None, str]):
     if isinstance(observatory, str):
         return observatory
-    if observatory is None:
-        return "no_observatory"
     return observatory.name

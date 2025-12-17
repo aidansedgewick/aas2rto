@@ -12,7 +12,7 @@ from astroplan import Observer
 
 from aas2rto import utils
 from aas2rto.exc import MissingEphemInfoWarning
-from aas2rto.ephem_info import EphemInfo
+from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.path_manager import PathManager
 from aas2rto.target_lookup import TargetLookup
 

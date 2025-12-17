@@ -9,7 +9,7 @@ from astropy.time import Time
 
 import matplotlib.pyplot as plt
 
-from aas2rto.ephem_info import EphemInfo
+from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.plotting.visibility_plotter import VisibilityPlotter, plot_visibility
 from aas2rto.target import Target
 

@@ -11,7 +11,7 @@ from astropy.time import Time
 from astroplan import Observer
 
 from aas2rto import utils
-from aas2rto.ephem_info import EphemInfo
+from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.exc import InvalidEphemWarning
 from aas2rto.target import Target
 

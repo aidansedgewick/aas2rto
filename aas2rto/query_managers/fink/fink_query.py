@@ -1,5 +1,6 @@
 import abc
 import copy
+import itertools
 import json
 import requests
 import time
@@ -151,7 +152,7 @@ class FinkBaseQuery(abc.ABC):
         t_start: Time,
         t_stop: Time = None,
         step=3 * u.h,
-        return_type=None,
+        return_type="pandas",
         fix_keys=True,
         n=1000,
         **kwargs,
@@ -177,8 +178,8 @@ class FinkBaseQuery(abc.ABC):
                 logger.warning(msg)
             if len(result) > 0:
                 results.append(result)
-        if return_type is None:
-            return sum(results)  # sum([[1], [2,3]]) == [1,2,3]
+        if return_type == "records":
+            return itertools.chain.from_iterable(result)
         elif return_type == "pandas":
             if len(results) > 0:
                 return pd.concat(results)

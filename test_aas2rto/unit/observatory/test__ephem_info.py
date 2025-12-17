@@ -9,7 +9,7 @@ from astropy.time import Time, TimeDelta
 
 from astroplan import Observer, TargetAlwaysUpWarning, TargetNeverUpWarning
 
-from aas2rto.ephem_info import (
+from aas2rto.observatory.ephem_info import (
     EphemInfo,
     observatory_tonight,
     get_next_valid_sunset_sunrise,

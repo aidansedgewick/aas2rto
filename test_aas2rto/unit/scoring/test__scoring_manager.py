@@ -8,7 +8,7 @@ from astropy.time import Time
 from astroplan import Observer
 
 from aas2rto.exc import UnexpectedKeysWarning
-from aas2rto.observatory_manager import ObservatoryManager
+from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.scoring.scoring_manager import (
     ScoringManager,

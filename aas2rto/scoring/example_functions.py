@@ -8,6 +8,7 @@ from astroplan import Observer
 
 from aas2rto.target import Target
 
+
 def constant_score(target: Target, t_ref: Time):
     return 1.0
 
@@ -24,10 +25,10 @@ def latest_flux(target: Target, t_ref: Time) -> float:
     exclude = False
     reject = False
 
-    broker_priority = ("ztf", "alerce")
+    broker_priority = ("fink", "alerce")
 
     for broker in broker_priority:
-        source_name = f"ztf_{broker}"
+        source_name = f"{broker}_ztf"
         source_data = target.target_data.get(source_name)
         if source_data is None:
             continue

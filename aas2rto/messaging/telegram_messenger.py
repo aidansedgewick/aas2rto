@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple
 from astropy.time import Time
 
 from aas2rto import utils
-from aas2rto.exc import MissingRequiredConfigKeyError, MissingMediaWarning
+from aas2rto.exc import MissingKeysError, MissingMediaWarning
 
 try:
     import telegram
@@ -34,7 +34,9 @@ class TelegramMessenger:
     def __init__(self, telegram_config: dict):
         self.telegram_config = telegram_config
         utils.check_unexpected_config_keys(
-            self.telegram_config, self.expected_kwargs, name="telegram_config"
+            self.telegram_config,
+            self.expected_kwargs,
+            name="telegram_config",
         )
 
         if telegram is None:
@@ -49,7 +51,7 @@ class TelegramMessenger:
         if self.token is None:
             msg = "telegram config missing required key \033[31;1mtoken\033[0m"
             logger.error(msg)
-            raise MissingRequiredConfigKeyError(msg)
+            raise MissingKeysError(msg)
 
         users = self.telegram_config.get("users", {})
         sudoers = self.telegram_config.get("sudoers", {})
@@ -157,7 +159,9 @@ class TelegramMessenger:
             bot = self.get_bot()
             try:
                 sent = asyncio.run(
-                    bot.send_message(chat_id=user, text=text, disable_web_page_preview=True)
+                    bot.send_message(
+                        chat_id=user, text=text, disable_web_page_preview=True
+                    )
                 )
                 sent_messages.append(sent)
             except ValueError:
@@ -185,7 +189,9 @@ class TelegramMessenger:
                     media_list.append(media_ii)
                 bot = self.get_bot()
                 try:
-                    sent = asyncio.run(bot.send_media_group(chat_id=user, media=media_list))
+                    sent = asyncio.run(
+                        bot.send_media_group(chat_id=user, media=media_list)
+                    )
                     sent_messages.append(sent)
                 except ValueError:
                     # Catch weird co-routine error in py3.9

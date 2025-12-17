@@ -1,5 +1,6 @@
 import copy
 import pytest
+import subprocess
 from pathlib import Path
 from typing import Dict, List
 
@@ -7,18 +8,22 @@ import numpy as np
 
 import pandas as pd
 
+from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
+import matplotlib.pyplot as plt
+
+from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler, prepare_ztf_data
 from aas2rto.messaging.messaging_manager import MessagingManager
 from aas2rto.messaging.slack_messenger import SlackMessenger, SlackApiError
 from aas2rto.messaging.telegram_messenger import TelegramMessenger
 from aas2rto.modeling.modeling_manager import ModelingManager
-from aas2rto.observatory_manager import ObservatoryManager
+from aas2rto.observatory.observatory_manager import ObservatoryManager
+from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting.plotting_manager import PlottingManager
 from aas2rto.scoring.scoring_manager import ScoringManager
@@ -49,6 +54,15 @@ def remove_tmp_dirs(tmp_path: Path):
 
     # Cleanup
     remove_empty_filetree(tmp_path)  # Code AFTER yield in fixture is cleanup/teardown
+
+
+@pytest.fixture(autouse=True)
+def no_subprocess(monkeypatch: pytest.MonkeyPatch):
+    # define HERE (main conftest.py), so that no subprocess commands ever run.
+    def dummy_check_output(*args, **kwargs):
+        return "".encode()
+
+    monkeypatch.setattr(subprocess, "check_output", dummy_check_output)
 
 
 @pytest.fixture(scope="session")
@@ -285,10 +299,8 @@ def ztf_td(lc_ztf: pd.DataFrame):
 
 
 @pytest.fixture
-def compiled_ztf_lc(
-    ztf_td: TargetData, lc_compiler: DefaultLightcurveCompiler, t_fixed
-):
-    return lc_compiler(ztf_td, t_ref=t_fixed)  # t_ref does nothing.
+def compiled_ztf_lc(ztf_td: TargetData) -> pd.DataFrame:
+    return prepare_ztf_data(ztf_td)
 
 
 @pytest.fixture
@@ -359,6 +371,108 @@ def tns_td():
 @pytest.fixture
 def t_plot():
     return Time(60010.0, format="mjd")
+
+
+@pytest.fixture
+def mod_tl(tlookup: TargetLookup, lasilla: Observer, t_fixed: Time):
+    tlookup["T00"].update_science_score_history(10.0, t_ref=t_fixed)
+    tlookup["T00"].update_obs_score_history(3.0, lasilla, t_ref=t_fixed)
+    tlookup["T00"].update_obs_score_history(0.5, "astrolab", t_ref=t_fixed)
+    tlookup["T00"].science_comments = ["T00 comment"]
+    tlookup["T00"].obs_comments["lasilla"] = ["T00 lasilla comment"]
+    tlookup["T00"].obs_comments["astrolab"] = ["T00 astrolab comment"]
+
+    tlookup["T01"].update_science_score_history(5.0, t_ref=t_fixed)
+    tlookup["T01"].update_obs_score_history(1.0, lasilla, t_ref=t_fixed)
+    tlookup["T01"].update_obs_score_history(2.0, "astrolab", t_ref=t_fixed)
+    tlookup["T01"].science_comments = ["T01 comment"]
+    tlookup["T01"].obs_comments["lasilla"] = ["T01 lasilla comment"]
+    tlookup["T01"].obs_comments["astrolab"] = ["T01 astrolab comment"]
+    return tlookup
+
+
+@pytest.fixture
+def outputs_mgr(
+    mod_tl: TargetLookup, path_mgr: PathManager, obs_mgr: ObservatoryManager
+):
+    return OutputsManager({}, mod_tl, path_mgr, obs_mgr)
+
+
+def blank_plot_helper(filepath, title=None):
+    fig, ax = plt.subplots(figsize=(1, 1))
+    if title is not None:
+        fig.suptitle(title)
+    fig.savefig(filepath)
+    plt.close(fig)
+    return
+
+
+@pytest.fixture
+def outputs_mgr_with_plots(
+    mod_tl: TargetLookup, path_mgr: PathManager, obs_mgr: ObservatoryManager
+):
+    omgr = OutputsManager({}, mod_tl, path_mgr, obs_mgr)
+    for target_id, target in mod_tl.items():
+        lc_path = path_mgr.get_lightcurve_plot_path(target_id)
+        blank_plot_helper(lc_path)
+        target.lc_fig_path = lc_path
+        for obs_name in obs_mgr.sites.keys():
+            vis_path = path_mgr.get_visibility_plot_path(target_id, obs_name)
+            blank_plot_helper(vis_path)
+            target.vis_fig_paths[obs_name] = vis_path
+    return omgr
+
+
+@pytest.fixture
+def tl_vis_targets(lasilla: Observer, t_fixed: Time):
+    # Reverse engineer some targets which will be visible and not visible at t_fixed
+    midnight = lasilla.midnight(t_fixed, which="next", n_grid_points=40)
+    t_early = midnight - 3.0 * u.hour  # earlier
+    t_later = midnight + 3.0 * u.hour  # later
+
+    lst_e = lasilla.local_sidereal_time(t_early)  # has units deg
+    lst_m = lasilla.local_sidereal_time(midnight)
+    lst_l = lasilla.local_sidereal_time(t_later)
+
+    o_lat = lasilla.location.lat  # dec = lat +/- ZD, ZD = (90-transit_alt)
+    c00 = SkyCoord(ra=lst_m, dec=o_lat - (90.0 - 80.0) * u.deg)  # 00:00 local
+    c01 = SkyCoord(ra=lst_l, dec=o_lat - (90.0 - 80.0) * u.deg)  # 03:00 local
+    c02 = SkyCoord(ra=lst_m, dec=o_lat + (90.0 - 20.0) * u.deg)  # too low (North)
+    c03 = SkyCoord(ra=lst_e, dec=o_lat - (90.0 - 80.0) * u.deg)  # 21:00 local
+    c04 = SkyCoord(ra=lst_m, dec=o_lat - (90.0 - 80.0) * u.deg)  # bad score
+    c05 = SkyCoord(ra=lst_m, dec=o_lat - (90.0 - 80.0) * u.deg)  # no score
+
+    target_list = [
+        Target("Tv00", c00.transform_to("icrs")),
+        Target("Tv01", c01.transform_to("icrs")),
+        Target("Tv02", c02.transform_to("icrs")),
+        Target("Tv03", c03.transform_to("icrs")),
+        Target("Tv04", c04.transform_to("icrs")),
+        Target("Tv05", c05.transform_to("icrs")),
+    ]
+
+    tl = TargetLookup()
+    tl.add_target_list(target_list)
+    tl["Tv00"].update_science_score_history(1.0, midnight)
+    tl["Tv01"].update_science_score_history(1.0, midnight)
+    tl["Tv02"].update_science_score_history(1.0, midnight)
+    tl["Tv03"].update_science_score_history(1.0, midnight)
+    tl["Tv04"].update_science_score_history(-1.0, midnight)
+    # Tv05 has no score!
+    return tl
+
+
+@pytest.fixture  #
+def om_vis_targets(
+    tl_vis_targets: TargetLookup,
+    path_mgr: PathManager,
+    obs_mgr_config: dict,
+    t_fixed: Time,
+):
+    obs_mgr = ObservatoryManager(obs_mgr_config, tl_vis_targets, path_mgr)
+    om = OutputsManager({}, tl_vis_targets, path_mgr, obs_mgr)
+    om.observatory_manager.apply_ephem_info(t_ref=t_fixed)
+    return om
 
 
 @pytest.fixture

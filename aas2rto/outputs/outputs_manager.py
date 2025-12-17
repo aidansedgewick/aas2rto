@@ -15,7 +15,7 @@ from astroplan import Observer
 
 from aas2rto import utils
 from aas2rto.exc import MissingEphemInfoWarning, UnknownTargetWarning
-from aas2rto.observatory_manager import ObservatoryManager
+from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting.visibility_plotter import plot_visibility
 from aas2rto.target import Target
@@ -67,11 +67,11 @@ class OutputsManager:
         self.path_manager = path_manager
         self.observatory_manager = observatory_manager
 
-        self.science_ranked_list = None
-        self.obs_ranked_lists = {}
-        self.obs_visible_lists = {}
+        self.science_ranked_list: pd.DataFrame = None
+        self.obs_ranked_lists: dict[str, pd.DataFrame] = {}
+        self.obs_visible_lists: dict[str, pd.DataFrame] = {}
 
-    def _apply_units_to_config(self):
+    def _apply_units_to_config(self) -> None:
         self.config["minimum_altitude"] = self.config["minimum_altitude"] * u.deg
         self.config["horizon"] = self.config["horizon"] * u.deg
 
@@ -80,7 +80,7 @@ class OutputsManager:
         target_list: List[Target] = None,
         outdir: Path = None,
         t_ref: Time = None,
-    ):
+    ) -> None:
         t_ref = t_ref or Time.now()
 
         logger.info("writing target comments")
@@ -93,15 +93,17 @@ class OutputsManager:
 
         for target in target_list:
             if target is None:
-                msg = f"cannot write comments for non-existant target {target_id}"
+                msg = (
+                    f"cannot write comments for non-existant target {target.target_id}"
+                )
                 logger.warning(msg)
                 warnings.warn(UnknownTargetWarning(msg))
                 continue
             target.write_comments(outdir, t_ref=t_ref)
 
     def build_ranked_target_lists(
-        self, plots=True, write_list=True, t_ref: Time = None
-    ):
+        self, plots: bool = True, write_list: bool = True, t_ref: Time = None
+    ) -> None:
         t_ref = t_ref or Time.now()
 
         logger.info("build ranked target lists")
@@ -111,7 +113,7 @@ class OutputsManager:
         self.science_ranked_list = ranked_list
 
         if ranked_list.empty:
-            logger.info("Skip attempt obs ranked lists...")
+            logger.info("Empty science_ranked_list. Skip obs ranked lists...")
             return
 
         for obs_name, observatory in self.observatory_manager.sites.items():
@@ -121,8 +123,8 @@ class OutputsManager:
             self.obs_ranked_lists[obs_name] = ranked_list
 
     def rank_targets_on_science_score(
-        self, plots=False, write_list=True, t_ref: Time = None
-    ):
+        self, plots: bool = False, write_list: bool = True, t_ref: Time = None
+    ) -> pd.DataFrame:
         t_ref = t_ref or Time.now()
 
         plots_path = self.path_manager.get_output_plots_path("science_score")
@@ -168,7 +170,7 @@ class OutputsManager:
 
     def rank_targets_on_obs_score(
         self, observatory: Observer, plots=True, write_list=True, t_ref: Time = None
-    ):
+    ) -> pd.DataFrame:
 
         t_ref = t_ref or Time.now()
 
@@ -214,18 +216,22 @@ class OutputsManager:
             score_df.to_csv(ranked_list_path, index=False)
         return score_df
 
-    def create_visible_target_lists(
+    def build_visible_target_lists(
         self, plots=True, write_list=True, t_ref: Time = None
-    ):
+    ) -> None:
         for obs_name, observatory in self.observatory_manager.sites.items():
-            vis_df = self.create_visible_target_list_for_obs(
+            vis_df = self.build_visible_target_list_for_obs(
                 observatory, write_list=write_list, plots=plots, t_ref=t_ref
             )
             self.obs_visible_lists[obs_name] = vis_df
 
-    def create_visible_target_list_for_obs(
-        self, observatory: Observer, plots=False, write_list=True, t_ref: Time = None
-    ):
+    def build_visible_target_list_for_obs(
+        self,
+        observatory: Observer,
+        plots: bool = False,
+        write_list: bool = True,
+        t_ref: Time = None,
+    ) -> pd.DataFrame:
 
         t_ref = t_ref or Time.now()
         obs_name = utils.get_observatory_name(observatory)
@@ -291,7 +297,7 @@ class OutputsManager:
         ranking: int,
         lc_fig: bool = True,
         obs_name: str = None,
-    ):
+    ) -> None:
         target_id = target.target_id
 
         lc_fig_file = target.lc_fig_path

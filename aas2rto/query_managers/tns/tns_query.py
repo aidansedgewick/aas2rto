@@ -9,10 +9,7 @@ from itertools import chain
 
 logger = getLogger(__name__.split(".")[-1])
 
-try:
-    import pandas as pd
-except ModuleNotFoundError:
-    pd = None
+import pandas as pd
 
 from astropy import units as u
 from astropy.io.ascii.core import InconsistentTableError
@@ -39,11 +36,6 @@ class TNSQuery:
     @staticmethod
     def build_tns_headers(tns_user: str, tns_uid: str):
         """Returns a dict with the correctly formatted string."""
-
-        if tns_user is None or tns_uid is None:
-            wrn = utils.MissingKeysWarning(f"user={tns_user} or uid={tns_uid} is None!")
-            warnings.warn(wrn)
-            return None
 
         marker_dict = dict(tns_id=str(tns_uid), type="user", name=tns_user)
         marker_str = json.dumps(marker_dict)
@@ -73,8 +65,6 @@ class TNSQuery:
         )
         if return_type not in TNSQuery.known_return_types:
             raise TNSQueryError(return_type_err_msg)
-        if return_type == "pandas" and pd is None:
-            raise ModuleNotFoundError("'pandas' not installed properly.")
 
     @staticmethod
     def get_empty_delta_results(return_type="pandas"):
@@ -176,8 +166,7 @@ class TNSQuery:
             logger.info(f"filename {filename} failed, reason: {response.reason}")
             return self.get_empty_delta_results(return_type=return_type)
 
-        if response.status_code in [404, 429] and retries < max_retries:
-
+        if response.status_code in [429] and retries < max_retries:
             msg = (
                 f"status {response.status_code}: resubmit this request!"
                 f" try {retries}/{max_retries} {filename}"

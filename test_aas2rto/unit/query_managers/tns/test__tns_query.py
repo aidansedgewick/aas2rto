@@ -115,6 +115,32 @@ class Test__SubmitPublicObjectRequest:
             resp = tquery.request_delta(url, process=False)
 
 
+class Test__GetEmptyDeltaResults:
+    def test__empty_pandas(self):
+        # Act
+        results = TNSQuery.get_empty_delta_results(return_type="pandas")
+
+        # Assert
+        assert isinstance(results, pd.DataFrame)
+        assert results.empty
+
+    def test__empty_astropy(self):
+        # Act
+        results = TNSQuery.get_empty_delta_results(return_type="astropy")
+
+        # Assert
+        assert isinstance(results, Table)
+        assert len(results) == 0
+
+    def test__empty_records(self):
+        # Act
+        results = TNSQuery.get_empty_delta_results(return_type="records")
+
+        # Assert
+        assert isinstance(results, list)
+        assert len(results) == 0
+
+
 class Test__GetDailyDelta:
     def test__return_pandas(self, tquery: TNSQuery):
         # Arrange

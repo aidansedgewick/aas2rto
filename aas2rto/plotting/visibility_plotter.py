@@ -23,7 +23,7 @@ from astropy.visualization import ZScaleInterval
 from astroplan import FixedTarget, Observer
 
 from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
-from aas2rto.ephem_info import EphemInfo
+from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.target import Target
 from aas2rto.utils import get_observatory_name
 

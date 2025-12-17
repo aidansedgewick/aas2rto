@@ -4,7 +4,7 @@ import traceback
 import warnings
 from logging import getLogger
 from pathlib import Path
-from typing import Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Union
 
 import numpy as np
 
@@ -25,7 +25,7 @@ from astroplan.plots import plot_altitude
 
 from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
 from aas2rto.target_data import TargetData
-from aas2rto.ephem_info import EphemInfo
+from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.utils import get_observatory_name
 
 logger = getLogger(__name__.split(".")[-1])
@@ -95,29 +95,29 @@ class Target:
         self.ephem_info = {}  # {"no_observatory": None}
 
         # Models
-        self.models = {}
-        self.models_t_ref = {}
+        self.models: dict[str, Any] = {}
+        self.models_t_ref: dict[str, float] = {}
 
         # Scoring data
         # self.score_history = {"no_observatory": []}
-        self.science_score_history = []
-        self.obs_score_history = {}
+        self.science_score_history: list[float] = []
+        self.obs_score_history: dict[str, list[float]] = {}
 
         # self.score_comments = {"no_observatory": []}
-        self.science_comments = []
-        self.obs_comments = {}
+        self.science_comments: list[str] = []
+        self.obs_comments: dict[str, str] = {}
 
         # self.rank_history = {"no_observatory": []}
         self.science_rank_history = []
         self.obs_rank_history = {}
 
         # Paths to scratch figures
-        self.lc_fig_path = None
-        self.vis_fig_paths = {}
-        self.additional_fig_paths = {}
+        self.lc_fig_path: Path = None
+        self.vis_fig_paths: dict[str, Path] = {}
+        self.additional_fig_paths: dict[str, Path] = {}
 
         # Is this target known by any other names?
-        self.alt_ids = alt_ids or {}
+        self.alt_ids: dict[str, str] = alt_ids or {}
         if source is not None:
             self.alt_ids[source] = target_id
         else:
@@ -367,7 +367,9 @@ class Target:
             return result
         return result[0]  # Otherwise just return the score.
 
-    def get_info_lines(self, t_ref: Time = None):
+    def get_info_lines(
+        self, header_open: str = "", header_close: str = "", t_ref: Time = None
+    ):
         t_ref = t_ref or Time.now()
         t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
 
@@ -377,14 +379,24 @@ class Target:
         coordinate_lines = self.get_coordinate_info_lines()
         photometry_lines = self.get_photometry_info_lines()
 
+        info_lines.append(header_open + "Aliases and brokers:" + header_close)
         info_lines.extend(target_id_lines)
+        info_lines.append(header_open + "Coordinates:" + header_close)
         info_lines.extend(coordinate_lines)
+        info_lines.append(header_open + "Photometry" + header_close)
         info_lines.extend(photometry_lines)
         return info_lines
 
+    def get_info_string(
+        self, header_open: str = "", header_close: str = "", t_ref: Time = None
+    ):
+        info_lines = self.get_info_lines(
+            header_open=header_open, header_close=header_close, t_ref=t_ref
+        )
+        return "\n".join(info_lines)
+
     def get_target_id_info_lines(self):
         info_lines = []
-        info_lines.append("Aliases and brokers")
         broker_name = self.alt_ids.get("ztf", None)
         if broker_name is not None:
             broker_lines = [
@@ -420,11 +432,17 @@ class Target:
 
     def get_coordinate_info_lines(self):
         info_lines = []
-        info_lines.append("Coordinates:")
         if self.coord is not None:
-            eq_str = f"{self.coord.ra.deg:.4f},{self.coord.dec.deg:+.5f}"
-            eq_line = f"    equatorial (ra, dec) = {eq_str}"
+            ra = self.coord.ra
+            dec = self.coord.dec
+            eq_line = f"    equatorial (ra, dec) = {ra.deg:.4f},{dec.deg:+.5f}"
             info_lines.append(eq_line)
+            ra_hms = ra.to_string(unit=u.hourangle, sep=":", precision=2, pad=True)
+            dec_dms = dec.to_string(
+                unit=u.deg, sep=":", precision=2, alwayssign=True, pad=True
+            )
+            hms_dms_line = f"    equatorial (HMS+DMS) = {ra_hms},{dec_dms}"
+            info_lines.append(hms_dms_line)
         if self.coord is not None:
             gal = self.coord.galactic
             gal_line = f"    galactic (l, b) = ({gal.l.deg:.4f},{gal.b.deg:+.5f})"
@@ -433,7 +451,6 @@ class Target:
 
     def get_photometry_info_lines(self):
         info_lines = []
-        info_lines.append("Photometry")
         if self.compiled_lightcurve is not None:
             ndet = {}
             last_mag = {}
@@ -460,10 +477,6 @@ class Target:
         else:
             info_lines.append("    no photometry available")
         return info_lines
-
-    def get_info_string(self, t_ref: Time = None):
-        info_lines = self.get_info_lines(t_ref=t_ref)
-        return "\n".join(info_lines)
 
     def write_comments(self, outdir: Path, t_ref: Time = None):
         t_ref = t_ref or Time.now()

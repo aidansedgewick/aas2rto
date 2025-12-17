@@ -8,7 +8,7 @@ from astroplan import Observer
 import matplotlib.pyplot as plt
 
 from aas2rto.exc import UnexpectedKeysWarning
-from aas2rto.observatory_manager import ObservatoryManager
+from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting.plotting_manager import PlottingManager
 from aas2rto.target import Target
