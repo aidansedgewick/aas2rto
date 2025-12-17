@@ -133,7 +133,7 @@ class ObservatoryManager:
                 continue
 
             # If not, update the ephem_info to the next night!
-            # self.update_ephem_info(observatory, next_noon, human_time="local noon")
+            self.update_ephem_info(observatory, next_noon, human_time="local noon")
 
     def apply_ephem_info(
         self,

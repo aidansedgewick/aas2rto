@@ -287,14 +287,7 @@ class TargetSelector:
                     os.remove(plot)
 
     def perform_web_tasks(self, t_ref: Time = None):
-        pass
-
-    #     # TODO: somehow move to messaging_manager
-    #     t_ref = t_ref or Time.now()
-    #     if self.messaging_manager.html_webpage_manager is not None:
-    #         self.messaging_manager.html_webpage_manager.update_webpages(
-    #             self.target_lookup, self.outputs_manager.ranked_lists, t_ref=t_ref
-    #         )
+        self.web_manager.perform_all_web_tasks()
 
     def send_crash_reports(self, text: str = None):
         self.messaging_manager.send_crash_reports(text=text)
@@ -476,7 +469,6 @@ class TargetSelector:
                     self.plotting_manager.plot_additional_target_figures(
                         plotting_func, t_ref=t_ref
                     )
-
         else:
             logger.info("skip plotting")
         perf_times["plotting"] = time.perf_counter() - t1

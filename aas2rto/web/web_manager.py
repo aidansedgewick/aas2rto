@@ -31,7 +31,7 @@ class WebManager:
         for manager_name, manager_config in self.config.items():
             use = manager_config.pop("use", True)
             if not use:
-                logger.info(f"{manager_name} has use={use} (Falsy) - skip init!")
+                logger.info(f"{manager_name} has use={use} (False - like) - skip init!")
 
             cls = WEB_MANAGER_CLS_LOOKUP.get(manager_name)
             manager = cls(manager_config)
