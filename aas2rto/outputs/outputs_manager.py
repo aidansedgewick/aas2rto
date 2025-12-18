@@ -30,13 +30,27 @@ logger = getLogger(__name__.split(".")[-1])
 def get_target_summary_data(target):
     ra = target.coord.ra
     dec = target.coord.dec
+
+    lc = target.compiled_lightcurve
+    if "tag" in lc.columns:
+        detections = lc[lc["tag"] == "valid"]
+    else:
+        detections = lc
+
+    mag_last = detections["mag"].iloc[-1]
+    t_last = Time(detections["mjd"], format="mjd")
+    tstamp_last = t_last.strftime("%y-%m-%d %H:%H")
+
     data = dict(
         target_id=target.target_id,
         ra=ra.to_string(unit=u.hourangle, sep=":", precision=2, pad=True),
         dec=dec.to_string(unit=u.deg, sep=":", precision=2, alwayssign=True, pad=True),
         ra_deg=f"{target.coord.ra.deg:010.6f}",
         dec_deg=f"{target.coord.dec.deg:+09.5f}",
+        mag_last=mag_last,
+        stamp_last=tstamp_last,
     )
+    data.update(target.flags)
     return data
 
 

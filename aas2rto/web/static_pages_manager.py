@@ -212,7 +212,16 @@ class StaticPagesManager:
         row_data = []
         for idx, row in df.iterrows():
             target_id = row["target_id"]
-            data = [v for k, v in row.items() if k != "target_id"]
+
+            data = []
+            for k, v in row.items():
+                if k != "target_id":
+                    continue
+                if isinstance(v, bool):
+                    check = "\u2713" if v else ""
+                    data.append(check)
+                else:
+                    data.append(v)
 
             target_page_url = f"../{self._get_target_page_url(target_id)}"
             row = {

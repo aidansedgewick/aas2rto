@@ -339,6 +339,13 @@ class SupernovaPeakScore:
             scoring_comments.append(comm)
             exclude = True
 
+        ###===== Apply flag if confirmed =====###
+        tns_data = target.get("tns", None)
+        if tns_data is not None:
+            tns_type = tns_data.parameters.get("type", "")
+            if tns_type.startswith("SN Ia"):
+                target.flags["confirmed_ia"] = True
+
         ###===== Factors dependent on Model =====###
 
         model = target.models.get("sncosmo_salt", None)
@@ -437,6 +444,11 @@ class SupernovaPeakScore:
 
             ###===== Penalty for likely CVs?
             cv_penalty, cv_comms = calc_cv_prob_penalty(detections, upperlimits, model)
+
+            if cv_penalty < 0.99:
+                target.flags["likely_cv"] = True
+            else:
+                target.flags["likely_cv"] = True
             factors["cv_penalty"] = cv_penalty
             scoring_comments.extend(cv_comms)
 

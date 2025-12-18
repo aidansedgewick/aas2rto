@@ -106,6 +106,7 @@ class Target:
         # self.score_comments = {"no_observatory": []}
         self.science_comments: list[str] = []
         self.obs_comments: dict[str, str] = {}
+        self.flags: dict[str, bool] = {}
 
         # self.rank_history = {"no_observatory": []}
         self.science_rank_history = []
@@ -125,13 +126,13 @@ class Target:
                 self.alt_ids["<unknown>"] = target_id
 
         # Keep track of what's going on
-        self.creation_time = t_ref
-        self.target_of_opportunity = target_of_opportunity
-        self.updated = False
-        self.to_reject = False
-        self.send_updates = False
-        self.info_messages = []
-        self.sudo_messages = []
+        self.creation_time: Time = t_ref
+        self.target_of_opportunity: bool = target_of_opportunity
+        self.updated: bool = False
+        self.to_reject: bool = False
+        self.send_updates: bool = False
+        self.info_messages: list[str] = []
+        self.sudo_messages: list[str] = []
 
     # def update_coordinates(self, ra: float, dec: float):
     #     self.ra = ra
@@ -150,7 +151,7 @@ class Target:
         self.coord = coord
         # self.astroplan_target = FixedTarget(self.coord, self.target_id)
 
-    def get_target_data(self, source):
+    def get_target_data(self, source: str):
         """
         Return the TargetData associated with a certain source.
         If the target_data does not exist, create a new one, and return that.
@@ -292,7 +293,7 @@ class Target:
             rank_history_df = rank_history_df[rank_history_df["mjd"] < t_ref.mjd]
         return rank_history_df
 
-    def get_latest_science_score(self, return_time=False):
+    def get_latest_science_score(self, return_time: bool = False):
         if len(self.science_score_history) == 0:
             result = (None, None)
         else:
@@ -303,7 +304,7 @@ class Target:
         return result[0]  # Otherwise just return the score.
 
     def get_latest_obs_score(
-        self, observatory: Union[Observer, str], return_time=False
+        self, observatory: Union[Observer, str], return_time: bool = False
     ):
         """
         Provide a string (observatory name) and return.
@@ -331,7 +332,7 @@ class Target:
             return result
         return result[0]  # Otherwise just return the score.
 
-    def get_latest_science_rank(self, return_time=False):
+    def get_latest_science_rank(self, return_time: bool = False):
         if len(self.science_rank_history) == 0:
             result = (None, None)
         else:
@@ -341,7 +342,9 @@ class Target:
             return result
         return result[0]  # Otherwise just return the score.
 
-    def get_latest_obs_rank(self, observatory: Union[Observer, str], return_time=False):
+    def get_latest_obs_rank(
+        self, observatory: Union[Observer, str], return_time: bool = False
+    ):
         """
         Provide a string (observatory name) and return.
 
@@ -377,13 +380,16 @@ class Target:
 
         target_id_lines = self.get_target_id_info_lines()
         coordinate_lines = self.get_coordinate_info_lines()
+        flag_lines = self.get_flag_lines()
         photometry_lines = self.get_photometry_info_lines()
 
         info_lines.append(header_open + "Aliases and brokers:" + header_close)
         info_lines.extend(target_id_lines)
         info_lines.append(header_open + "Coordinates:" + header_close)
         info_lines.extend(coordinate_lines)
-        info_lines.append(header_open + "Photometry" + header_close)
+        info_lines.append(header_open + "Flags:" + header_close)
+        info_lines.extend(flag_lines)
+        info_lines.append(header_open + "Photometry:" + header_close)
         info_lines.extend(photometry_lines)
         return info_lines
 
@@ -429,6 +435,14 @@ class Target:
             info_lines.append(l)
 
         return info_lines
+
+    def get_flag_lines(self):
+        formatted_flags = []
+        for name, flag in self.flags.items():
+            if flag:
+                flag_str = f"    {name.replate("_", " ")}"
+                formatted_flags.append(flag_str)
+        return formatted_flags
 
     def get_coordinate_info_lines(self):
         info_lines = []

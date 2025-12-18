@@ -36,8 +36,10 @@ def prepared_outputs_mgr(outputs_mgr_with_plots: OutputsManager, t_fixed: Time):
     outputs_mgr.observatory_manager.apply_ephem_info(t_fixed)
     outputs_mgr.build_ranked_target_lists(plots=False, write_list=False)
     outputs_mgr.build_visible_target_lists(plots=False, write_list=False)
-    outputs_mgr.target_lookup["T00"].update_science_score_history(1.0, t_fixed)
-    outputs_mgr.target_lookup["T00"].updated = True
+    T00 = outputs_mgr.target_lookup["T00"]
+    T00.update_science_score_history(1.0, t_fixed)
+    T00.updated = True
+    T00.additional_fig_paths["extra_fig"] = T00.lc_fig_path
     return outputs_mgr
 
 
@@ -208,3 +210,5 @@ class Test__BuildWebpageTarget:
             "sci_ranked",
         ]
         assert set(lists_written) == set(exp_lists)
+        targets_written = [f.stem for f in target_path.glob("*.html")]
+        assert set(targets_written) == set(["T00", "T01"])
