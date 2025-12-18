@@ -21,9 +21,10 @@ class WebManager:
         self.outputs_manager = outputs_manager
         self.path_manager = path_manager
 
-        self.managers = {}
+        self.init_web_managers()
 
     def init_web_managers(self):
+        self.managers = {}
 
         utils.check_unexpected_config_keys(
             self.config, WEB_MANAGER_CLS_LOOKUP, name="web", raise_exc=True
@@ -33,8 +34,10 @@ class WebManager:
             if not use:
                 logger.info(f"{manager_name} has use={use} (False - like) - skip init!")
 
-            cls = WEB_MANAGER_CLS_LOOKUP.get(manager_name)
-            manager = cls(manager_config)
+            mgr_cls = WEB_MANAGER_CLS_LOOKUP.get(manager_name)
+            manager = mgr_cls(
+                manager_config, self.outputs_manager, self.path_manager
+            )
             self.managers[manager_name] = manager
 
     def perform_all_web_tasks(self):

@@ -31,6 +31,7 @@ class StaticPagesManager:
     def __init__(
         self, config: dict, outputs_manager: OutputsManager, path_manager: PathManager
     ):
+        logger.info("init static pages manager")
         self.config = self.default_config.copy()
         self.config.update(config)
         utils.check_unexpected_config_keys(
@@ -48,7 +49,7 @@ class StaticPagesManager:
         self.web_environment = Environment(
             loader=FileSystemLoader(self.path_manager.web_templates_path)
         )
-        self.last_git_publish = time.perf_counter()
+        self.last_git_publish = 0.0
 
     def prepare_web_directories(self):
         self.web_base_path = self.path_manager.web_path / "static"
@@ -89,6 +90,8 @@ class StaticPagesManager:
         remote_name = self.git_config["remote_name"]
         remote_url = self.git_config["remote_url"]
 
+        git_branch = self.git_config["branch"]
+
         git_dir = self.web_base_path / ".git"
         if not git_dir.exists():
             try:
@@ -110,6 +113,8 @@ class StaticPagesManager:
             add_origin_output = subprocess.check_output(
                 git_add_origin_cmd.split()
             ).decode("utf-8")
+
+        git_branch_command = f"git -C {self.web_base_path} -M {git_branch}"
 
     def clone_existing_repo(self):
         remote_url = self.git_config["remote_url"]
@@ -172,7 +177,9 @@ class StaticPagesManager:
         self.build_obs_visible_pages(t_ref=t_ref)
 
         for target_id, target in self.outputs_manager.target_lookup.items():
-            if target.updated:
+            target_page_path = self._get_target_page_path(target_id)
+
+            if not target_page_path.exists() or target.updated:
                 self.build_webpage_for_target(target, t_ref=t_ref)
                 self.build_redirect_pages_for_target(target)
 
@@ -309,7 +316,7 @@ class StaticPagesManager:
             if additional_fig_path.exists():
                 shutil.copy2(additional_fig_path, web_fig_path)
             im_path = f"../{web_fig_path.relative_to(self.web_base_path)}"
-            additional_path_list.append()
+            additional_path_list.append(im_path)
 
         target_info_str = target.get_info_string(
             header_open="<h2>", header_close="</h2>"
@@ -378,7 +385,7 @@ class StaticPagesManager:
             if commands[0].startswith("SSH_AUTH_SOCK"):
                 key, ssh_auth_sock_str = commands[0].split("=")
                 ssh_auth_sock = ssh_auth_sock_str.replace('"', "")  # no quotes
-                print(f"choose {ssh_auth_sock}")
+                logger.info(f"choose {ssh_auth_sock}")
 
         os.environ["SSH_AUTH_SOCK"] = ssh_auth_sock
         logger.info(f"choose {ssh_auth_sock}")
@@ -398,6 +405,7 @@ class StaticPagesManager:
             logger.info("no git config. skip attempting git commit.")
 
         git_branch = self.git_config["branch"]
+        remote_name = self.git_config["remote_name"]
 
         commit_interval = self.config["publish_interval"]
         elapsed = time.perf_counter() - self.last_git_publish
@@ -407,10 +415,12 @@ class StaticPagesManager:
             return
         self.last_git_publish = time.perf_counter()
 
-        git_add_cmd = f"git -C {self.local_www_path} add --all"
+        git_add_cmd = f"git -C {self.web_base_path} add --all"
         git_add_output = subprocess.check_output(git_add_cmd.split()).decode("utf-8")
 
-        git_commit_cmd = f"git -C {self.local_www_path} commit -m 'Update_{t_ref.isot}' --allow-empty"
+        git_commit_cmd = (
+            f"git -C {self.web_base_path} commit -m 'Update_{t_ref.isot}' --allow-empty"
+        )
         try:
             commit_output = subprocess.check_output(git_commit_cmd.split()).decode(
                 "utf-8"
@@ -420,7 +430,7 @@ class StaticPagesManager:
 
         self.refresh_tmux_ssh_auth_sock()
 
-        git_push_cmd = f"git -C {self.local_www_path} push --set-upstream {self.remote_name} {self.git_branch} --force"
+        git_push_cmd = f"git -C {self.web_base_path} push --set-upstream {remote_name} {git_branch} --force"
         try:
             push_output = subprocess.check_output(git_push_cmd.split()).decode("utf-8")
         except subprocess.CalledProcessError as e:

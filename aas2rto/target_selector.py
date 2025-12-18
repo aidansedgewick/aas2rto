@@ -61,6 +61,7 @@ VALID_SKIP_TASKS = (
     "plotting",
     "write_targets",
     "messaging",
+    "web",
     "sleep",
 )
 
@@ -480,7 +481,7 @@ class TargetSelector:
             self.outputs_manager.build_ranked_target_lists(
                 t_ref=t_ref, plots=True, write_list=True
             )
-            self.outputs_manager.create_visible_target_lists(
+            self.outputs_manager.build_visible_target_lists(
                 t_ref=t_ref, plots=True, write_list=True
             )
         perf_times["ranking"] = time.perf_counter() - t1
@@ -503,7 +504,7 @@ class TargetSelector:
 
         # ========================== Perform web tasks ======================= #
         t1 = time.perf_counter()
-        if "web_tasks" not in skip_tasks:
+        if "web" not in skip_tasks:
             self.perform_web_tasks(t_ref=t_ref)
         else:
             logger.info("skip web tasks")
@@ -662,6 +663,7 @@ class TargetSelector:
                 # If many targets are recovered, 100s of messages could be sent...
                 loop_skip_tasks.append("messaging")
                 loop_skip_tasks.append("write_targets")
+                loop_skip_tasks.append("web")
                 # loop_skip_tasks.append("plotting")
 
             try:

@@ -8,7 +8,7 @@ from astropy.time import Time
 from aas2rto import TargetSelector
 from aas2rto.modeling import empty_modeling, SncosmoSaltModeler
 from aas2rto.plotting import plot_default_lightcurve, plot_sncosmo_lightcurve
-from aas2rto.plotting.salt_param_plotter import SaltParamPlotter
+from aas2rto.plotting.salt_param_plotter import SaltParamPlottingWrapper
 from aas2rto.scoring import (
     example_functions,
     SupernovaPeakScore,
@@ -60,7 +60,7 @@ if __name__ == "__main__":
         )
         lc_plotting_function = plot_sncosmo_lightcurve
 
-        salt_param_plotter = SaltParamPlotter()
+        salt_param_plotter = SaltParamPlottingWrapper()
         extra_plotting_functions.append(salt_param_plotter)
 
     elif "atlas_test" in config_file.stem:
