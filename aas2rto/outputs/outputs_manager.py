@@ -31,15 +31,20 @@ def get_target_summary_data(target):
     ra = target.coord.ra
     dec = target.coord.dec
 
-    lc = target.compiled_lightcurve
-    if "tag" in lc.columns:
-        detections = lc[lc["tag"] == "valid"]
-    else:
-        detections = lc
+    if target.compiled_lightcurve is not None:
+        lc = target.compiled_lightcurve
+        if "tag" in lc.columns:
+            detections = lc[lc["tag"] == "valid"]
+        else:
+            detections = lc
 
-    mag_last = detections["mag"].iloc[-1]
-    t_last = Time(detections["mjd"], format="mjd")
-    tstamp_last = t_last.strftime("%y-%m-%d %H:%H")
+        mag_val = detections["mag"].iloc[-1]
+        mag_last = f"{mag_val:.2f}"
+        t_last = Time(detections["mjd"].iloc[-1], format="mjd")
+        tstamp_last = t_last.strftime("%y-%m-%d %H:%H")
+    else:
+        mag_last = "-"
+        tstamp_last = "-"
 
     data = dict(
         target_id=target.target_id,

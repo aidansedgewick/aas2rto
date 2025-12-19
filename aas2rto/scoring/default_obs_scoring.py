@@ -27,7 +27,10 @@ def compute_visibility_integral(
     # Make sure it's always at least zero...
     alt_above_minimum = np.maximum(alt_grid, min_alt) - min_alt
 
-    integral = np.trapezoid(alt_above_minimum, x=t_grid)
+    try:
+        integral = np.trapezoid(alt_above_minimum, x=t_grid)
+    except AttributeError as e:
+        integral = np.trapz(alt_above_minimum, x=t_grid)
     norm = (t_grid[-1] - t_grid[0]) * (ref_alt - min_alt)
     return integral / norm  # invert later!
 

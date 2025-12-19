@@ -214,14 +214,17 @@ class StaticPagesManager:
             target_id = row["target_id"]
 
             data = []
-            for k, v in row.items():
-                if k != "target_id":
+            for key, val in row.items():
+                if key == "target_id":
                     continue
-                if isinstance(v, bool):
-                    check = "\u2713" if v else ""
-                    data.append(check)
+                if isinstance(val, bool):
+                    row_val = "\u2713" if val else ""
+                if isinstance(val, float):
+                    row_val = f"{val:.2e}"
                 else:
-                    data.append(v)
+                    row_val = val
+
+                data.append(row_val)
 
             target_page_url = f"../{self._get_target_page_url(target_id)}"
             row = {
@@ -398,7 +401,7 @@ class StaticPagesManager:
 
         os.environ["SSH_AUTH_SOCK"] = ssh_auth_sock
         logger.info(f"choose {ssh_auth_sock}")
-        logger.info("new env var:", os.environ["SSH_AUTH_SOCK"])
+        logger.info(f"new env var: {os.environ['SSH_AUTH_SOCK']}")
 
         ssh_auth_sock_path = Path(ssh_auth_sock)
         if ssh_auth_sock_path.exists():

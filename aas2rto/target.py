@@ -440,7 +440,7 @@ class Target:
         formatted_flags = []
         for name, flag in self.flags.items():
             if flag:
-                flag_str = f"    {name.replate("_", " ")}"
+                flag_str = f"    {name.replace('_', ' ')}"
                 formatted_flags.append(flag_str)
         return formatted_flags
 
