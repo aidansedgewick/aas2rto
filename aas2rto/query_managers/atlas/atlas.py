@@ -11,7 +11,7 @@ from astropy.time import Time
 
 from aas2rto import utils
 from aas2rto.exc import UnknownTargetWarning
-from aas2rto.query_managers.atlas.atlas_query import AtlasQuery
+from aas2rto.query_managers.atlas.atlas_client import AtlasClient
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
@@ -75,7 +75,10 @@ class AtlasQueryManager(BaseQueryManager):
 
         self.process_credentials()  # BEFORE cfg_chk: credentials error raised first.
         utils.check_unexpected_config_keys(
-            self.config, self.default_config, name="atlas", raise_exc=True
+            self.config,
+            self.default_config,
+            name="query_managers.atlas",
+            raise_exc=True,
         )
 
         self.target_lookup = target_lookup
@@ -123,16 +126,16 @@ class AtlasQueryManager(BaseQueryManager):
             if username is not None or password is not None:
                 msg = f"IGNORING usr '{username}' pwd '***': using provided token"
                 logger.warning(msg)
-            self.atlas_query = AtlasQuery(self.token)
+            self.atlas_client = AtlasClient(self.token)
             return
 
         # Have to try to retrieve using the usr/pwd combo provided.
         if username is None or password is None:
             raise AtlasCredentialError(bad_credential_msg)
-        self.token = AtlasQuery.get_atlas_token(
+        self.token = AtlasClient.get_atlas_token(
             username=username, password=password, display=False
         )
-        self.atlas_query = AtlasQuery(self.token)
+        self.atlas_client = AtlasClient(self.token)
 
     def recover_query_data(
         self, target_id: str, task_url: str, timeout: float = None, t_ref: Time = None
@@ -142,7 +145,7 @@ class AtlasQueryManager(BaseQueryManager):
         """
         t_ref = t_ref or Time.now()
 
-        status, unprocessed_lightcurve = self.atlas_query.recover_task_data(
+        status, unprocessed_lightcurve = self.atlas_client.recover_task_data(
             task_url,
             return_type="pandas",
             timeout=timeout,
@@ -176,7 +179,7 @@ class AtlasQueryManager(BaseQueryManager):
         finished_task_urls = []
 
         start_time = time.perf_counter()
-        for task_result in self.atlas_query.iterate_existing_queries(
+        for task_result in self.atlas_client.iterate_existing_queries(
             max_query_time=max_query_time
         ):
             # Is this task relevant to us?
@@ -206,19 +209,19 @@ class AtlasQueryManager(BaseQueryManager):
             else:
                 logger.info(f"no task_url (key 'url') for {target_id}")
 
-            if status == AtlasQuery.QUERY_SUBMITTED:
+            if status == AtlasClient.QUERY_SUBMITTED:
                 self.submitted_queries[target_id] = task_url
                 ongoing_queries.append(target_id)
-            elif status == AtlasQuery.QUERY_EXISTS:
+            elif status == AtlasClient.QUERY_EXISTS:
                 self.submitted_queries.pop(target_id, None)
                 finished_task_urls.append(task_url)
                 finished_queries.append(target_id)
-            elif status == AtlasQuery.QUERY_BAD_REQUEST:
+            elif status == AtlasClient.QUERY_BAD_REQUEST:
                 self.submitted_queries.pop(target_id, None)
                 error_queries.append(target_id)
 
         if delete_finished_queries:
-            self.atlas_query.delete_tasks(finished_task_urls)
+            self.atlas_client.delete_tasks(finished_task_urls)
 
         logger.info(f"{len(finished_queries)} finished, {len(ongoing_queries)} ongoing")
         return finished_queries, ongoing_queries, error_queries
@@ -295,10 +298,10 @@ class AtlasQueryManager(BaseQueryManager):
             )
             return None
 
-        res = self.atlas_query.submit_forced_photom_query(query_data, timeout=timeout)
-        if res.status_code == AtlasQuery.QUERY_SUBMITTED:
+        res = self.atlas_client.submit_forced_photom_query(query_data, timeout=timeout)
+        if res.status_code == AtlasClient.QUERY_SUBMITTED:
             self.submitted_queries[target.target_id] = res.json()["url"]
-        elif res.status_code == AtlasQuery.QUERY_THROTTLED:
+        elif res.status_code == AtlasClient.QUERY_THROTTLED:
             self.throttled_queries.append(target.target_id)
         else:
             msg = f"{target.target_id} query status \033[33;1m{res.status_code}\033[0m: {res.reason}"
@@ -375,9 +378,9 @@ class AtlasQueryManager(BaseQueryManager):
             except requests.exceptions.ReadTimeout as e:
                 logger.info(f"break after {target.target_id} query submit ReadTimeout")
                 break
-            if query_status == AtlasQuery.QUERY_SUBMITTED:
+            if query_status == AtlasClient.QUERY_SUBMITTED:
                 submitted.append(target_id)
-            elif query_status == AtlasQuery.QUERY_THROTTLED:
+            elif query_status == AtlasClient.QUERY_THROTTLED:
                 throttled.append(target_id)
                 self.server_throttled = True
                 msg = "\033[33;1mATLAS THROTTLED\033[0m: no more queries for now..."

@@ -1,4 +1,5 @@
 import time
+import warnings
 from logging import getLogger
 from pathlib import Path
 from typing import Dict
@@ -94,27 +95,6 @@ class PrimaryQueryManager:
         if len(self.query_managers) == 0:
             logger.warning("no query managers initialised!")
 
-    def add_query_manager(
-        self, qm_config: Dict, QueryManagerClass: BaseQueryManager, **kwargs
-    ):
-        qm_name = getattr(QueryManagerClass, "name", None)
-        if qm_name is None:
-            qm_name = QueryManagerClass.__name__
-            QueryManagerClass.name = qm_name  # Monkey patch!
-            msg = f"new query manager {qm_name} should have class attribute 'name'"
-            logger.warning(msg)
-
-        has_tasks_method = hasattr(QueryManagerClass, "perform_all_tasks")
-        if not has_tasks_method:
-            msg = f"query manager {qm_name} must have method 'perform_all_tasks()'"
-            raise AttributeError(msg)
-
-        qm_config.update(kwargs)
-        qm = QueryManagerClass(
-            qm_config, self.target_lookup, parent_path=self.path_manager.data_path
-        )
-        self.query_managers[qm_name] = qm
-
     def perform_all_query_manager_tasks(self, iteration: int, t_ref: Time = None):
         """
         for each of the query managers `qm` in target_selector.query_managers,
@@ -134,7 +114,8 @@ class PrimaryQueryManager:
             logger.info(f"begin {qm_name} tasks")
             query_result = qm.perform_all_tasks(iteration=iteration, t_ref=t_ref)
             if isinstance(query_result, Exception):
-                text = [f"EXCEPTION IN {qm_name} [no crash]"]
+                msg = f"EXCEPTION IN {qm_name} [caught, so no crash]\n{query_result}"
+                warnings.warn(UserWarning(msg))
                 # self.send_crash_reports(text=text)
             t_end = time.perf_counter()
             logger.info(f"{qm_name} tasks in {t_end-t_start:.1f} sec")

@@ -2,7 +2,7 @@ import pytest
 import time
 
 from aas2rto.query_managers.atlas.atlas import AtlasQueryManager
-from aas2rto.query_managers.atlas.atlas_query import AtlasQuery
+from aas2rto.query_managers.atlas.atlas_client import AtlasClient
 
 
 class MockGetResponse:
@@ -86,9 +86,9 @@ def mock_post_wrapper(
     if "T_sleep" in comment:
         time.sleep(0.2)
     if "T_error" in comment:
-        response.status_code = AtlasQuery.QUERY_BAD_REQUEST
+        response.status_code = AtlasClient.QUERY_BAD_REQUEST
     if "T_throttle" in comment:
-        response.status_code = AtlasQuery.QUERY_THROTTLED
+        response.status_code = AtlasClient.QUERY_THROTTLED
     return response
 
 
@@ -115,7 +115,7 @@ def mock_token_response(
 def mock_task_page_response(url: str, headers: dict[str, str] = None):
     last_word = url.rstrip("/").split("/")[-1]
     if last_word == "queue":  # the default, first page
-        next_url = AtlasQuery.atlas_default_queue_url + "/?cursor_ABCDE"
+        next_url = AtlasClient.atlas_default_queue_url + "/?cursor_ABCDE"
         results = [
             {"url": "http://atlas.mock/T00", "comment": "T00:test"},
             {"url": "http://atlas.mock/T901", "comment": "T901:other_project"},
@@ -146,24 +146,24 @@ def mock_task_response(url: str, headers: dict):
             "finishtimestamp": 60000.0,
             "comment": f"{target_id}:test",
         }
-        status_code = AtlasQuery.QUERY_EXISTS
+        status_code = AtlasClient.QUERY_EXISTS
     elif "T_no_data" in url:
         data = {
             "error_msg": "No data returned",
             "finishtimestamp": 60000.0,
             "comment": f"{target_id}:test",
         }
-        status_code = AtlasQuery.QUERY_EXISTS
+        status_code = AtlasClient.QUERY_EXISTS
     elif "T_bad_query" in url:
         data = {
             "error_msg": "some other error",
             "finishtimestamp": 60000.0,
             "comment": "T_bad_query:test",
         }
-        status_code = AtlasQuery.QUERY_BAD_REQUEST
+        status_code = AtlasClient.QUERY_BAD_REQUEST
     else:
         data = {"finishtimestamp": None, "comment": f"{target_id}:test"}
-        status_code = AtlasQuery.QUERY_SUBMITTED
+        status_code = AtlasClient.QUERY_SUBMITTED
     return MockGetResponse(
         url, headers=headers, json_data=data, status_code=status_code
     )

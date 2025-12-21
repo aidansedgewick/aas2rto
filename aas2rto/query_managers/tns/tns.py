@@ -10,7 +10,7 @@ from astropy.time import Time, TimeDelta
 
 from aas2rto import utils
 from aas2rto.query_managers.base import BaseQueryManager
-from aas2rto.query_managers.tns.tns_query import TNSQuery, TNSQueryError
+from aas2rto.query_managers.tns.tns_client import TNSClient, TNSClientError
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
@@ -45,7 +45,7 @@ class TNSQueryManager(BaseQueryManager):
         self.config = copy.deepcopy(self.default_config)
         self.config.update(config)
 
-        self.process_credentials()  # sets self.tns_query
+        self.process_credentials()  # sets self.tns_client
         utils.check_unexpected_config_keys(
             self.config, self.default_config, "query_managers.tns", raise_exc=True
         )
@@ -53,11 +53,11 @@ class TNSQueryManager(BaseQueryManager):
 
         self.target_lookup = target_lookup
 
-        self.tns_results = TNSQuery.get_empty_delta_results(return_type="pandas")
-        self.daily_delta_results = TNSQuery.get_empty_delta_results(
+        self.tns_results = TNSClient.get_empty_delta_results(return_type="pandas")
+        self.daily_delta_results = TNSClient.get_empty_delta_results(
             return_type="pandas"
         )
-        self.hourly_delta_results = TNSQuery.get_empty_delta_results(
+        self.hourly_delta_results = TNSClient.get_empty_delta_results(
             return_type="pandas"
         )
 
@@ -86,7 +86,9 @@ class TNSQueryManager(BaseQueryManager):
         tns_uid = credential_config["uid"]
 
         query_sleep_time = self.config["query_sleep_time"]
-        self.tns_query = TNSQuery(tns_user, tns_uid, query_sleep_time=query_sleep_time)
+        self.tns_client = TNSClient(
+            tns_user, tns_uid, query_sleep_time=query_sleep_time
+        )
 
     def get_daily_delta_filepath(self, t_ref: Time, fmt: str = "csv") -> Path:
         datestr = t_ref.strftime("%Y-%m-%d")
@@ -119,7 +121,7 @@ class TNSQueryManager(BaseQueryManager):
             tns_results.drop_duplicates("name", keep="last", inplace=True)
         else:
             logger.info("no existing TNS information")
-            tns_results = TNSQuery.get_empty_delta_results(return_type="pandas")
+            tns_results = TNSClient.get_empty_delta_results(return_type="pandas")
         self.tns_results = tns_results
 
     def collect_missing_daily_deltas(self, t_ref: Time = None):
@@ -134,7 +136,7 @@ class TNSQueryManager(BaseQueryManager):
             if delta_filepath.exists():
                 continue
             logger.info(f"query for {delta_filepath.name}")
-            df = self.tns_query.get_tns_daily_delta(t_delta)
+            df = self.tns_client.get_tns_daily_delta(t_delta)
             if df is not None:
                 if df.empty:
                     logger.warning(f"{delta_filepath.name} is empty")
@@ -144,7 +146,7 @@ class TNSQueryManager(BaseQueryManager):
         if new_deltas:
             results = pd.concat(new_deltas, ignore_index=True)
         else:
-            results = TNSQuery.get_empty_delta_results(return_type="pandas")
+            results = TNSClient.get_empty_delta_results(return_type="pandas")
         self.daily_delta_results = results
         return results
 
@@ -180,14 +182,14 @@ class TNSQueryManager(BaseQueryManager):
             if delta_filepath.exists():
                 continue
             logger.info(f"query for {delta_filepath}")
-            df = self.tns_query.get_tns_hourly_delta(hour)
+            df = self.tns_client.get_tns_hourly_delta(hour)
             df.to_csv(delta_filepath, index=False)
             new_deltas.append(df)
 
         if new_deltas:
             results = pd.concat(new_deltas)
         else:
-            results = TNSQuery.get_empty_delta_results(return_type="pandas")
+            results = TNSClient.get_empty_delta_results(return_type="pandas")
         self.hourly_delta_results = results
         return results
 

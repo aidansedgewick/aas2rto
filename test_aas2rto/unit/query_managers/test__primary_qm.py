@@ -1,5 +1,7 @@
 import pytest
 
+from astropy.time import Time
+
 from aas2rto.path_manager import PathManager
 
 from aas2rto.query_managers.base import BaseQueryManager
@@ -9,6 +11,30 @@ from aas2rto.query_managers.primary import (
 )
 
 from aas2rto.target_lookup import TargetLookup
+
+
+class MockQM:
+
+    name = "mock_qm"
+
+    def __init__(self):
+        self.tasks_performed = False
+
+    def perform_all_tasks(self, iteration: int, t_ref: Time = None):
+        self.tasks_performed = True
+
+
+class FailingQM:
+    name = "failing_qm"
+
+    def __init__(self):
+        pass
+
+    def perform_all_tasks(self, iteration: int, t_ref: Time = None):
+        try:
+            raise ValueError()
+        except Exception as e:
+            return e
 
 
 class Test__InitPrimaryQM:
@@ -63,3 +89,32 @@ class Test__InitPrimaryQM:
         # Act
         with pytest.raises(ValueError):
             pqm = PrimaryQueryManager(config, tlookup, path_mgr)
+
+
+class Test__PerformAllQMTasks:
+
+    @pytest.fixture(autouse=True)
+    def remove_empty_directories(self, remove_tmp_dirs):
+        pass
+
+    def test__perform(self, tlookup: TargetLookup, path_mgr: PathManager):
+        # Arrange
+        pqm = PrimaryQueryManager({}, tlookup, path_mgr)
+        pqm.query_managers["qm"] = MockQM()
+
+        # Act
+        pqm.perform_all_query_manager_tasks(iteration=1)
+
+        # Assert
+        assert pqm.query_managers["qm"].tasks_performed
+
+    def test__caught_exception_warns(
+        self, tlookup: TargetLookup, path_mgr: PathManager
+    ):
+        # Arrange
+        pqm = PrimaryQueryManager({}, tlookup, path_mgr)
+        pqm.query_managers["qm"] = FailingQM()
+
+        # Act
+        with pytest.warns(UserWarning):
+            pqm.perform_all_query_manager_tasks(iteration=1)

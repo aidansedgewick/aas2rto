@@ -11,7 +11,7 @@ from astropy.time import Time
 from aas2rto.target_lookup import TargetLookup
 
 from aas2rto.query_managers.tns.tns import TNSQueryManager, TNSCredentialError
-from aas2rto.query_managers.tns.tns_query import TNSQueryError
+from aas2rto.query_managers.tns.tns_client import TNSClient, TNSClientError
 
 
 @pytest.fixture

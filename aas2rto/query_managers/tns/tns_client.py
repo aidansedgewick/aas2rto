@@ -17,15 +17,15 @@ from astropy.table import Table, vstack
 from astropy.time import Time, TimeDelta
 
 
-class TNSQueryWarning(UserWarning):
+class TNSClientWarning(UserWarning):
     pass
 
 
-class TNSQueryError(Exception):
+class TNSClientError(Exception):
     pass
 
 
-class TNSQuery:
+class TNSClient:
     tns_base_url = f"https://www.wis-tns.org"
     tns_search_url = f"{tns_base_url}/search"  # NOTE: no trailing slash
     tns_public_objects_url = f"{tns_base_url}/system/files/tns_public_objects"
@@ -54,21 +54,21 @@ class TNSQuery:
 
         if unknown_parameters:
             unk_param_str = "\n    ".join(unknown_parameters)
-            raise TNSQueryError(f"unknown_parameters\n    {unk_param_str}")
+            raise TNSClientError(f"unknown_parameters\n    {unk_param_str}")
 
     @staticmethod
     def check_return_type(return_type: str):
-        known_types_str = ", ".join(f"'{x}'" for x in TNSQuery.known_return_types)
+        known_types_str = ", ".join(f"'{x}'" for x in TNSClient.known_return_types)
         return_type_err_msg = (
             f"Unknown return_type='\033[33;1m{return_type}\033[0m'. Choose from:\n    "
             f"{known_types_str}"
         )
-        if return_type not in TNSQuery.known_return_types:
-            raise TNSQueryError(return_type_err_msg)
+        if return_type not in TNSClient.known_return_types:
+            raise TNSClientError(return_type_err_msg)
 
     @staticmethod
     def get_empty_delta_results(return_type="pandas"):
-        TNSQuery.check_return_type(return_type)
+        TNSClient.check_return_type(return_type)
         columns = "name ra declination lastmodified".split()
         if return_type == "records":
             return []
@@ -186,7 +186,7 @@ class TNSQuery:
                 f" (reason '{response.reason}')"
             )
             logger.error(msg)
-            warnings.warn(TNSQueryWarning(msg))
+            warnings.warn(TNSClientWarning(msg))
             if not process:
                 return response
             return self.get_empty_delta_results(return_type=return_type)

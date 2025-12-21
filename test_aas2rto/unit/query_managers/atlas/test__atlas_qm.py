@@ -16,7 +16,7 @@ from aas2rto.query_managers.atlas.atlas import (
     AtlasQueryManager,
     process_atlas_lightcurve,
 )
-from aas2rto.query_managers.atlas.atlas_query import AtlasQuery
+from aas2rto.query_managers.atlas.atlas_client import AtlasClient
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
@@ -70,7 +70,7 @@ class Test__ProcessAtlasLC:
 
     def test__empty_lc(self):
         # Arrange
-        empty_lc = AtlasQuery.get_empty_lightcurve(return_type="pandas")
+        empty_lc = AtlasClient.get_empty_lightcurve(return_type="pandas")
 
         # Act
         processed_lc = process_atlas_lightcurve(empty_lc)
@@ -92,7 +92,7 @@ class Test__InitAtlasQM:
 
         # Assert
         assert qm.token == 1234
-        assert qm.atlas_query.headers.keys() == set(["Authorization", "Accept"])
+        assert qm.atlas_client.headers.keys() == set(["Authorization", "Accept"])
 
         exp_path = tmp_path / "atlas"
         assert exp_path.exists()
@@ -517,7 +517,7 @@ class Test__LoadLCs:
 
     def test__load_empty_returns_none(self, atlas_qm: AtlasQueryManager):
         # Arrange
-        empty_lc = AtlasQuery.get_empty_lightcurve(return_type="pandas")
+        empty_lc = AtlasClient.get_empty_lightcurve(return_type="pandas")
         lc_filepath = atlas_qm.get_lightcurve_filepath("T00")
         empty_lc.to_csv(lc_filepath, index=False)
 

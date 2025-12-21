@@ -528,19 +528,19 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             lightcurve_columns = self.config["lightcurve_columns"]
             if lightcurve_columns is not None:
                 payload["columns"] = lightcurve_columns
+
+            t1 = time.perf_counter()
             try:
-                t1 = time.perf_counter()
                 result = self.fink_query.objects(return_type="pandas", **payload)
                 chunk_results.append(result)
-                t2 = time.perf_counter()
-                logger.info(f"LC query chunk {ii+1} in {t2-t1:.1f}s")
-
             except Exception as e:
                 msg = f"LC query chunk {ii+1} failed:\n    {type(e).__name__}: {e}"
                 logger.error(msg)
                 failed_queries = failed_queries + 1
                 failed.extend(fink_id_chunk)
                 continue
+            t2 = time.perf_counter()  # continue doesn't matter - t1 re-set every loop
+            logger.info(f"LC query chunk {ii+1} in {t2-t1:.1f}s")
 
             if self.target_id_key not in result:
                 msg = (
@@ -571,7 +571,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
 
         logger.info(f"{len(success)} LCs queried ok, {len(missing)} returned no LC")
         if len(failed) > 0:
-            logger.warning(f"{len(failed)} were part of failed queries")
+            logger.warning(f"{len(failed)} LCs were in {failed_queries} failed queries")
         return success, missing, failed
 
     def integrate_alerts(self):

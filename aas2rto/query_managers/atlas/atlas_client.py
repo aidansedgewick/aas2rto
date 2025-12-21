@@ -15,11 +15,11 @@ from astropy.table import Table
 logger = getLogger(__name__.split(".")[-1])
 
 
-class AtlasQueryWarning(UserWarning):
+class AtlasClientWarning(UserWarning):
     pass
 
 
-class AtlasQuery:
+class AtlasClient:
     atlas_base_url = "https://fallingstar-data.com/forcedphot"
     atlas_default_queue_url = f"{atlas_base_url}/queue/"
     atlas_default_timeout = 90.0
@@ -54,7 +54,7 @@ class AtlasQuery:
         logger.info("requesting ATLAS token from servers...")
         username = username or input("ATLAS username: ")
         password = password or getpass.getpass("ATLAS password [input hidden]: ")
-        url = f"{AtlasQuery.atlas_base_url}/api-token-auth/"  # NOTE TRAILING SLASH!
+        url = f"{AtlasClient.atlas_base_url}/api-token-auth/"  # NOTE TRAILING SLASH!
         response = requests.post(url, data=dict(username=username, password=password))
         try:
             token = response.json()["token"]
@@ -67,17 +67,17 @@ class AtlasQuery:
 
     @staticmethod
     def check_return_type(return_type: str):
-        known_types_str = ", ".join(f"'{x}'" for x in AtlasQuery.known_return_types)
+        known_types_str = ", ".join(f"'{x}'" for x in AtlasClient.known_return_types)
         return_type_err_msg = (
             f"Unknown return_type='\033[33;1m{return_type}\033[0m'. Choose from:\n    "
             f"{known_types_str}"
         )
-        if return_type not in AtlasQuery.known_return_types:
+        if return_type not in AtlasClient.known_return_types:
             raise ValueError(return_type_err_msg)
 
     @staticmethod
     def get_empty_lightcurve(return_type: str = "pandas"):
-        AtlasQuery.check_return_type(return_type)
+        AtlasClient.check_return_type(return_type)
 
         columns = "MJD m dm uJy duJy F err chi/N RA Dec x y maj min phi apfit mag5sig Sky Obs".split()
         if return_type == "records":
@@ -92,19 +92,21 @@ class AtlasQuery:
     @staticmethod
     def check_forcedphot_keys(data: dict):
         # Try to avoid using aas2rto.utils here...
-        unexected_kwargs = set(data.keys()) - set(AtlasQuery.expected_forcedphot_kwargs)
+        unexected_kwargs = set(data.keys()) - set(
+            AtlasClient.expected_forcedphot_kwargs
+        )
         if unexected_kwargs:
             unexp_str = " ".join(f"'\033[31;1m{x}\033[0m'" for x in unexected_kwargs)
-            exp_str = " ".join("'{x}'" for x in AtlasQuery.expected_forcedphot_kwargs)
+            exp_str = " ".join("'{x}'" for x in AtlasClient.expected_forcedphot_kwargs)
             msg = (
                 f"unexpected keys when submitting forcedphot query: \n    {unexp_str}\n"
                 f"known kwargs:\n    {exp_str}"
             )
-            warnings.warn(AtlasQueryWarning(msg))
+            warnings.warn(AtlasClientWarning(msg))
 
     @staticmethod
     def process_task_data(photom_data: str, return_type: str = "pandas"):
-        AtlasQuery.check_return_type(return_type)
+        AtlasClient.check_return_type(return_type)
 
         if isinstance(photom_data, requests.Response):
             photom_data = photom_data.text
@@ -163,7 +165,7 @@ class AtlasQuery:
             except Exception as e:
                 msg = f"from url {next_url}, got exception {type(e)}: {e}"
                 logger.warning(msg)
-                warnings.warn(AtlasQueryWarning(msg))
+                warnings.warn(AtlasClientWarning(msg))
                 break
 
             next_url = query_data["next"]  # prepare for next query...
