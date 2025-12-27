@@ -1,6 +1,7 @@
 import copy
 import traceback
 import time
+import warnings
 from logging import getLogger
 from typing import Dict, List, Tuple
 
@@ -101,7 +102,9 @@ def calc_cv_prob_penalty(
         t0_mask = band_ulim["mjd"] > t0 - 15.0  # anything after t0-15
         pre_t0_ulim = band_ulim[t0_mask]
         try:
-            modelmag = model.bandmag(band, "ab", pre_t0_ulim["mjd"].values)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                modelmag = model.bandmag(band, "ab", pre_t0_ulim["mjd"].values)
         except Exception as e:
             continue
 
