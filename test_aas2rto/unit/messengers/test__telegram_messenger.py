@@ -1,3 +1,4 @@
+import asyncio
 import pickle
 import pytest
 import string
@@ -50,6 +51,19 @@ class Test__TelegramInit:
         telegram_config.pop("token")
 
         with pytest.raises(MissingKeysError):
+            msgr = TelegramMessenger(telegram_config)
+
+    def test__bot_failing_returns_none(
+        self, telegram_config: dict, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Arrange
+        def get_bot_raises(*args, **kwargs):
+            raise Exception()
+
+        monkeypatch.setattr(TelegramMessenger, "get_bot", get_bot_raises)
+
+        # Act
+        with pytest.warns(UserWarning):
             msgr = TelegramMessenger(telegram_config)
 
 
@@ -246,6 +260,15 @@ class Test__MessageUsers:
         assert sent[1]["user"] == 102
         assert sent[2]["user"] == 901
 
+    def test__single_named_user(self, telegram_msgr: TelegramMessenger):
+
+        # Act
+        sent, exc = telegram_msgr.message_users(users=101, texts="a message")
+
+        # Assert
+        assert len(sent) == 1
+        assert sent[0]["user"] == 101
+
     def test__send_single_photo(self, telegram_msgr: TelegramMessenger, tmp_path: Path):
         # Arrange
         img_path = tmp_path / "img001.png"
@@ -253,6 +276,20 @@ class Test__MessageUsers:
 
         # Act
         sent, exc = telegram_msgr.message_users(img_paths=img_path)
+
+        # Arrange
+        assert len(sent) == 3
+        assert sent[0]["msg_type"] == "single_photo"
+        assert sent[1]["msg_type"] == "single_photo"
+        assert sent[2]["msg_type"] == "single_photo"
+
+    def test__photo_path_as_str(self, telegram_msgr: TelegramMessenger, tmp_path: Path):
+        # Arrange
+        img_path = tmp_path / "img001.png"
+        write_image(img_path)
+
+        # Act
+        sent, exc = telegram_msgr.message_users(img_paths=str(img_path))
 
         # Arrange
         assert len(sent) == 3
@@ -317,5 +354,19 @@ class Test__MessageUsers:
 
         # Assert
         assert len(sent) == 0
-
         assert len(exc) == 3
+
+    def test__exc_in_send_to_user_caught(
+        self, telegram_msgr: TelegramMessenger, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Arrange
+        def patch_raise(*args, **kwargs):
+            raise Exception()
+
+        monkeypatch.setattr(telegram_msgr, "send_to_user", patch_raise)
+        with pytest.raises(Exception):
+            telegram_msgr.send_to_user(101, texts=["should fail..."])
+
+        # Act
+        with pytest.warns(UserWarning):
+            telegram_msgr.message_users([101], texts=["exc will be caught!"])

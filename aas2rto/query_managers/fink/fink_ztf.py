@@ -47,11 +47,6 @@ class FinkZTFQueryManager(FinkBaseQueryManager):
     def add_target_from_alert(self, processed_alert: dict, t_ref=None) -> Target:
         t_ref = t_ref or Time.now()
 
-        target_id = processed_alert["objectId"]
-        existing_target = self.target_lookup.get(target_id, None)
-        if isinstance(existing_target, Target):
-            return None
-
         target = target_from_ztf_alert(processed_alert, t_ref=t_ref)
         self.target_lookup.add_target(target)
         return target
@@ -59,7 +54,7 @@ class FinkZTFQueryManager(FinkBaseQueryManager):
     def add_target_from_record(self, query_record: dict, t_ref: Time = None) -> Target:
         # Actually, the result of a ZTF classifier query
         # looks just like a processed alert...
-        # therefore we can just use that function!
+        # so we can just re-use that function!
         return self.add_target_from_alert(processed_alert=query_record, t_ref=t_ref)
 
     def apply_updates_from_alert(self, processed_alert: dict, t_ref=None) -> NoReturn:

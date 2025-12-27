@@ -47,6 +47,7 @@ class TNSClient:
 
     @staticmethod
     def check_search_parameters(parameters: dict):
+        raise NotImplementedError()
         unknown_parameters = []
         for k, v in parameters.items():
             if k not in ALLOWED_TNS_PARAMETERS:
@@ -79,6 +80,7 @@ class TNSClient:
 
     @staticmethod
     def build_search_parameter_string(search_params: dict):
+        raise NotImplementedError()
         url_components = []
         for k, v in search_params.items():
             if isinstance(v, bool):
@@ -139,14 +141,23 @@ class TNSClient:
 
         logger.info(f"{req_remain}/{req_limit} requests left (resets in {req_reset}s)")
 
-        if int(req_limit) < 2:
-            logger.info(f"waiting {req_reset}s for reset...")
-            time.sleep(int(req_reset) + 1.0)
-        else:
-            time.sleep(self.query_sleep_time)
+        try:
+            if int(req_remain) < 2:
+                logger.info(f"waiting {req_reset}s for reset...")
+                time.sleep(int(req_reset) + 1.0)
+            else:
+                time.sleep(self.query_sleep_time)  # Should wait a little bit anyway...
+        except TypeError as e:
+            logger.warning(f"error: {type(e).__name__}: {e}")
+            time.sleep(2.0)
 
     def request_delta(
-        self, url, return_type="pandas", process=True, retries=0, max_retries=3
+        self,
+        url: str,
+        return_type: str = "pandas",
+        process: bool = True,
+        retries: int = 0,
+        max_retries: int = 3,
     ):
         response = self.do_post(url)
 
@@ -162,11 +173,8 @@ class TNSClient:
                 )
             return response
 
-        if response.status_code == 404:
-            logger.info(f"filename {filename} failed, reason: {response.reason}")
-            return self.get_empty_delta_results(return_type=return_type)
-
         if response.status_code in [429] and retries < max_retries:
+            # Repeat 429[Too many requests] - called wait_after() so should be ok now...
             msg = (
                 f"status {response.status_code}: resubmit this request!"
                 f" try {retries}/{max_retries} {filename}"
@@ -178,18 +186,19 @@ class TNSClient:
                 process=process,
                 retries=retries + 1,
                 max_retries=max_retries,
-            )
-        else:
-            msg = (
-                f"{url}:\n    "
-                f"response {response.status_code}, failed after {max_retries} tries"
-                f" (reason '{response.reason}')"
-            )
-            logger.error(msg)
-            warnings.warn(TNSClientWarning(msg))
-            if not process:
-                return response
-            return self.get_empty_delta_results(return_type=return_type)
+            )  # Recursive call to this function
+
+        # We must have a bad response, and re-trying is not appropriate.
+        msg = (
+            f"{url}:\n    "
+            f"response {response.status_code}, failed after {retries + 1} tries:\n"
+            f"    Reason '{response.reason}')"
+        )
+        logger.error(msg)
+        warnings.warn(TNSClientWarning(msg))
+        if not process:
+            return response
+        return self.get_empty_delta_results(return_type=return_type)
 
     def get_tns_daily_delta(
         self, t_ref: Time = None, return_type="pandas", process=True
@@ -214,8 +223,8 @@ class TNSClient:
 
     def get_full_tns_archive(self, return_type="pandas", process=True):
         filename = f"tns_public_objects.csv.zip"
-        url = f"{self.ttns_public_objects_url}/{filename}"
-        self.request_delta(url, return_type=return_type, process=process)
+        url = f"{self.tns_public_objects_url}/{filename}"
+        return self.request_delta(url, return_type=return_type, process=process)
 
     def process_query_response(self, response: requests.Response):
         raise NotImplementedError()

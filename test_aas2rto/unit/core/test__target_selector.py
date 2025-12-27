@@ -1,8 +1,13 @@
 import pytest
 import yaml
 from pathlib import Path
+from typing import NoReturn
 
 import numpy as np
+
+import pandas as pd
+
+from astropy.time import Time
 
 from aas2rto.exc import UnexpectedKeysError
 from aas2rto.messaging.messaging_manager import MessagingManager
@@ -18,6 +23,9 @@ from aas2rto.target_data import TargetData
 from aas2rto.target_selector import TargetSelector
 
 
+###===== Some fixtures =====###
+
+
 @pytest.fixture
 def empty_aas2rto_config(tmp_path: Path):
     return {"paths": {"base_path": tmp_path}}
@@ -25,10 +33,22 @@ def empty_aas2rto_config(tmp_path: Path):
 
 @pytest.fixture
 def tselector(empty_aas2rto_config: dict, basic_target: Target, ztf_td: TargetData):
+    # Can't use premade 'tlookup', as tselector creates target_lookup in __init__
+
     ts = TargetSelector(empty_aas2rto_config)
     basic_target.target_data["fink_ztf"] = ztf_td
     ts.target_lookup.add_target(basic_target)
     return ts
+
+
+###===== Some mock objects for tests =====###
+
+
+def scoring_func(target: Target, t_ref: Time):
+    return 1.0
+
+
+###===== Actual tests start here =====###
 
 
 class Test__SelectorInit:
@@ -107,3 +127,54 @@ class Test__OppTargets:
         # Assert
         assert set(loaded) == set()
         assert set([f.name for f in failed]) == set(["test_target.yaml"])
+
+
+class Test__CompileLightcurves:
+
+    @pytest.fixture(autouse=True)
+    def _remove_empty_tmp_dirs(self, remove_tmp_dirs: NoReturn):
+        pass  # remove_tmp_dirs defined in unit/contfest.py, executed with autouse=True
+
+    def test__compile_lcs(self, tselector: TargetSelector):
+        # Arrange
+        T00 = tselector.target_lookup["T00"]
+        assert T00.compiled_lightcurve is None
+
+        # Act
+        compiled, failed = tselector.compile_target_lightcurves()
+
+        # Assert
+        assert isinstance(T00.compiled_lightcurve, pd.DataFrame)
+        assert set(compiled) == set(["T00"])
+
+    def test__lazy_skip_compiled_not_updated(self, tselector: TargetSelector):
+        # Arrange
+        T00 = tselector.target_lookup["T00"]
+        T00.updated = False
+        tselector.compile_target_lightcurves()
+
+        # Act
+        compiled, failed = tselector.compile_target_lightcurves()
+
+        # Assert
+        assert set(compiled) == set()
+
+    def test__recompiled_updated(self, tselector: TargetSelector):
+        # Arrange
+        T00 = tselector.target_lookup["T00"]
+        tselector.compile_target_lightcurves()
+        T00.updated = True
+
+        # Act
+        compiled, failed = tselector.compile_target_lightcurves()
+
+        # Assert
+        assert set(compiled) == set(["T00"])
+
+
+class Test__PerformIteration:
+    def test__iter(self, tselector: TargetSelector):
+
+        # Act
+        tselector.perform_iteration(scoring_func)
+        # Effectively checking for typos here...

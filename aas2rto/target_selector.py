@@ -30,18 +30,18 @@ from aas2rto import utils
 from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
 from aas2rto.messaging.messaging_manager import MessagingManager
 from aas2rto.modeling.modeling_manager import ModelingManager
-from aas2rto.scoring.scoring_manager import ScoringManager
 from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
-from aas2rto.query_managers.primary import PrimaryQueryManager
 from aas2rto.plotting import PlottingManager, plot_default_lightcurve, plot_visibility
+from aas2rto.query_managers.primary import PrimaryQueryManager
 from aas2rto.recovery.recovery_manager import RecoveryManager
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
-from aas2rto.web.web_manager import WebManager
+from aas2rto.scoring.scoring_manager import ScoringManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.web.web_manager import WebManager
 
 from aas2rto import paths
 
@@ -103,6 +103,7 @@ class TargetSelector:
         "consolidate_seplim": 5 * u.arcsec,
         "write_comments": True,
         "delete_opp_target_configs": True,
+        "quit_on_exc": False,
     }
     # expected_messenger_keys = ("telegram", "slack", "web")
 
@@ -235,7 +236,9 @@ class TargetSelector:
         return successful_targets, failed_targets
 
     def compile_target_lightcurves(
-        self, lightcurve_compiler: Callable = None, lazy=False, t_ref=None
+        self,
+        lightcurve_compiler: Callable = None,
+        t_ref: Time = None,
     ):
         """
         Compile all the data from the target_data into a convenient location,
@@ -257,7 +260,9 @@ class TargetSelector:
             lc_compiler_name = lightcurve_compiler.__name__
         except AttributeError as e:
             lc_compiler_name = type(lightcurve_compiler).__name__
-        logger.info("compile photometric data:")
+
+        lazy = self.selector_config["lazy_compile"]
+        logger.info(f"compile photometric data (lazy={lazy}):")
         logger.info(f"use {lc_compiler_name}")
 
         compiled = []
@@ -340,8 +345,7 @@ class TargetSelector:
         write_comments = self.selector_config.get("write_comments", True)
         obs_info_dt = self.selector_config.get("obs_info_dt", 0.5 / 24.0)
         # lazy_modeling = self.selector_parameters.get("lazy_modeling", True)
-        lazy_compile = self.selector_config.get("lazy_compile", False)
-        # lazy_plotting = self.selector_parameters.get("lazy_plotting", True)
+        # lazy_compile = self.selector_config.get("lazy_compile", False)
         seplimit = self.selector_config.get("consolidate_seplimit", 5.0) * u.arcsec
         # self.clear_scratch_plots() # NO - lazy plotting re-uses existing plots.
 
@@ -385,7 +389,7 @@ class TargetSelector:
 
         t1 = time.perf_counter()
         self.compile_target_lightcurves(
-            lightcurve_compiler=lightcurve_compiler, lazy=lazy_compile, t_ref=t_ref
+            lightcurve_compiler=lightcurve_compiler, t_ref=t_ref
         )
         perf_times["compile"] = time.perf_counter() - t1
 
@@ -413,7 +417,9 @@ class TargetSelector:
 
         # =========================== Build models =========================== #
         t1 = time.perf_counter()
-        if not "modeling" in skip_tasks:
+        if "modeling" in skip_tasks or modeling_function is None:
+            pass  # No modeling!
+        else:
             self.modeling_manager.build_target_models(modeling_function, t_ref=t_ref)
         perf_times["modeling"] = time.perf_counter() - t1
 
@@ -682,7 +688,8 @@ class TargetSelector:
                 t_str = t_ref.strftime("%Y-%m-%d %H:%M:%S")
                 crash_text = [f"CRASH at UT {t_str}"]
                 self.messaging_manager.send_crash_reports(text=crash_text)
-                sys.exit()
+                if self.selector_config["quit_on_exc"]:
+                    sys.exit()
 
             # Some post-loop tasks
             if iterations is not None:

@@ -81,7 +81,7 @@ class Test__ProcessAtlasLC:
 
 
 class Test__InitAtlasQM:
-    # Do NOT remove empty filetree in this class - want to check empty dirs are written.
+    # Do NOT remove empty filetree in everywhere - check empty dirs are written.
 
     def test__init_with_token(self, tlookup: TargetLookup, tmp_path: Path):
         # Arrange
@@ -118,7 +118,9 @@ class Test__InitAtlasQM:
         # Assert
         assert qm.token == 5678
 
-    def test__no_credentials_raises(self, tlookup: TargetLookup, tmp_path: Path):
+    def test__no_credentials_raises(
+        self, tlookup: TargetLookup, tmp_path: Path, remove_tmp_dirs: NoReturn
+    ):
         # Arrange
         config = {}  # Missing 'credentials' kw
 
@@ -126,7 +128,9 @@ class Test__InitAtlasQM:
         with pytest.raises(AtlasCredentialError):
             qm = AtlasQueryManager(config, tlookup, tmp_path)
 
-    def test__bad_credentials_raises(self, tlookup: TargetLookup, tmp_path: Path):
+    def test__bad_credentials_raises(
+        self, tlookup: TargetLookup, tmp_path: Path, remove_tmp_dirs: NoReturn
+    ):
         # Arrange
         config = {"credentials": {"blah": 100}}  # missing all relevant keys
 
@@ -135,7 +139,11 @@ class Test__InitAtlasQM:
             qm = AtlasQueryManager(config, tlookup, tmp_path)
 
     def test__bad_config_raises(
-        self, atlas_credentials: dict, tlookup: TargetLookup, tmp_path: Path
+        self,
+        atlas_credentials: dict,
+        tlookup: TargetLookup,
+        tmp_path: Path,
+        remove_tmp_dirs: NoReturn,
     ):
         # Arrange
         config = {"blah": 100.0, "credentials": atlas_credentials}

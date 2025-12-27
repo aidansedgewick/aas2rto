@@ -55,10 +55,10 @@ def updates_from_classifier_queries(
     existing_results: pd.DataFrame,
     new_results: pd.DataFrame,
     id_key: str = None,
-    date_key="lastdate",
-):
+    date_key: str = "lastdate",
+) -> pd.DataFrame:
     if id_key is None:
-        raise ValueError("must provide 'id_key'")
+        raise ValueError("must provide 'id_key=<key>'")
 
     existing_results = existing_results.copy()
     existing_results.sort_values([id_key, date_key], inplace=True, ignore_index=True)
@@ -123,7 +123,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
         "query_interval": "How long [DAYS] to wait until new 'latests' query?",
         "query_lookback": "How far back [DAYS] to query for",
         "stale_file_age": "How old [DAYS] should files be deleted?",
-        "tasks": f"which steps of {DEFAULT_TASKS}",
+        "tasks": f"which subset to perform, from: {DEFAULT_TASKS}",
     }
 
     ##===== initialisation here =====##
@@ -326,7 +326,17 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
         t_ref = t_ref or Time.now()
 
         targets_added = []
+        existing_skipped = []
         for alert in processed_alerts:
+            target_id = alert[self.target_id_key]
+
+            ##== Do we already know about it?
+            existing_target = self.target_lookup.get(target_id, None)
+            if existing_target is not None:
+                existing_skipped.append(target_id)
+                continue
+
+            ##== Otherwise add it...
             target = self.add_target_from_alert(alert, t_ref=t_ref)
             if isinstance(target, Target):
                 targets_added.append(target.target_id)
@@ -337,7 +347,10 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
                 )
                 logger.warning(msg)
                 targets_added.append(target)
-        logger.info(f"added {len(targets_added)} new targets")
+
+        N_added = len(targets_added)
+        N_skipped = len(existing_skipped)
+        logger.info(f"added {N_added} new targets (skipped {N_skipped} existing)")
         return targets_added
 
     def update_info_messages(self, processed_alerts: list[dict], t_ref: Time = None):
@@ -355,12 +368,12 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             try:
                 lightcurve = pd.read_csv(lightcurve_filepath)
             except Exception as e:
-                logger.warning(
-                    f"During read lc for {fink_id}:\n {type(e).__name__}: {e}"
-                )
+                msg = f"During read lc for {fink_id}:\n    {type(e).__name__}: {e}"
+                logger.warning(msg)
                 lightcurve = None
-            return lightcurve
-        return None
+        else:
+            lightcurve = None
+        return lightcurve
 
     def get_fink_id_from_target(self, target: Target):
         for alt_key in self.id_resolving_order:
@@ -439,9 +452,18 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             return results.to_dict("records")
         return []
 
-    def new_targets_from_query_records(self, query_records: pd.DataFrame):
+    def new_targets_from_query_records(self, query_records: list[dict]):
         targets_added = []
+        existing_skipped = []
         for record in query_records:
+            target_id = record[self.target_id_key]
+
+            ##== Do we already know about it?
+            existing_target = self.target_lookup.get(target_id, None)
+            if existing_target is not None:
+                existing_skipped.append(target_id)
+                continue
+
             target = self.add_target_from_record(record)
             if isinstance(target, Target):
                 targets_added.append(target.target_id)
@@ -452,6 +474,10 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
                 )
                 logger.warning(msg)
                 targets_added.append(target)
+
+        N_added = len(targets_added)
+        N_skipped = len(existing_skipped)
+        logger.info(f"added {N_added} new targets (skipped {N_skipped} existing)")
         return targets_added
 
     def get_lightcurves_to_query(self, t_ref: Time = None):
@@ -469,8 +495,8 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             lc_age = calc_file_age(lightcurve_filepath, t_ref=t_ref)
             if lc_age > max_age:
                 to_query.append(fink_id)
-        msg1 = f"LCs for {len(to_query)} targets need updating (age > {max_age:.1f}d or missing)"
-        logger.info(msg1)
+        msg = f"LCs for {len(to_query)} targets need updating (age > {max_age:.1f}d or missing)"
+        logger.info(msg)
         if len(no_fink_id) > 0:
             logger.info(f"({len(no_fink_id)} have no relevant id for '{self.name}')")
         return to_query
@@ -490,6 +516,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
         t_ref = t_ref or Time.now()
 
         if fink_id_list is None:
+            # Can't just query all in target_lookup, some may not have valid fink_id...
             fink_id_list = self.get_lightcurves_to_query()
         logger.info(f"attempt to query {len(fink_id_list)} LCs")
 
@@ -581,6 +608,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             if fink_id is None:
                 continue
             alerts_loaded = self.load_missing_alerts_for_target(fink_id)
+            # this load() must to be defined per-survey, as alert schema is different
             if alerts_loaded:
                 targets_modified.append(target_id)
         logger.info(f"loaded missing alerts for {len(targets_modified)} targets")
@@ -644,7 +672,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
             self.update_info_messages(processed_alerts, t_ref=t_ref)
 
-        # Any targets flagged as interesting *not* from alerts.
+        # Any targets flagged as interesting *not* from alerts?
         if "queries" in self.tasks:
             updated_query_records = self.fink_classifier_queries()
             self.new_targets_from_query_records(updated_query_records)
@@ -659,7 +687,6 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
             self.integrate_alerts()
 
         # Load any cutouts
-
         if "cutouts" in self.tasks:
             self.load_cutouts()
 

@@ -43,6 +43,7 @@ class StaticPagesManager:
 
         self.prepare_web_directories()  # Do this first.
 
+        self.git_repo_status = None  # Mainly for testing
         self.check_git_config()
         self.prepare_git_repo()
 
@@ -101,7 +102,8 @@ class StaticPagesManager:
                 logger.error("no existing repo available")
                 self.init_new_git_repo()
         else:
-            logger.info(".git already initialised")
+            logger.info("'.git' already initialised - use existing")
+            self.git_repo_status = "existing"  # 'cloned' or 'new_init' set above...
 
         git_remote_cmd = f"git -C {self.web_base_path} remote -v"
         remote_output = subprocess.check_output(git_remote_cmd.split()).decode("utf-8")
@@ -127,6 +129,7 @@ class StaticPagesManager:
             logger.info("cloned - success!")
         else:
             logger.warning("clone exited ok, but no cloned repo...")
+        self.git_repo_status = "cloned"
 
     def init_new_git_repo(self):
 
@@ -142,6 +145,7 @@ class StaticPagesManager:
 
         git_branch_cmd = f"git -C {self.web_base_path} branch -m '{branch}'"
         branch_output = subprocess.check_output(git_branch_cmd.split())
+        self.git_repo_status = "new_init"
 
     def _get_sci_ranked_page_path(self):
         return self.web_lists_path / "sci_ranked.html"
@@ -330,9 +334,10 @@ class StaticPagesManager:
             im_path = f"../{web_fig_path.relative_to(self.web_base_path)}"
             additional_path_list.append(im_path)
 
-        target_info_str = target.get_info_string(
-            header_open="<h2>", header_close="</h2>"
-        )
+        header_tags = dict(header_open="<h2>", header_close="</h2>")
+        link_tags = dict(link_open='<a href="', link_close='">')
+        target_info_str = target.get_info_string(**header_tags, **link_tags)
+
         target_info_str = target_info_str.replace("\n", "<br>")
         page_data = dict(
             target_id=target.target_id,
@@ -340,7 +345,7 @@ class StaticPagesManager:
             lc_fig_path=rel_lc_path,
             vis_fig_path_list=rel_vis_paths,
             additional_fig_path_list=additional_path_list,
-            index_url="../index.html",
+            index_url="../index.html",  # need relative link....
             update_time_str=t_str,
         )
 

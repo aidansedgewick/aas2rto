@@ -250,7 +250,11 @@ class VisibilityPlotter:
                 self.set_readable_alt_xticks()
             except Exception as e:
                 pass
-            legend = self.alt_ax.legend(handles=self.legend_handles, ncols=3)
+            legend = self.alt_ax.legend(
+                loc="lower center",
+                bbox_to_anchor=(0.5, 1.01),
+                handles=self.legend_handles,
+            )
             self.alt_ax.add_artist(legend)
         if self.sky_ax is not None:
             self.sky_ax.set_rlim(bottom=90.0, top=0.0)

@@ -200,20 +200,6 @@ class Test__TargetFromAlert:
         # now check it's in the target_lookup
         assert "ZTF00abc" in patched_ztf_qm.target_lookup
 
-    def test__skip_repeat_target(
-        self, patched_ztf_qm: FinkZTFQueryManager, processed_ztf_alert_list: list[dict]
-    ):
-        # Arrange
-        alert00 = processed_ztf_alert_list[0]
-        alert01 = processed_ztf_alert_list[1]
-        patched_ztf_qm.add_target_from_alert(alert00)
-
-        # Act
-        target = patched_ztf_qm.add_target_from_alert(alert01)
-
-        # Assert
-        assert target is None
-
 
 class Test__ApplyUpdatesFromTarget:
     def test__apply_ztf_updates_to_target(

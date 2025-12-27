@@ -11,6 +11,7 @@ class MockPostResponse:
         req_headers: dict = None,
         content: Any = None,
         status_code: int = 200,
+        resp_headers: dict[str, int] = None,
         reason: str = "",
     ):
 
@@ -24,7 +25,7 @@ class MockPostResponse:
         self.status_code = status_code
         self.reason = reason
         self.content = content
-        self.headers = {
+        self.headers = resp_headers or {
             "x-rate-limit-limit": 20,
             "x-rate-limit-remaining": 19,
             "x-rate-limit-reset": 58.0,
@@ -74,6 +75,7 @@ def daily_delta_rows():
     d0 = "2023-02-20 00:00:00"
     d1 = "2023-02-24 13:30:00"
     return [
+        # id prfx  name    type  ra     dec  z     int.name  <-reporters->   dd  lm
         [1, "SN", "2023J", "SN", 180.0, 0.0, 0.01, "ZTF00A", "A. Aa, B. Bb", d0, d1],
         [2, "AT", "2023K", "", 90.0, 30.0, "", "ZTF00B", "A. Aa, B. Bb", d0, d1],
         [3, "SN", "2023L", "SN", 345.0, -80.0, 0.01, "", "A. Aa, B. Bb", d0, d1],
@@ -133,25 +135,49 @@ def monkeypatched_tns_query(
             return MockPostResponse(
                 url, req_headers=headers, status_code=400, content=reas, reason=reas
             )
+        elif "last_request" in url:
+            reas = "OK"
+            resp_headers = {
+                "x-rate-limit-limit": 20,
+                "x-rate-limit-remaining": 1,
+                "x-rate-limit-reset": 0.1,
+            }
+            return MockPostResponse(
+                url,
+                req_headers=headers,
+                content=reas,
+                reason=reas,
+                resp_headers=resp_headers,
+            )
+
+        elif "repeat_request" in url:
+            reas = "Request repeat for this test"
+            return MockPostResponse(
+                url, req_headers=headers, status_code=429, content=reas, reason=reas
+            )
+
         else:
             filename = url.split("/")[-1]
             filestem = filename.split(".")[0]
-            timestamp = filestem.split("tns_public_objects_", 1)[1]
-            if len(timestamp) == 8:
-                # Asking for daily_delta:
-                if timestamp == "20230224":  # The last full day before t_ref
-                    content = mock_daily_delta.encode("utf-8")
-                else:
-                    content = f"{timestamp} 00:00:00 23:59:59".encode()
-            elif len(timestamp) == 2:
-                # Asking for hourly_delta:
-                if timestamp == "00":
-                    content = mock_hourly_delta.encode()
-                else:
-                    content = f"230225 {timestamp}:00:00 - {timestamp}:59:59".encode()
+            if filestem == "tns_public_objects":
+                content = mock_daily_delta.encode("utf-8")
             else:
-                msg = f"unknown request {filename} (extracted tstamp {timestamp})"
-                raise ValueError(msg)
+                tstamp = filestem.split("tns_public_objects_", 1)[1]
+                if len(tstamp) == 8:
+                    # Asking for daily_delta:
+                    if tstamp == "20230224":  # The last full day before t_ref
+                        content = mock_daily_delta.encode("utf-8")
+                    else:
+                        content = f"{tstamp} 00:00:00 23:59:59".encode()
+                elif len(tstamp) == 2:
+                    # Asking for hourly_delta:
+                    if tstamp == "00":
+                        content = mock_hourly_delta.encode()
+                    else:
+                        content = f"230225 {tstamp}:00:00 - {tstamp}:59:59".encode()
+                else:
+                    msg = f"unknown request {filename} (extracted tstamp {tstamp})"
+                    raise ValueError(msg)
             return MockPostResponse(url, headers, content=content)
 
     monkeypatch.setattr("requests.post", mock_post)

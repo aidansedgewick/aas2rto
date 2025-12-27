@@ -370,15 +370,39 @@ class Target:
             return result
         return result[0]  # Otherwise just return the score.
 
+    def get_info_string(
+        self,
+        header_open: str = "",
+        header_close: str = "",
+        link_open: str = "",
+        link_close: str = "",
+        t_ref: Time = None,
+    ):
+        info_lines = self.get_info_lines(
+            header_open=header_open,
+            header_close=header_close,
+            link_open=link_open,
+            link_close=link_close,
+            t_ref=t_ref,
+        )
+        return "\n".join(info_lines)
+
     def get_info_lines(
-        self, header_open: str = "", header_close: str = "", t_ref: Time = None
+        self,
+        header_open: str = "",
+        header_close: str = "",
+        link_open: str = "",
+        link_close: str = "",
+        t_ref: Time = None,
     ):
         t_ref = t_ref or Time.now()
         t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
 
         info_lines = [f"Target {self.target_id} at {t_ref_str}"]
 
-        target_id_lines = self.get_target_id_info_lines()
+        target_id_lines = self.get_target_id_info_lines(
+            link_open=link_open, link_close=link_close
+        )
         coordinate_lines = self.get_coordinate_info_lines()
         flag_lines = self.get_flag_lines()
         photometry_lines = self.get_photometry_info_lines()
@@ -393,34 +417,29 @@ class Target:
         info_lines.extend(photometry_lines)
         return info_lines
 
-    def get_info_string(
-        self, header_open: str = "", header_close: str = "", t_ref: Time = None
-    ):
-        info_lines = self.get_info_lines(
-            header_open=header_open, header_close=header_close, t_ref=t_ref
-        )
-        return "\n".join(info_lines)
-
-    def get_target_id_info_lines(self):
+    def get_target_id_info_lines(self, link_open: str = "", link_close: str = ""):
         info_lines = []
         broker_name = self.alt_ids.get("ztf", None)
         if broker_name is not None:
+            fink_url = f"fink-portal.org/{broker_name}"
+            lasair_url = f"lasair-ztf.lsst.ac.uk/objects/{broker_name}"
+            alerce_url = f"alerce.online/object/{broker_name}"
             broker_lines = [
-                f"    FINK: fink-portal.org/{broker_name}",
-                f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{broker_name}",
-                f"    ALeRCE: alerce.online/object/{broker_name}",
+                f"    FINK: {link_open}{fink_url}{link_close}",
+                f"    Lasair: {link_open}{lasair_url}{link_close}",
+                f"    ALeRCE: {link_open}{alerce_url}{link_close}",
             ]
             info_lines.extend(broker_lines)
 
         tns_name = self.alt_ids.get("tns", None)
         if tns_name is not None:
             tns_url = f"wis-tns.org/object/{tns_name}"
-            info_lines.append(f"    TNS: {tns_url}")
+            info_lines.append(f"    TNS: {link_open}{tns_url}{link_close}")
 
         yse_name = self.alt_ids.get("yse", None)
         if yse_name is not None:
             yse_url = f"ziggy.ucolick.org/yse/transient_detail/{yse_name}"
-            info_lines.append(f"    YSE: {yse_url}")
+            info_lines.append(f"    YSE: {link_open}{yse_url}{link_close}")
 
         alt_rev = {}
         for source, alt_name in self.alt_ids.items():

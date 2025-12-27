@@ -76,13 +76,43 @@ class Test__PrepAtlas:
 class Test__PrepYSE:
     def test__prep_yse(self, yse_td: TargetData):
         # Act
-        result = prepare_yse_data(yse_td)
+        result = prepare_yse_data(yse_td, use_all_sources=True)
 
         # Assert
         assert isinstance(result, pd.DataFrame)
         assert len(result) == 5
         exp_columns = "mjd mag magerr tag band source".split()
         assert set(result.columns) == set(exp_columns)
+
+        assert result["band"].iloc[0] == "ps1::g"  # column correctly mapped...
+        assert result["band"].iloc[1] == "ps1::r"
+        assert result["band"].iloc[2] == "uvot::uvw1"  #  3rd row dq 'BAD' is ignored.
+
+    def test__not_all_sources(self, yse_td: TargetData):
+        # Act
+        result = prepare_yse_data(yse_td, use_all_sources=False)
+
+        # Assert
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 3
+
+        assert result["band"].iloc[0] == "ps1::g"
+        assert result["band"].iloc[1] == "ps1::r"
+        assert result["band"].iloc[2] == "ps1::g"  #  3rd row dq 'BAD' has been ignored.
+
+    def test__additional_sources(self, yse_td: TargetData):
+        # Act
+        result = prepare_yse_data(
+            yse_td, use_all_sources=False, additional_sources="swift"
+        )
+
+        # Assert
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 4
+
+        assert result["band"].iloc[0] == "ps1::g"
+        assert result["band"].iloc[1] == "ps1::r"
+        assert result["band"].iloc[2] == "uvot::uvw1"  #  3rd row dq 'BAD' is ignored.
 
 
 class Test__DefaultLCCompiler:
@@ -155,7 +185,7 @@ class Test__DefaultLCCompiler:
         t_fixed: Time,
     ):
         # Arrange
-        lcc = DefaultLightcurveCompiler(average_atlas_epochs=False)
+        lcc = DefaultLightcurveCompiler(atlas_average_epochs=False)
         basic_target.target_data["atlas"] = atlas_td
 
         # Act
@@ -181,8 +211,8 @@ class Test__DefaultLCCompiler:
 
         # Assert
         assert isinstance(result, pd.DataFrame)
-        assert len(result) == 5
-        assert set(result["source"].values) == set(["yse", "swift"])
+        assert len(result) == 5  # dq BAD in 3rd row ignored
+        assert set(result["source"].values) == set(["yse", "swift", "unknown"])
 
     def test__all_data(
         self,
@@ -203,5 +233,7 @@ class Test__DefaultLCCompiler:
 
         # Assert
         assert isinstance(result, pd.DataFrame)
-        assert len(result) == 24  # 14 ztf + 5 atlas ave + 5 yse
-        assert set(result["source"].values) == set(["yse", "swift", "atlas", "ztf"])
+        assert len(result) == 24  # 14 ztf + 5 atlas ave + 5 yse (exl. bad)
+        assert set(result["source"].values) == set(
+            ["yse", "swift", "atlas", "ztf", "unknown"]
+        )

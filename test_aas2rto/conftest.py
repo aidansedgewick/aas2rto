@@ -44,7 +44,7 @@ def remove_empty_filetree(dirpath: Path, depth=0, max_depth=6):
         dirpath.rmdir()
 
 
-@pytest.fixture()  # do NOT auto use. Sometimes we want to check the empty dirs exist.
+@pytest.fixture()  # do NOT auto use here. Often want to check empty dirs 'by hand'...
 def remove_tmp_dirs(tmp_path: Path):
     # Arrange
     pass  # Code BEFORE yield in fixture is setup. No setup here...
@@ -344,23 +344,42 @@ def atlas_td(lc_atlas: pd.DataFrame):
 @pytest.fixture
 def yse_rows(t_fixed):
     return [
-        [t_fixed.mjd + 0.0, 21.0, 0.1, 22.0, "g", "Pan-STARRS1", 100.0],
-        [t_fixed.mjd + 0.1, 21.0, 0.1, 22.0, "r", "Pan-STARRS2", 100.0],
-        [t_fixed.mjd + 0.2, 21.0, 0.1, 22.0, "i", "Pan-STARRS1", 100.0],
-        [t_fixed.mjd + 1.0, 20.0, 0.1, 21.0, "UVW1", "Swift", 100.0],
-        [t_fixed.mjd + 2.0, 19.0, 0.1, 22.0, "g", "Pan-STARRS1", 100.0],
+        [t_fixed.mjd + 0.0, 21.0, 0.1, 22.0, "g", "Pan-STARRS1", "None"],
+        [t_fixed.mjd + 0.1, 21.0, 0.1, 22.0, "r", "Pan-STARRS2", "None"],
+        [t_fixed.mjd + 0.2, 21.0, 0.1, 22.0, "i", "Pan-STARRS1", "BAD"],
+        [t_fixed.mjd + 1.0, 20.0, 0.1, 21.0, "UVW1", "Swift", "None"],
+        [t_fixed.mjd + 1.1, 20.0, 0.1, 21.0, "Unkown", "Unknown", "None"],
+        [t_fixed.mjd + 2.0, 19.0, 0.1, 22.0, "g", "Pan-STARRS1", "None"],
     ]
 
 
 @pytest.fixture
-def lc_yse(yse_rows: List[List], t_fixed: Time):
-    colnames = "mjd mag magerr diffmaglim flt instrument blah".split()
-    return pd.DataFrame(yse_rows, columns=colnames)
+def yse_columns():
+    return "mjd mag magerr diffmaglim flt instrument dq".split()
 
 
 @pytest.fixture
-def yse_td(lc_yse):
-    return TargetData(lightcurve=lc_yse)
+def yse_lc(yse_columns: list[str], yse_rows: list[list], t_fixed: Time):
+    return pd.DataFrame(yse_rows, columns=yse_columns)
+
+
+@pytest.fixture
+def yse_td(yse_lc: pd.DataFrame):
+    return TargetData(lightcurve=yse_lc)
+
+
+@pytest.fixture
+def yse_explorer_columns():
+    return "name classification ra dec n_det".split()
+
+
+@pytest.fixture
+def yse_explorer_rows():
+    return [
+        ["2023J", "SN", 180.0, 0.0, 5],
+        ["2023K", "SNIa", 90.0, 30.0, 5],
+        ["2023M", "", 355.0, -80.0, 5],
+    ]
 
 
 @pytest.fixture
@@ -648,7 +667,35 @@ def tns_config(tns_credentials: dict):
 
 
 @pytest.fixture
+def yse_credentials():
+    return {"username": "user", "password": "password"}
+
+
+@pytest.fixture
+def yse_query_name():
+    return "yse_test_query"
+
+
+@pytest.fixture
+def yse_explorer_queries(yse_query_name: str):
+    return {
+        yse_query_name: {
+            "query_id": 101,
+            "target_id_col": "name",
+            "coordinate_cols": ("ra", "dec"),
+            "comparison_col": "n_det",
+        }
+    }
+
+
+@pytest.fixture
+def yse_config(yse_credentials: dict, yse_explorer_queries: dict):
+    return {"credentials": yse_credentials, "explorer_queries": yse_explorer_queries}
+
+
+@pytest.fixture
 def global_qm_config(fink_config: dict, atlas_config: dict, tns_config: dict):
+    # Deepcopy, else sub-dicts not modified correctly for tests of config-checkers.
     return {
         "fink_lsst": copy.deepcopy(fink_config),
         "fink_ztf": copy.deepcopy(fink_config),

@@ -114,6 +114,31 @@ class Test__SubmitPublicObjectRequest:
         with pytest.warns(TNSClientWarning):
             resp = tclient.request_delta(url, process=False)
 
+        # Assert
+        assert resp.status_code == 400
+
+    def test__bad_request_returns_empty(self, tclient: TNSClient):
+        # Arrange
+        url = f"{TNSClient.tns_public_objects_url}/bad_request.csv.zip"
+
+        # Act
+        with pytest.warns(TNSClientWarning):
+            result = tclient.request_delta(url, return_type="pandas")
+
+        # Assert
+        assert result.empty
+
+    def test__limited_request_repeats(self, tclient: TNSClient):
+        # Arrange
+        url = f"{TNSClient.tns_public_objects_url}/repeat_request.csv.zip"
+
+        # Act
+        with pytest.warns(TNSClientWarning):
+            resp = tclient.request_delta(url, process=False)
+
+        # Assert
+        # not really sure how to test this one...
+
 
 class Test__GetEmptyDeltaResults:
     def test__empty_pandas(self):
@@ -157,6 +182,7 @@ class Test__GetDailyDelta:
             "internal_names reporters discoverydate lastmodified"
         ).split()
         assert set(df.columns) == set(exp_columns)
+        assert len(df) == 3
 
     def test__return_empty_pandas(self, tclient: TNSClient):
         # Arrange
@@ -185,6 +211,7 @@ class Test__GetDailyDelta:
             "internal_names reporters discoverydate lastmodified"
         ).split()
         assert set(tab.columns) == set(exp_columns)
+        assert len(tab) == 3
 
     def test__return_empty_astropy(self, tclient: TNSClient):
         # Arrange
@@ -214,6 +241,7 @@ class Test__GetDailyDelta:
             "internal_names reporters discoverydate lastmodified"
         ).split()
         assert set(records[0].keys()) == set(exp_columns)
+        assert len(records) == 3
 
     def test__return_unprocessed(self, tclient: TNSClient):
         # Arrange
@@ -225,6 +253,19 @@ class Test__GetDailyDelta:
         # Assert
         assert hasattr(resp, "content")
 
+    def test__no_hour(self, tclient: TNSClient, monkeypatch: pytest.MonkeyPatch):
+        # Arrange
+        def mock_now():
+            return Time("2023-02-25 01:01:00")  # t_fixed, as func winds back 1 day
+
+        monkeypatch.setattr(Time, "now", mock_now)
+
+        # Act
+        result = tclient.get_tns_daily_delta(return_type="pandas")
+
+        # Assert
+        assert len(result) == 3
+
 
 class Test__GetHourlyDelta:
 
@@ -232,7 +273,7 @@ class Test__GetHourlyDelta:
 
     def test__return_pandas(self, tclient: TNSClient):
         # Act
-        df = tclient.get_tns_hourly_delta(0, return_type="pandas")
+        df = tclient.get_tns_hourly_delta(hour=0, return_type="pandas")
 
         # Assert
         assert isinstance(df, pd.DataFrame)
@@ -241,10 +282,11 @@ class Test__GetHourlyDelta:
             "internal_names reporters discoverydate lastmodified"
         ).split()
         assert set(df.columns) == set(exp_columns)
+        assert len(df) == 2
 
     def test__return_empty_pandas(self, tclient: TNSClient):
         # Act
-        df = tclient.get_tns_hourly_delta(1, return_type="pandas")
+        df = tclient.get_tns_hourly_delta(hour=1, return_type="pandas")
 
         # Assert
         assert isinstance(df, pd.DataFrame)
@@ -253,7 +295,7 @@ class Test__GetHourlyDelta:
 
     def test__return_astropy(self, tclient: TNSClient):
         # Act
-        tab = tclient.get_tns_hourly_delta(0, return_type="astropy")
+        tab = tclient.get_tns_hourly_delta(hour=0, return_type="astropy")
 
         # Assert
         assert isinstance(tab, Table)
@@ -262,10 +304,11 @@ class Test__GetHourlyDelta:
             "internal_names reporters discoverydate lastmodified"
         ).split()
         assert set(tab.columns) == set(exp_columns)
+        assert len(tab) == 2
 
     def test__return_empty_astropy(self, tclient: TNSClient):
         # Act
-        tab = tclient.get_tns_hourly_delta(1, return_type="astropy")
+        tab = tclient.get_tns_hourly_delta(hour=1, return_type="astropy")
 
         # Assert
         assert isinstance(tab, Table)
@@ -274,15 +317,39 @@ class Test__GetHourlyDelta:
 
     def test__return_records(self, tclient: TNSClient):
         # Act
-        records = tclient.get_tns_hourly_delta(0, return_type="records")
+        records = tclient.get_tns_hourly_delta(hour=0, return_type="records")
 
         # Assert
         assert isinstance(records, list)
         assert isinstance(records[0], dict)
+        assert len(records) == 2
 
     def test__return_unprocessed(self, tclient: TNSClient):
         # Act
-        resp = tclient.get_tns_hourly_delta(0, process=False)
+        resp = tclient.get_tns_hourly_delta(hour=0, process=False)
 
         # Assert
         assert hasattr(resp, "content")
+
+    def test__no_hour(
+        self, tclient: TNSClient, t_fixed: Time, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Arrange
+        def mock_now():
+            return Time("2023-02-24 01:01:00")  # 01:01 bc function winds back 1hr
+
+        monkeypatch.setattr(Time, "now", mock_now)
+
+        # Act
+        result = tclient.get_tns_hourly_delta(return_type="pandas")
+
+
+class Test__GetAllTNS:
+    def test__get_all_tns(self, tclient: TNSClient):
+        # Act
+        result = tclient.get_full_tns_archive(return_type="pandas")
+
+        print(result)
+
+        # Assert
+        assert isinstance(result, pd.DataFrame)  # Basically just checking for typos

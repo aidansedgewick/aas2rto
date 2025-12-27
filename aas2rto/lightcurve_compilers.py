@@ -9,6 +9,7 @@ import pandas as pd
 
 from astropy.time import Time
 
+from aas2rto import utils
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 
@@ -68,8 +69,8 @@ def prepare_ztf_data(
 
 def prepare_atlas_data(
     atlas_data: TargetData,
-    average_epochs=True,
-    rolling_window=0.1,
+    average_epochs: bool = True,
+    rolling_window: float = 0.1,
     valid_tag=DEFAULT_VALID_TAG,
     badqual_tag=DEFAULT_BADQUAL_TAG,
     ulimit_tag=DEFAULT_ULIMIT_TAG,
@@ -151,10 +152,15 @@ def prepare_atlas_data(
 
 def prepare_yse_data(
     yse_data: TargetData,
+    use_all_sources: bool = True,
+    additional_sources: tuple[str] = (),
     valid_tag=DEFAULT_VALID_TAG,
     badqual_tag=DEFAULT_BADQUAL_TAG,
     ulimit_tag=DEFAULT_ULIMIT_TAG,
 ):
+
+    if isinstance(additional_sources, str):
+        additional_sources = [additional_sources]
 
     ps1_lookup = {band: f"ps1::{band}" for band in "w g r i z y".split()}
     swift_lookup = {
@@ -162,26 +168,44 @@ def prepare_yse_data(
     }
     atlas_lookup = {"orange-ATLAS": "atlaso", "cyan-ATLAS": "atlasc"}
     ztf_lookup = {"g-ZTF": "ztfg", "r-ZTF": "ztfr", "i-ZTF": "ztfi"}
-    yse_band_lookup = {**ps1_lookup, **swift_lookup, **atlas_lookup, **ztf_lookup}
+    unknown = {"Unknown": "unknown", "unknown": "unknown"}
+    yse_band_lookup = {
+        **ps1_lookup,
+        **swift_lookup,
+        **atlas_lookup,
+        **ztf_lookup,
+        **unknown,
+    }
 
     source_lookup = {
         "P48": "ztf",
         "Pan-STARRS1": "yse",
         "Pan-STARRS2": "yse",
         "Swift": "swift",
+        "Unknown": "unknown",
     }
 
     yse_lc = yse_data.lightcurve.copy()
+
+    bad_dq_mask = yse_lc["dq"].astype("str").str.lower() == "bad"
+    yse_lc = yse_lc[~bad_dq_mask]
 
     if "tag" not in yse_lc:
         yse_lc["tag"] = valid_tag
     yse_lc["band"] = yse_lc["flt"].map(yse_band_lookup)
     yse_lc["source"] = yse_lc["instrument"].map(source_lookup)
 
+    if not use_all_sources:
+        useful_mask = yse_lc["source"] == "yse"
+        for source in additional_sources:
+            source_mask = yse_lc["source"].str.lower() == source.lower()
+            useful_mask = useful_mask | source_mask
+        yse_lc = yse_lc[useful_mask]
+
     # yse_lc["tag"] = valid_tag
     # TODO: properly set tag for limits, etc.
 
-    use_cols = "mjd mag magerr tag band source".split()
+    use_cols = "mjd mag magerr band tag source".split()
 
     return yse_lc[use_cols]
 
@@ -194,9 +218,19 @@ class DefaultLightcurveCompiler:
     ulimit_tag = DEFAULT_ULIMIT_TAG
     default_broker_priority = ("fink", "lasair", "alerce")
 
-    def __init__(self, average_atlas_epochs=True, broker_priority=None):
-        self.average_atlas_epochs = average_atlas_epochs
+    def __init__(
+        self,
+        atlas_average_epochs: bool = True,
+        atlas_rolling_window: float = 0.1,
+        broker_priority: list[str] = None,
+        yse_use_all_sources: bool = True,
+        yse_additional_sources: tuple[str] = (),
+    ):
+        self.atlas_average_epochs = atlas_average_epochs
+        self.atlas_rolling_window = atlas_rolling_window
         self.broker_priority = broker_priority or self.default_broker_priority
+        self.yse_use_all_sources = yse_use_all_sources
+        self.yse_additional_sources = yse_additional_sources
 
     def __call__(self, target: Target, t_ref: Time):
         lightcurve_dfs = []
@@ -211,7 +245,6 @@ class DefaultLightcurveCompiler:
 
         # Select the best data from the ZTF brokers
         ztf_data = target.target_data.get("ztf", None)
-
         if ztf_data is None:
             for broker in self.broker_priority:
                 source_name = f"{broker}_ztf"
@@ -220,7 +253,7 @@ class DefaultLightcurveCompiler:
                     continue
                 if not isinstance(broker_data, TargetData):
                     msg = (
-                        f"data for broker {broker} "
+                        f"broker '{source_name}' data for  {target_id}"
                         f"is type {type(broker_data)}, not TargetData"
                     )
                     logger.warning(msg)
@@ -245,7 +278,10 @@ class DefaultLightcurveCompiler:
             atlas_lc = atlas_data.lightcurve
             if (atlas_lc is not None) and (not atlas_lc.empty):
                 atlas_df = prepare_atlas_data(
-                    atlas_data, average_epochs=self.average_atlas_epochs, **tags
+                    atlas_data,
+                    average_epochs=self.atlas_average_epochs,
+                    rolling_window=self.atlas_rolling_window,
+                    **tags,
                 )
                 if not (len(atlas_df) == 0 or atlas_df.empty):
                     lightcurve_dfs.append(atlas_df)
@@ -255,7 +291,12 @@ class DefaultLightcurveCompiler:
         if yse_data is not None:
             yse_lc = yse_data.lightcurve
             if (yse_lc is not None) and (not yse_lc.empty):
-                yse_df = prepare_yse_data(yse_data)
+                yse_df = prepare_yse_data(
+                    yse_data,
+                    use_all_sources=self.yse_use_all_sources,
+                    additional_sources=self.yse_use_all_sources,
+                    **tags,
+                )
                 if not (len(yse_df) == 0 or yse_df.empty):
                     lightcurve_dfs.append(yse_df)
 

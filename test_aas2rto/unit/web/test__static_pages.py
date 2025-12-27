@@ -1,4 +1,5 @@
 import pytest
+import subprocess
 
 from astropy.time import Time
 
@@ -83,6 +84,8 @@ class Test__InitStaticPages:
         isinstance(sp_mgr.git_config, dict)
         assert set(sp_mgr.config.keys()) == set(["git", "publish_interval"])
 
+        assert sp_mgr.git_repo_status == "cloned"
+
     def test__bad_config_key_raises(
         self,
         static_pages_config: dict,
@@ -127,6 +130,41 @@ class Test__InitStaticPages:
             mgr = StaticPagesManager(
                 static_pages_config, prepared_outputs_mgr, path_mgr
             )
+
+    def test__call_init_new_repo(
+        self,
+        static_pages_config: dict,
+        prepared_outputs_mgr: OutputsManager,
+        path_mgr: PathManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        # Arrange
+        def cause_exception(*args, **kwargs):
+            raise subprocess.CalledProcessError(404, "clone")
+
+        monkeypatch.setattr(StaticPagesManager, "clone_existing_repo", cause_exception)
+
+        # Act
+        mgr = StaticPagesManager(static_pages_config, prepared_outputs_mgr, path_mgr)
+
+        # Assert
+        assert mgr.git_repo_status == "new_init"
+
+    def test__use_existing_repo(
+        self,
+        static_pages_config: dict,
+        prepared_outputs_mgr: OutputsManager,
+        path_mgr: PathManager,
+    ):
+        # Arrange
+        git_dir = path_mgr.web_path / "static/.git"
+        git_dir.mkdir(exist_ok=True, parents=True)
+
+        # Act
+        mgr = StaticPagesManager(static_pages_config, prepared_outputs_mgr, path_mgr)
+
+        # Assert
+        assert mgr.git_repo_status == "existing"
 
 
 class Test__BuildWebpageTarget:
@@ -211,4 +249,30 @@ class Test__BuildWebpageTarget:
         ]
         assert set(lists_written) == set(exp_lists)
         targets_written = [f.stem for f in target_path.glob("*.html")]
-        assert set(targets_written) == set(["T00", "T01"])
+        assert set(targets_written) == set(["T00", "T01", "target_A", "target_B"])
+        # check page written for missing T01, even if not updated...
+        # also check redirect pages are written
+
+
+class Test__PublishToGit:
+    def test__publish_to_git(
+        self, page_mgr: StaticPagesManager, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Arrange
+        def refresh_pass(*args, **kwargs):
+            pass
+
+        monkeypatch.setattr(page_mgr, "refresh_tmux_ssh_auth_sock", refresh_pass)
+
+        # Act
+        page_mgr.publish_to_git()  # subprocess.check_output auto-patched in conftest...
+
+        # Assert
+        # effectively checking for typos here...
+
+
+class Test__PerformAllTasks:
+    def test__perform_all_tasks(self, page_mgr: StaticPagesManager):
+
+        # Act
+        page_mgr.perform_all_tasks()

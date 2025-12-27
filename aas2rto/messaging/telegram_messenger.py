@@ -96,7 +96,9 @@ class TelegramMessenger:
         try:
             bot = self.get_bot()
         except Exception as e:
-            logger.error(f"\033[31;1mduring telegram bot init\033[0m]:\n{e}")
+            msg = f"\033[31;1mduring telegram bot init\033[0m]:\n{e}"
+            warnings.warn(UserWarning(msg))
+            logger.error(msg)
         return
 
     def get_bot(self):
@@ -165,8 +167,7 @@ class TelegramMessenger:
                 )
                 sent_messages.append(sent)
             except ValueError:
-                # Catch weird co-routine error from py3.9
-                pass
+                pass  # Catch weird co-routine error from py3.9
 
         # Some explainers...
         # Cannot use send_media_group() for list of imgs which has len==1
@@ -194,8 +195,7 @@ class TelegramMessenger:
                     )
                     sent_messages.append(sent)
                 except ValueError:
-                    # Catch weird co-routine error in py3.9
-                    pass
+                    pass  # Catch weird co-routine error in py3.9
             else:
                 for img_path in img_chunk:
                     with open(img_path, "rb") as f:
@@ -207,8 +207,7 @@ class TelegramMessenger:
                         )
                         sent_messages.append(sent)
                     except ValueError:
-                        # Catch weird co-routine error in py3.9
-                        pass
+                        pass  # Catch weird co-routine error in py3.9
         return sent_messages
 
     def message_users(
