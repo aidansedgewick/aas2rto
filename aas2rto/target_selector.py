@@ -354,14 +354,11 @@ class TargetSelector:
         skip_tasks = skip_tasks or []
         skip_tasks = skip_tasks + config_skip_tasks
         invalid_skip_tasks = utils.check_unexpected_config_keys(
-            skip_tasks, VALID_SKIP_TASKS, name="perform_iteration.skip_tasks"
+            skip_tasks,
+            VALID_SKIP_TASKS,
+            name="perform_iteration.skip_tasks",
+            raise_exc=True,
         )
-        if len(invalid_skip_tasks) > 0:
-            errmsg = (
-                f"invalid tasks in 'skip_tasks': {invalid_skip_tasks}\n"
-                f"    choose from {VALID_SKIP_TASKS}"
-            )
-            raise ValueError(errmsg)
 
         # =========================== Get new data =========================== #
         t1 = time.perf_counter()
@@ -643,9 +640,10 @@ class TargetSelector:
         t_start_str = t_ref.strftime("%Y-%m-%d %H:%M:%S UTC")
         obs_list = list(self.observatory_manager.sites.keys())
         qm_list = list(self.primary_query_manager.query_managers.keys())
+
         if not isinstance(modeling_function, list):
             modeling_function = [modeling_function]
-        model_func_list = [f.__name__ for f in modeling_function]
+        model_func_list = [f.__name__ for f in modeling_function if f is not None]
         msg = (
             f"starting at {t_start_str} on {nodename} with:\n"
             f"observatories:\n    {', '.join(k for k in obs_list)}\n"

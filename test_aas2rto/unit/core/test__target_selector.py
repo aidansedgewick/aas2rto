@@ -7,7 +7,10 @@ import numpy as np
 
 import pandas as pd
 
+from astropy.coordinates import SkyCoord
 from astropy.time import Time
+
+import matplotlib.pyplot as plt
 
 from aas2rto.exc import UnexpectedKeysError
 from aas2rto.messaging.messaging_manager import MessagingManager
@@ -20,7 +23,41 @@ from aas2rto.recovery.recovery_manager import RecoveryManager
 from aas2rto.scoring.scoring_manager import ScoringManager
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
+from aas2rto.target_lookup import TargetLookup
 from aas2rto.target_selector import TargetSelector
+
+
+###===== Some mock objects for tests =====###
+
+
+def scoring_func(target: Target, t_ref: Time):
+    if target.target_id == "T_reject":
+        return -np.inf
+    return 1.0
+
+
+class BasicModel:
+    def __init__(self, value: float):
+        self.value = value
+
+
+def basic_model(target: Target, t_ref: Time):
+    if target.compiled_lightcurve is not None:
+        return BasicModel(target.compiled_lightcurve["mag"].iloc[-1])
+    return None
+
+
+class ExampleQueryManager:
+    name = "example"
+
+    def __init__(self, target_lookup: TargetLookup):
+        self.target_lookup = target_lookup
+
+    def perform_all_tasks(self, iteration: int, t_ref: Time = None):
+        coord = SkyCoord(ra=15.0, dec=0.0, unit="deg")
+        new_target = Target("T300", coord, source="other_source", t_ref=t_ref)
+        self.target_lookup.add_target(new_target)
+        print(self.target_lookup.keys())
 
 
 ###===== Some fixtures =====###
@@ -32,20 +69,40 @@ def empty_aas2rto_config(tmp_path: Path):
 
 
 @pytest.fixture
-def tselector(empty_aas2rto_config: dict, basic_target: Target, ztf_td: TargetData):
+def basic_tselector(
+    empty_aas2rto_config: dict, basic_target: Target, ztf_td: TargetData
+):
     # Can't use premade 'tlookup', as tselector creates target_lookup in __init__
 
     ts = TargetSelector(empty_aas2rto_config)
+
     basic_target.target_data["fink_ztf"] = ztf_td
     ts.target_lookup.add_target(basic_target)
     return ts
 
 
-###===== Some mock objects for tests =====###
+@pytest.fixture
+def iter_tselector(
+    empty_aas2rto_config: dict, basic_target: Target, ztf_td: TargetData
+):
+    # Can't use premade 'tlookup', as tselector creates target_lookup in __init__
 
+    ts = TargetSelector(empty_aas2rto_config)
 
-def scoring_func(target: Target, t_ref: Time):
-    return 1.0
+    qm = ExampleQueryManager(ts.target_lookup)
+    ts.primary_query_manager.query_managers["example_qm"] = qm
+
+    basic_target.target_data["fink_ztf"] = ztf_td
+    ts.target_lookup.add_target(basic_target)
+
+    alt_ids = {"other_src": "AAAA"}
+    target_to_combine = Target("T_comb", basic_target.coord, alt_ids=alt_ids)
+    ts.target_lookup.add_target(target_to_combine)
+
+    target_to_reject = Target("T_reject", SkyCoord(ra=0.0, dec=0.0, unit="deg"))
+    ts.target_lookup.add_target(target_to_reject)
+
+    return ts
 
 
 ###===== Actual tests start here =====###
@@ -93,36 +150,42 @@ class Test__FromConfig:
 
 
 class Test__OppTargets:
-    def test__opp_targets(self, target_config_example: dict, tselector: TargetSelector):
+    def test__opp_targets(
+        self, target_config_example: dict, basic_tselector: TargetSelector
+    ):
         # Arrange
-        t_opp_path = tselector.path_manager.lookup["opp_targets"] / "test_target.yaml"
+        t_opp_path = (
+            basic_tselector.path_manager.lookup["opp_targets"] / "test_target.yaml"
+        )
         with open(t_opp_path, "w+") as f:
             yaml.dump(target_config_example, f)
 
         # Act
-        loaded, failed = tselector.load_targets_of_opportunity()
+        loaded, failed = basic_tselector.load_targets_of_opportunity()
 
         # Assert
-        assert set(tselector.target_lookup.keys()) == set(["T00", "T99"])
+        assert set(basic_tselector.target_lookup.keys()) == set(["T00", "T99"])
         assert not t_opp_path.exists()
 
-        T99 = tselector.target_lookup["T99"]
+        T99 = basic_tselector.target_lookup["T99"]
         assert np.isclose(T99.base_score, 100.0)
 
         assert set([f.name for f in loaded]) == set(["test_target.yaml"])
         assert set(failed) == set()
 
     def test__malformed_config(
-        self, target_config_example: dict, tselector: TargetSelector
+        self, target_config_example: dict, basic_tselector: TargetSelector
     ):
         # Arrange
         target_config_example.pop("ra")
-        t_opp_path = tselector.path_manager.lookup["opp_targets"] / "test_target.yaml"
+        t_opp_path = (
+            basic_tselector.path_manager.lookup["opp_targets"] / "test_target.yaml"
+        )
         with open(t_opp_path, "w+") as f:
             yaml.dump(target_config_example, f)
 
         # Act
-        loaded, failed = tselector.load_targets_of_opportunity()
+        loaded, failed = basic_tselector.load_targets_of_opportunity()
 
         # Assert
         assert set(loaded) == set()
@@ -135,46 +198,100 @@ class Test__CompileLightcurves:
     def _remove_empty_tmp_dirs(self, remove_tmp_dirs: NoReturn):
         pass  # remove_tmp_dirs defined in unit/contfest.py, executed with autouse=True
 
-    def test__compile_lcs(self, tselector: TargetSelector):
+    def test__compile_lcs(self, basic_tselector: TargetSelector):
         # Arrange
-        T00 = tselector.target_lookup["T00"]
+        T00 = basic_tselector.target_lookup["T00"]
         assert T00.compiled_lightcurve is None
 
         # Act
-        compiled, failed = tselector.compile_target_lightcurves()
+        compiled, failed = basic_tselector.compile_target_lightcurves()
 
         # Assert
         assert isinstance(T00.compiled_lightcurve, pd.DataFrame)
         assert set(compiled) == set(["T00"])
 
-    def test__lazy_skip_compiled_not_updated(self, tselector: TargetSelector):
+    def test__lazy_skip_compiled_not_updated(self, basic_tselector: TargetSelector):
         # Arrange
-        T00 = tselector.target_lookup["T00"]
+        T00 = basic_tselector.target_lookup["T00"]
         T00.updated = False
-        tselector.compile_target_lightcurves()
+        basic_tselector.compile_target_lightcurves()
 
         # Act
-        compiled, failed = tselector.compile_target_lightcurves()
+        compiled, failed = basic_tselector.compile_target_lightcurves()
 
         # Assert
         assert set(compiled) == set()
 
-    def test__recompiled_updated(self, tselector: TargetSelector):
+    def test__recompiled_updated(self, basic_tselector: TargetSelector):
         # Arrange
-        T00 = tselector.target_lookup["T00"]
-        tselector.compile_target_lightcurves()
+        T00 = basic_tselector.target_lookup["T00"]
+        basic_tselector.compile_target_lightcurves()
         T00.updated = True
 
         # Act
-        compiled, failed = tselector.compile_target_lightcurves()
+        compiled, failed = basic_tselector.compile_target_lightcurves()
 
         # Assert
         assert set(compiled) == set(["T00"])
 
 
 class Test__PerformIteration:
-    def test__iter(self, tselector: TargetSelector):
+    def test__basic_iter(self, iter_tselector: TargetSelector, t_fixed: Time):
+        # Act
+        iter_tselector.perform_iteration(scoring_func)
+        # Effectively checking for typos here...
+
+    def test__complex_iter(self, iter_tselector: TargetSelector, t_fixed: Time):
+        # Arrange
+        # boring checks here
+        exp_init_targets = ["T00", "T_reject", "T_comb"]
+        assert set(iter_tselector.target_lookup.keys()) == set(exp_init_targets)
+        T00 = iter_tselector.target_lookup["T00"]
+        assert set(T00.models.keys()) == set()
+        assert len(T00.science_score_history) == 0
 
         # Act
-        tselector.perform_iteration(scoring_func)
-        # Effectively checking for typos here...
+        iter_tselector.perform_iteration(
+            scoring_func,
+            modeling_function=basic_model,
+            t_ref=t_fixed,
+        )
+
+        # Assert
+        assert set(iter_tselector.target_lookup.keys()) == set(["T00", "T300"])
+        # T_comb is combined into T00, T_reject is removed! T300 added by QM
+        assert set(T00.models.keys()) == set(["basic_model"])
+        assert isinstance(T00.models["basic_model"], BasicModel)
+
+        assert len(T00.science_score_history) == 2
+        # One from init check, one from "real" score
+        assert T00.alt_ids["other_src"] == "AAAA"
+
+    def test__invalid_skip_tasks(self, iter_tselector: TargetSelector):
+        # Act
+        with pytest.raises(UnexpectedKeysError):
+            iter_tselector.perform_iteration(scoring_func, skip_tasks=["bad_task"])
+
+    def test__skip_qms(self, iter_tselector: TargetSelector):
+        # Act
+        iter_tselector.perform_iteration(scoring_func, skip_tasks=["qm_tasks"])
+
+        # Assert
+        assert set(iter_tselector.target_lookup.keys()) == set(["T00"])
+
+        # no new target T300 from QM...
+
+    def test__skip_precheck(self, iter_tselector: TargetSelector):
+        # Act
+        iter_tselector.perform_iteration(scoring_func, skip_tasks=["pre_check"])
+        T00 = iter_tselector.target_lookup["T00"]
+
+        # Assert
+        assert len(T00.science_score_history) == 1  # No pre-check
+
+
+class Test__StartCommand:
+    def test__start_command(self, iter_tselector: TargetSelector):
+        # Act
+        iter_tselector.start(scoring_func, iterations=0)
+        # Basically a typo check - not a good test...
