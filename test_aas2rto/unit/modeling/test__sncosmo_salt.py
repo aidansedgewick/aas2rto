@@ -90,9 +90,9 @@ def fittable_lc(salt_model: sncosmo.Model):
     ztfr_m_grid = salt_model.bandmag("ztfr", "ab", ztfr_t_grid)
 
     concat_data = dict(
-        mjd=np.concat([ztfg_t_grid, ztfr_t_grid]),
-        mag=np.concat([ztfg_m_grid, ztfr_m_grid]),
-        band=np.concat([["ztfg"] * N_ztfg, ["ztfr"] * N_ztfr]),
+        mjd=np.concatenate([ztfg_t_grid, ztfr_t_grid]),
+        mag=np.concatenate([ztfg_m_grid, ztfr_m_grid]),
+        band=np.concatenate([["ztfg"] * N_ztfg, ["ztfr"] * N_ztfr]),
     )
 
     lc = pd.DataFrame(concat_data)
