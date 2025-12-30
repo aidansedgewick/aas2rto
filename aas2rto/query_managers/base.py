@@ -1,13 +1,19 @@
 import abc
 import time
+import warnings
 from logging import getLogger
-from typing import Callable, List
+from typing import Callable, Dict, List
 
 from pathlib import Path
 
+import pandas as pd
+
+from astropy.table import Table
 from astropy.time import Time
 
-from aas2rto.target import TargetData
+from aas2rto.exc import UnknownTargetWarning
+from aas2rto.target import Target
+from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
 from aas2rto import paths
 
@@ -16,7 +22,7 @@ from aas2rto import utils
 logger = getLogger("base_qm")
 
 
-EXPECTED_DIRECTORIES = [
+DEFAULT_DIRECTORIES = [
     "lightcurves",
     "alerts",
     "probabilities",
@@ -42,123 +48,68 @@ class BaseQueryManager(abc.ABC):
         msg = f"query_manager {self.name}: implement a function which accepts kwargs:\n    startup:bool, t_ref=:astropy.time.Time"
         raise NotImplementedError(msg)
 
-    def add_target(self, target):
-        if target.target_id in self.target_lookup:
-            raise ValueError(
-                f"{self.name}: obj {target.target_id} already in target_lookup"
-            )
-        self.target_lookup[target.target_id] = target
-
     def process_paths(
         self,
         data_path: Path = None,
         parent_path: Path = None,
         create_paths: bool = True,
+        directories: list = None,
         extra_directories: list = None,
-        directories: list = EXPECTED_DIRECTORIES,
     ):
         """
-        If data path is None
+
+        Parameters
+        ----------
+        data_path : Path, default=None
+            where should data for this query manager be stored? often it's more
+            convenient to use parent_path (see below)
+        parent_path : Path, default=None
+            the parent directory of where QM data should be stored - the data_path
+            is then set as data_path = parent_path / cls.name (ie. using the name param
+            that you provided when defining the class!)
+        create_paths : bool, default=True
+            actually create the directories
+        directories : list, default=`DEFAULT_DIRECTORIES`
         """
         if data_path is None:
             if parent_path is None:
-                parent_path = paths.base_path / paths.default_data_dir
+                raise ValueError("Must provide 'data_path' or 'parent_path'")
             parent_path = Path(parent_path)
             data_path = parent_path / self.name
         else:
             data_path = Path(data_path)
+            if parent_path is not None:
+                msg = f"Ignoring parent_path={parent_path}: set to {data_path.parent}"
+                logger.warning(msg)
             parent_path = data_path.parent
 
         self.parent_path = parent_path.absolute()
         self.data_path = data_path.absolute()
 
-        utils.check_unexpected_config_keys(
-            directories, EXPECTED_DIRECTORIES, name=f"{self.name}_qm kwarg: directories"
-        )
+        directories = directories or DEFAULT_DIRECTORIES
+        if isinstance(directories, str):
+            directories = [directories]
 
         extra_directories = extra_directories or []
+        if isinstance(extra_directories, str):
+            extra_directories = [extra_directories]
 
-        self.paths_lookup = {}
-        for dir_name in directories + extra_directories:
+        self.paths_lookup: Dict[str, Path] = {}
+        for dir_name in list(directories) + list(extra_directories):
             path = self.data_path / dir_name
             self.paths_lookup[dir_name] = path
             setattr(self, f"{dir_name}_path", path)
 
-        # self.lightcurves_path = self.data_path / "lightcurves"
-        # self.alerts_path = self.data_path / "alerts"
-        # self.probabilities_path = self.data_path / "probabilities"
-        # self.parameters_path = self.data_path / "parameters"
-        # self.magstats_path = self.data_path / "magstats"
-        # self.query_results_path = self.data_path / "query_results"
-        # self.cutouts_path = self.data_path / "cutouts"
         if create_paths:
-            self.create_paths()
+            self._create_paths()
 
-    def create_paths(self):
+    def _create_paths(self):
 
         self.data_path.mkdir(exist_ok=True, parents=True)
         for dir_name, path in self.paths_lookup.items():
             path.mkdir(exist_ok=True)
 
-        # self.lightcurves_path.mkdir(exist_ok=True, parents=True)
-        # self.alerts_path.mkdir(exist_ok=True, parents=True)
-        # self.probabilities_path.mkdir(exist_ok=True, parents=True)
-        # self.parameters_path.mkdir(exist_ok=True, parents=True)
-        # self.magstats_path.mkdir(exist_ok=True, parents=True)
-        # self.query_results_path.mkdir(exist_ok=True, parents=True)
-        # self.cutouts_path.mkdir(exist_ok=True, parents=True)
-
-    def init_missing_target_data(self):
-        for target_id, target in self.target_lookup.items():
-            qm_data = target.target_data.get(self.name, None)
-            if qm_data is None:
-                assert self.name not in target.target_data
-                target.target_data[self.name] = TargetData()
-
-    def get_query_results_file(self, query_name, fmt="csv") -> Path:
-        return self.query_results_path / f"{query_name}.{fmt}"
-
-    def get_alert_dir(self, target_id) -> Path:
-        self.check_known_path("")
-        return self.alerts_path / f"{target_id}"
-
-    def get_alert_file(self, target_id, candid, fmt="json", mkdir=True) -> Path:
-        alert_dir = self.get_alert_dir(target_id)
-        if mkdir:
-            alert_dir.mkdir(exist_ok=True, parents=True)
-        return alert_dir / f"{candid}.{fmt}"
-
-    def get_magstats_file(self, target_id) -> Path:
-        self.check_known_path("magstats")
-        return self.magstats_path / f"{target_id}.csv"
-
-    def get_lightcurve_file(self, target_id, fmt="csv") -> Path:
-        self.check_known_path("lightcurves")
-        return self.lightcurves_path / f"{target_id}.{fmt}"
-
-    def get_probabilities_file(self, target_id, fmt="csv") -> Path:
-        self.check_known_path("probabilities")
-        return self.probabilities_path / f"{target_id}.{fmt}"
-
-    def get_cutouts_dir(self, target_id) -> Path:
-        self.check_known_path("cutouts")
-        return self.cutouts_path / f"{target_id}"
-
-    def get_cutouts_file(self, target_id, candid, fmt="pkl", mkdir=True) -> Path:
-        cutouts_dir = self.get_cutouts_dir(target_id)
-        if mkdir:
-            cutouts_dir.mkdir(exist_ok=True, parents=True)
-        return cutouts_dir / f"{candid}.{fmt}"
-
-    def get_parameters_file(self, target_id, fmt="pkl") -> Path:
-        self.check_known_path("parameters")
-        return self.parameters_path / f"{target_id}.{fmt}"
-
-    def check_known_path(self, dir_name):
-        if not dir_name in self.paths_lookup:
-            msg = f"{dir_name} not a known path for {self.name} qm. provide 'dir_name' in "
-
-    def load_single_lightcurve(self, id_, t_ref=None):
+    def load_single_lightcurve(self, target_id: str, t_ref: Time = None):
         logger.error(
             f"{self.name}: to call load_target_lightcurves, must implement load_single_lightcurve"
         )
@@ -168,8 +119,7 @@ class BaseQueryManager(abc.ABC):
     def load_target_lightcurves(
         self,
         id_list: List[str] = None,
-        id_from_target_function: Callable = None,
-        flag_only_existing=True,
+        only_flag_updated=True,
         t_ref: Time = None,
     ):
         """
@@ -178,9 +128,6 @@ class BaseQueryManager(abc.ABC):
         id_list : list, default = None
             list of (eg.) fink_ids or target_ids to load.
             if None, try to load for all targets
-        func_id_from_target : Callable, default = None
-            if provided, use this function on each target to see if a suitable
-            id can be found for searching for lightcurve.
         flag_only_existing : bool, default True
             if True, only targets which already have an existing (eg.) fink lightcurve
             will have `target.updated` flag set as True, if the latest lightcurve has
@@ -197,55 +144,52 @@ class BaseQueryManager(abc.ABC):
 
         t_start = time.perf_counter()
 
-        ## ===== Decide which targets we should load lightcurves of.
+        ## ===== Decide which targets we want to load.
         if id_list is None:
-            if id_from_target_function is None:
-                id_list = list(self.target_lookup.keys())
-                msg = f"{self.name}: try loading lcs for all {len(id_list)} targets"
-            else:
-                id_list = []
-                for target_id, target in self.target_lookup.items():
-                    specific_id = id_from_target_function(target)
-                    if specific_id is not None:
-                        id_list.append(specific_id)
-                msg = f"{self.name}: try loading lcs for {len(id_list)} targets with {self.name}_id"
-            logger.info(msg)
+            id_list = list(self.target_lookup.keys())
 
         ## ===== Actually try to load them.
-        for id_ in id_list:
-            target = self.target_lookup.get(id_, None)
+        for target_id in id_list:
+            target = self.target_lookup.get(target_id, None)
             if target is None:
-                logger.warning(f"load_lightcurve: {id_} not in target_lookup")
-                missing.append(id_)
+                msg = f"load_lightcurve: {target_id} not in target_lookup"
+                logger.warning(msg)
+                warnings.warn(UnknownTargetWarning(msg))
+                missing.append(target_id)
                 continue
 
-            lightcurve = self.load_single_lightcurve(id_, t_ref=t_ref)
+            lightcurve: pd.DataFrame | Table = self.load_single_lightcurve(
+                target_id, t_ref=t_ref
+            )
             if lightcurve is None:
                 # logger.warning(f"{self.name}: loaded {id_} LC is bad")
-                missing.append(id_)
+                missing.append(target_id)
                 continue
 
             try:
-                if lightcurve.empty:
-                    skipped.append(id_)
+                if len(lightcurve) == 0:
+                    missing.append(target_id)
                     continue
             except Exception as e:
                 pass
 
-            # get eg. target.target_data["fink"], target.target_data["yse"], ...
             qm_data = target.get_target_data(self.name)
+            # get eg. target.target_data["fink_ztf"], target.target_data["yse"], ...
+
             existing_lightcurve = qm_data.lightcurve
             if existing_lightcurve is not None:
                 if len(lightcurve) <= len(existing_lightcurve):
-                    skipped.append(id_)
+                    skipped.append(target_id)
                     continue
                 target.updated = True
-            if not flag_only_existing:
-                # lightcurve here cannot be None, and must be longer than existing.
-                logger.debug(f"set {id_} updated")
+
+            # If we've reached this point, the new LC must be longer than existing one
+            # (or the prev. one was None),
+            if not only_flag_updated:
+                logger.debug(f"set {target_id} updated")
                 target.updated = True
             qm_data.add_lightcurve(lightcurve)
-            loaded.append(id_)
+            loaded.append(target_id)
         t_end = time.perf_counter()
 
         ## ===== Some summary stats.
@@ -255,9 +199,11 @@ class BaseQueryManager(abc.ABC):
         t_load = t_end - t_start
         msg = f"{self.name}: load {N_loaded}, missing {N_missing} LCs in {t_load:.1f}s"
         logger.info(msg)
-        return loaded, missing
+        return loaded, skipped, missing
 
-    def clear_stale_files(self, stale_time=60.0, dry_run=False, t_ref: Time = None):
+    def clear_stale_files(
+        self, stale_age=60.0, max_depth=3, dry_run=False, t_ref: Time = None
+    ):
         """
         Clear files/directories older than eg. 60 days.
 
@@ -268,27 +214,12 @@ class BaseQueryManager(abc.ABC):
 
         t_ref = t_ref or Time.now()
 
-        for dir_name, dir in self.paths_lookup.items():
-            for filepath in dir.glob("*"):
-                filepath = Path(filepath)
-                file_age = utils.calc_file_age(filepath, t_ref)
-
-                if file_age < stale_time:
-                    continue
-
-                if filepath.is_dir():
-                    for filepath_ii in filepath.iterdir():
-                        if filepath_ii.is_file():
-                            if not dry_run:
-                                filepath_ii.unlink()
-                            print(f"del {filepath_ii}")
-                    print(f"del dir {filepath}")
-                    try:
-                        if not dry_run:
-                            filepath.rmdir()
-                    except Exception as e:
-                        pass
-                else:
-                    if not dry_run:
-                        filepath.unlink()
-                    print(f"del {filepath}")
+        for dir_name, top_level_dir in self.paths_lookup.items():
+            N_dirs, N_files = utils.clear_stale_files(
+                top_level_dir, t_ref=t_ref, stale_age=stale_age, max_depth=max_depth
+            )
+            if N_dirs > 0 or N_files > 0:
+                logger.info(
+                    f"Removing stale files in {dir_name}:\n    "
+                    f"del {N_files} files >{stale_age:.1f}d old, {N_dirs} empty subdirs"
+                )

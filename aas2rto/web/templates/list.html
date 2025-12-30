@@ -1,0 +1,33 @@
+<html>
+    <head>
+        <title>{{ title }}</title>
+    </head>
+
+    <body>
+
+        <h1>{{ page_header }}</h1>
+        <table>
+            <tr>
+                <td></td>
+                {% for col in column_names %}
+                    <td><b>{{ col }}</b></td>
+                {% endfor %}
+            </tr>
+            {% for row in row_data %}
+                <tr>
+                    <td>{{ row['idx'] + 1 }}</td>
+                    <td><a href="{{ row['target_page_url'] }}">{{row['target_id']}}</a></td>
+                    {% for v in row['data'] %}
+                        <td>{{ v }}</td>
+                    {% endfor %}
+                </tr>
+            {% endfor %}
+        </table>
+    </body>
+
+    <footer>
+        <br>
+        <small><a href="{{ index_url }}">Back to home page</a></small><br>
+        <small>Last updated {{ update_time_str }} </small>
+    </footer>
+</html>

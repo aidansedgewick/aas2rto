@@ -4,7 +4,7 @@ import traceback
 import warnings
 from logging import getLogger
 from pathlib import Path
-from typing import Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Union
 
 import numpy as np
 
@@ -25,14 +25,12 @@ from astroplan.plots import plot_altitude
 
 from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
 from aas2rto.target_data import TargetData
-from aas2rto.obs_info import ObservatoryInfo
+from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.utils import get_observatory_name
 
 logger = getLogger(__name__.split(".")[-1])
 
 matplotlib.use("Agg")
-
-DEFAULT_ZTF_BROKER_PRIORITY = ("fink", "alerce", "lasair", "antares")
 
 
 class Target:
@@ -43,11 +41,9 @@ class Target:
     Parameters
     ----------
     target_id: str
-        the main name your object should be called by.
-    ra: float
-        Right Ascension, in decimal degrees.
-    dec: float
-        Declination, in decimal degrees.
+        the main name your target should be called by.
+    coord: astropy.coordinates.SkyCoord
+        the (latest) coordinate of the target.
     target_data: Dict[str, aas2rto.target_data.TargetData]
         A lookup of data from various sources.
         An entry for `fink` data, one for `atlas` data, one for `tns` data, etc...
@@ -70,15 +66,16 @@ class Target:
         Recorded in target.creation_time.
     """
 
+    default_base_score = 1.0
+
     def __init__(
         self,
         target_id: str,
-        ra: float,
-        dec: float,
+        coord: SkyCoord,
         target_data: Dict[str, TargetData] = None,
         source: str = None,
         alt_ids: Dict[str, str] = None,
-        base_score: float = 1.0,
+        base_score: float = None,
         target_of_opportunity: bool = False,
         t_ref: Time = None,
     ):
@@ -86,31 +83,42 @@ class Target:
 
         # Basics
         self.target_id = target_id
-        self.update_coordinates(ra, dec)
-        self.base_score = base_score
+
+        self.update_coordinates(coord)
+        self.base_score = base_score or self.default_base_score
         self.compiled_lightcurve = None
 
         # Target data
         self.target_data = target_data or {}
 
         # Observatory data
-        self.observatory_info = {"no_observatory": None}
+        self.ephem_info = {}  # {"no_observatory": None}
 
         # Models
-        self.models = {}
-        self.models_t_ref = {}
+        self.models: dict[str, Any] = {}
+        self.models_t_ref: dict[str, float] = {}
 
         # Scoring data
-        self.score_history = {"no_observatory": []}
-        self.score_comments = {"no_observatory": []}
-        self.rank_history = {"no_observatory": []}
+        # self.score_history = {"no_observatory": []}
+        self.science_score_history: list[float] = []
+        self.obs_score_history: dict[str, list[float]] = {}
+
+        # self.score_comments = {"no_observatory": []}
+        self.science_comments: list[str] = []
+        self.obs_comments: dict[str, str] = {}
+        self.flags: dict[str, bool] = {}
+
+        # self.rank_history = {"no_observatory": []}
+        self.science_rank_history = []
+        self.obs_rank_history = {}
 
         # Paths to scratch figures
-        self.lc_fig_path = None
-        self.vis_fig_paths = {}
+        self.lc_fig_path: Path = None
+        self.vis_fig_paths: dict[str, Path] = {}
+        self.additional_fig_paths: dict[str, Path] = {}
 
-        # Is this source known by any other names?
-        self.alt_ids = alt_ids or {}
+        # Is this target known by any other names?
+        self.alt_ids: dict[str, str] = alt_ids or {}
         if source is not None:
             self.alt_ids[source] = target_id
         else:
@@ -118,33 +126,32 @@ class Target:
                 self.alt_ids["<unknown>"] = target_id
 
         # Keep track of what's going on
-        self.creation_time = t_ref
-        self.target_of_opportunity = target_of_opportunity
-        self.updated = False
-        self.to_reject = False
-        self.send_updates = False
-        self.update_messages = []
-        self.sudo_messages = []
+        self.creation_time: Time = t_ref
+        self.target_of_opportunity: bool = target_of_opportunity
+        self.updated: bool = False
+        self.to_reject: bool = False
+        self.send_updates: bool = False
+        self.info_messages: list[str] = []
+        self.sudo_messages: list[str] = []
 
-    def __str__(self):
-        if self.ra is None or self.dec is None:
-            return f"{self.target_id}: NO COORDINATES FOUND!"
-        return f"{self.target_id}: (ra, dec)=({self.ra:.5f}, {self.dec:+.5f})"
+    # def update_coordinates(self, ra: float, dec: float):
+    #     self.ra = ra
+    #     self.dec = dec
+    #     self.coord = None
+    #     self.astroplan_target = None
+    #     if ra is not None and dec is not None:
+    #         self.coord = SkyCoord(ra=ra, dec=dec, unit="deg")
+    #         self.astroplan_target = FixedTarget(
+    #             self.coord, self.target_id
+    #         )  # for plots?
+    #     else:
+    #         logger.warning(f"{self.target_id}: ra={ra} or dec={dec} is None!")
 
-    def update_coordinates(self, ra: float, dec: float):
-        self.ra = ra
-        self.dec = dec
-        self.coord = None
-        self.astroplan_target = None
-        if ra is not None and dec is not None:
-            self.coord = SkyCoord(ra=ra, dec=dec, unit="deg")
-            self.astroplan_target = FixedTarget(
-                self.coord, self.target_id
-            )  # for plots?
-        else:
-            logger.warning(f"{self.target_id}: ra={ra} or dec={dec} is None!")
+    def update_coordinates(self, coord: SkyCoord):
+        self.coord = coord
+        # self.astroplan_target = FixedTarget(self.coord, self.target_id)
 
-    def get_target_data(self, source):
+    def get_target_data(self, source: str):
         """
         Return the TargetData associated with a certain source.
         If the target_data does not exist, create a new one, and return that.
@@ -181,90 +188,131 @@ class Target:
             self.target_data[source] = source_data
         return source_data
 
-    def update_score_history(
-        self,
-        score_value: float,
-        observatory: Observer = None,
-        t_ref: Time = None,
+    def update_science_score_history(self, score_value: float, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+        score_tuple = (score_value, t_ref.mjd)
+        self.science_score_history.append(score_tuple)
+
+    def update_obs_score_history(
+        self, score_value: float, observatory: Observer, t_ref: Time = None
     ):
         t_ref = t_ref or Time.now()
 
         obs_name = get_observatory_name(observatory)
-        if obs_name not in self.score_history:
+        if obs_name not in self.obs_score_history:
             # Make sure we can append the score
-            self.score_history[obs_name] = []
+            self.obs_score_history[obs_name] = []
 
-        score_tuple = (score_value, t_ref)
-        self.score_history[obs_name].append(score_tuple)
+        score_tuple = (score_value, t_ref.mjd)
+        self.obs_score_history[obs_name].append(score_tuple)
         return
 
-    def get_score_history(self, t_ref: Time = None):
-        """
-        Returns df with three columns: 'observatory', 'mjd', 'score'
-            (avoid column name 'rank' as clash with pd keywords...)
-        """
+    def get_science_score_history(self, t_ref: Time = None):
 
-        row_list = []
-        for obs, obs_score_history in self.score_history.items():
-            for data_tuple in obs_score_history:
-                data = dict(observatory=obs, mjd=data_tuple[1].mjd, score=data_tuple[0])
-                row_list.append(data)
-        if len(row_list) == 0:
-            return
-        score_history_df = pd.DataFrame(row_list)
-        score_history_df.sort_values(
-            ["observatory", "mjd"], inplace=True, ignore_index=True
+        if len(self.science_score_history) == 0:
+            return pd.DataFrame(columns=["score", "mjd"])
+
+        score_history_df = pd.DataFrame(
+            self.science_score_history, columns=["score", "mjd"]
         )
+        score_history_df.sort_values("mjd", inplace=True, ignore_index=True)
+        if t_ref is not None:
+            score_history_df = score_history_df[score_history_df["mjd"] < t_ref.mjd]
         return score_history_df
 
-    def update_rank_history(
-        self,
-        rank: int,
-        observatory: Observer = None,
-        t_ref: Time = None,
+    def get_obs_score_history(self, observatory: Observer, t_ref: Time = None):
+        """
+        Returns df with three columns: 'observatory', 'mjd', 'score'
+        """
+
+        obs_name = get_observatory_name(observatory)
+        obs_score_history = self.obs_score_history.get(obs_name, None)
+        if obs_score_history is None:
+            msg = f"{self.target_id} has no score_history for {obs_name}"
+            logger.warning(msg)
+            warnings.warn(UnknownObservatoryWarning(msg))
+            return pd.DataFrame(columns=["score", "mjd"])
+
+        if len(obs_score_history) == 0:
+            return pd.DataFrame(columns=["score", "mjd"])
+
+        score_history_df = pd.DataFrame(obs_score_history, columns=["score", "mjd"])
+        score_history_df.sort_values("mjd", inplace=True, ignore_index=True)
+        if t_ref is not None:
+            score_history_df = score_history_df[score_history_df["mjd"] < t_ref.mjd]
+        return score_history_df
+
+    def update_science_rank_history(self, rank: int, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+        rank_tuple = (rank, t_ref.mjd)
+        self.science_rank_history.append(rank_tuple)
+        return
+
+    def update_obs_rank_history(
+        self, rank: int, observatory: Observer, t_ref: Time = None
     ):
         t_ref = t_ref or Time.now()
 
         obs_name = get_observatory_name(observatory)
-        if obs_name not in self.rank_history:
+        if obs_name not in self.obs_rank_history:
             # Make sure we can append the rank
-            self.rank_history[obs_name] = []
+            self.obs_rank_history[obs_name] = []
 
-        rank_tuple = (rank, t_ref)
-        self.rank_history[obs_name].append(rank_tuple)
+        rank_tuple = (rank, t_ref.mjd)
+        self.obs_rank_history[obs_name].append(rank_tuple)
         return
 
-    def get_rank_history(self, t_ref: Time = None):
+    def get_science_rank_history(self, t_ref: Time = None):
+        if len(self.science_rank_history) == 0:
+            return pd.DataFrame(columns=["ranking", "mjd"])
+
+        score_history_df = pd.DataFrame(
+            self.science_rank_history, columns=["ranking", "mjd"]
+        )
+        score_history_df.sort_values("mjd", inplace=True, ignore_index=True)
+        if t_ref is not None:
+            score_history_df = score_history_df[score_history_df["mjd"] < t_ref.mjd]
+        return score_history_df
+
+    def get_obs_rank_history(self, observatory: Observer, t_ref: Time = None):
         """
         Returns df with three columns: 'observatory', 'mjd', 'ranking'
             (avoid column name 'rank' as clash with pd keywords...)
         """
-        row_list = []
-        for obs, obs_rank_history in self.rank_history.items():
-            for data_tuple in obs_rank_history:
-                data = dict(
-                    observatory=obs, mjd=data_tuple[1].mjd, ranking=data_tuple[0]
-                )
-                row_list.append(data)
-        if len(row_list) == 0:
-            return
-        rank_history_df = pd.DataFrame(row_list)
-        rank_history_df.sort_values(
-            ["observatory", "mjd"], inplace=True, ignore_index=True
-        )
+        obs_name = get_observatory_name(observatory)
+        obs_data = self.obs_rank_history.get(obs_name, None)
+        if obs_data is None:
+            msg = f"{self.target_id} has no rank history for '{obs_name}'"
+            logger.warning(msg)
+            warnings.warn(UnknownObservatoryWarning(msg))
+            return pd.DataFrame(columns=["ranking", "mjd"])
+        rank_history_df = pd.DataFrame(obs_data, columns=["ranking", "mjd"])
+
+        rank_history_df.sort_values("mjd", inplace=True, ignore_index=True)
+        if t_ref is not None:
+            rank_history_df = rank_history_df[rank_history_df["mjd"] < t_ref.mjd]
         return rank_history_df
 
-    def get_last_score(
-        self, observatory: Union[Observer, str] = None, return_time=False
+    def get_latest_science_score(self, return_time: bool = False):
+        if len(self.science_score_history) == 0:
+            result = (None, None)
+        else:
+            result = self.science_score_history[-1]
+
+        if return_time:
+            return result
+        return result[0]  # Otherwise just return the score.
+
+    def get_latest_obs_score(
+        self, observatory: Union[Observer, str], return_time: bool = False
     ):
         """
         Provide a string (observatory name) and return.
 
         Parameters
         ----------
-        observatory: `astroplan.Observer` | `None` | `str` [optional]
-            default=None (="no_observatory")
-            an observatory that the system knows about.
+        observatory: `astroplan.Observer` | `str` [optional]
+            an observatory (or the name of obs) that the system knows about.
         return_time: `bool`
             optional, defaults to `False`. If `False` return only the score
             (either a float or `None`).
@@ -274,11 +322,7 @@ class Target:
 
         obs_name = get_observatory_name(observatory)  # Returns "no_observatory" if None
 
-        if obs_name not in self.score_history.keys():
-            msg = f"No scores for observatory {obs_name}. Known: {self.score_history.keys()}"
-            warnings.warn(UnknownObservatoryWarning(msg))
-
-        obs_history = self.score_history.get(obs_name, [])
+        obs_history = self.obs_score_history.get(obs_name, [])
         if len(obs_history) == 0:
             result = (None, None)
         else:
@@ -288,30 +332,114 @@ class Target:
             return result
         return result[0]  # Otherwise just return the score.
 
-    def get_info_lines(self, t_ref: Time = None):
+    def get_latest_science_rank(self, return_time: bool = False):
+        if len(self.science_rank_history) == 0:
+            result = (None, None)
+        else:
+            result = self.science_rank_history[-1]
+
+        if return_time:
+            return result
+        return result[0]  # Otherwise just return the score.
+
+    def get_latest_obs_rank(
+        self, observatory: Union[Observer, str], return_time: bool = False
+    ):
+        """
+        Provide a string (observatory name) and return.
+
+        Parameters
+        ----------
+        observatory: `astroplan.Observer` | `str` [optional]
+            an observatory that the system knows about.
+        return_time: `bool`
+            optional, defaults to `False`. If `False` return only the score
+            (either a float or `None`).
+            If `True`, return a tuple (score, astropy.time.Time), the time is
+            the t_ref when the score was computed.
+        """
+        obs_name = get_observatory_name(observatory)  # Returns "no_observatory" if None
+
+        rank_history = self.obs_rank_history.get(obs_name, [])
+        if len(rank_history) == 0:
+            result = (None, None)
+        else:
+            result = rank_history[-1]
+
+        if return_time:
+            return result
+        return result[0]  # Otherwise just return the score.
+
+    def get_info_string(
+        self,
+        header_open: str = "",
+        header_close: str = "",
+        link_open: str = "",
+        link_close: str = "",
+        t_ref: Time = None,
+    ):
+        info_lines = self.get_info_lines(
+            header_open=header_open,
+            header_close=header_close,
+            link_open=link_open,
+            link_close=link_close,
+            t_ref=t_ref,
+        )
+        return "\n".join(info_lines)
+
+    def get_info_lines(
+        self,
+        header_open: str = "",
+        header_close: str = "",
+        link_open: str = "",
+        link_close: str = "",
+        t_ref: Time = None,
+    ):
         t_ref = t_ref or Time.now()
         t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
 
-        info_lines = [f"Target {self.target_id} at {t_ref_str}, see:"]
+        info_lines = [f"Target {self.target_id} at {t_ref_str}"]
 
+        target_id_lines = self.get_target_id_info_lines(
+            link_open=link_open, link_close=link_close
+        )
+        coordinate_lines = self.get_coordinate_info_lines()
+        flag_lines = self.get_flag_lines()
+        photometry_lines = self.get_photometry_info_lines()
+
+        info_lines.append(header_open + "Aliases and brokers:" + header_close)
+        info_lines.extend(target_id_lines)
+        info_lines.append(header_open + "Coordinates:" + header_close)
+        info_lines.extend(coordinate_lines)
+        info_lines.append(header_open + "Flags:" + header_close)
+        info_lines.extend(flag_lines)
+        info_lines.append(header_open + "Photometry:" + header_close)
+        info_lines.extend(photometry_lines)
+        return info_lines
+
+    def get_target_id_info_lines(self, link_open: str = "", link_close: str = ""):
+        info_lines = []
         broker_name = self.alt_ids.get("ztf", None)
         if broker_name is not None:
+            fink_url = f"fink-portal.org/{broker_name}"
+            lasair_url = f"lasair-ztf.lsst.ac.uk/objects/{broker_name}"
+            alerce_url = f"alerce.online/object/{broker_name}"
             broker_lines = [
-                f"    FINK: fink-portal.org/{self.target_id}",
-                f"    Lasair: lasair-ztf.lsst.ac.uk/objects/{self.target_id}",
-                f"    ALeRCE: alerce.online/object/{self.target_id}",
+                f"    FINK: {link_open}{fink_url}{link_close}",
+                f"    Lasair: {link_open}{lasair_url}{link_close}",
+                f"    ALeRCE: {link_open}{alerce_url}{link_close}",
             ]
             info_lines.extend(broker_lines)
 
         tns_name = self.alt_ids.get("tns", None)
         if tns_name is not None:
             tns_url = f"wis-tns.org/object/{tns_name}"
-            info_lines.append(f"    TNS: {tns_url}")
+            info_lines.append(f"    TNS: {link_open}{tns_url}{link_close}")
 
         yse_name = self.alt_ids.get("yse", None)
         if yse_name is not None:
             yse_url = f"ziggy.ucolick.org/yse/transient_detail/{yse_name}"
-            info_lines.append(f"    YSE: {yse_url}")
+            info_lines.append(f"    YSE: {link_open}{yse_url}{link_close}")
 
         alt_rev = {}
         for source, alt_name in self.alt_ids.items():
@@ -325,17 +453,38 @@ class Target:
             l = f"    {name} (" + ",".join(source_list) + ")"
             info_lines.append(l)
 
-        info_lines.append("coordinates:")
-        if self.ra is not None and self.dec is not None:
-            eq_line = f"    equatorial (ra, dec) = ({self.ra:.4f},{self.dec:+.5f})"
+        return info_lines
+
+    def get_flag_lines(self):
+        formatted_flags = []
+        for name, flag in self.flags.items():
+            if flag:
+                flag_str = f"    {name.replace('_', ' ')}"
+                formatted_flags.append(flag_str)
+        return formatted_flags
+
+    def get_coordinate_info_lines(self):
+        info_lines = []
+        if self.coord is not None:
+            ra = self.coord.ra
+            dec = self.coord.dec
+            eq_line = f"    equatorial (ra, dec) = {ra.deg:.4f},{dec.deg:+.5f}"
             info_lines.append(eq_line)
+            ra_hms = ra.to_string(unit=u.hourangle, sep=":", precision=2, pad=True)
+            dec_dms = dec.to_string(
+                unit=u.deg, sep=":", precision=2, alwayssign=True, pad=True
+            )
+            hms_dms_line = f"    equatorial (HMS+DMS) = {ra_hms},{dec_dms}"
+            info_lines.append(hms_dms_line)
         if self.coord is not None:
             gal = self.coord.galactic
             gal_line = f"    galactic (l, b) = ({gal.l.deg:.4f},{gal.b.deg:+.5f})"
             info_lines.append(gal_line)
+        return info_lines
 
+    def get_photometry_info_lines(self):
+        info_lines = []
         if self.compiled_lightcurve is not None:
-            info_lines.append("photometry")
             ndet = {}
             last_mag = {}
             if "band" in self.compiled_lightcurve.columns:
@@ -358,11 +507,9 @@ class Target:
                     + " detections"
                 )
                 info_lines.append(l)
+        else:
+            info_lines.append("    no photometry available")
         return info_lines
-
-    def get_info_string(self, t_ref: Time = None):
-        info_lines = self.get_info_lines(t_ref=t_ref)
-        return "\n".join(info_lines)
 
     def write_comments(self, outdir: Path, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -375,31 +522,28 @@ class Target:
         missing_score_comments = ["no score_comments provided"]
 
         lines = self.get_info_string(t_ref=t_ref).split("\n")
-        last_score = self.get_last_score()
+        last_score = self.get_latest_science_score()
         if last_score is None:
             score_str = "no_score"
         else:
             score_str = f"{last_score:.3f}"
         lines.append(f"score = {score_str} for no_observatory")
 
-        score_comments = self.score_comments.get("no_observatory", None)
+        score_comments = self.science_comments
         score_comments = score_comments or missing_score_comments
         for comm in score_comments:
             lines.append(f"    {comm}")
 
-        for obs_name, comments in self.score_comments.items():
-            if obs_name == "no_observatory":  # We've just done this.
-                continue
+        for obs_name, comments in self.obs_comments.items():
             if comments is None:
                 continue
-            obs_comments = [comm for comm in comments if comm not in score_comments]
-            if len(obs_comments) == 0:
+            if len(comments) == 0:
                 continue
-            obs_last_score = self.get_last_score(obs_name)
-            if obs_last_score is None:
+            obs_score = self.get_latest_obs_score(obs_name)
+            if obs_score is None:
                 continue
-            lines.append(f"score = {obs_last_score:.3f} for {obs_name}")
-            for comm in obs_comments:
+            lines.append(f"score = {obs_score:.3f} for {obs_name}")
+            for comm in comments:
                 lines.append(f"    {comm}")
 
         if last_score is not None:
@@ -408,5 +552,5 @@ class Target:
 
         comments_file = outdir / f"{self.target_id}_comments.txt"
         with open(comments_file, "w+") as f:
-            f.writelines([l + "\n" for l in lines])
+            f.writelines([line + "\n" for line in lines])
         return lines

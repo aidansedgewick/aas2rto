@@ -7,7 +7,8 @@ from astropy.time import Time
 
 from aas2rto import TargetSelector
 from aas2rto.modeling import empty_modeling, SncosmoSaltModeler
-from aas2rto.plotters import plot_default_lightcurve, plot_sncosmo_lightcurve
+from aas2rto.plotting import plot_default_lightcurve, plot_sncosmo_lightcurve
+from aas2rto.plotting.salt_param_plotter import SaltParamPlottingWrapper
 from aas2rto.scoring import (
     example_functions,
     SupernovaPeakScore,
@@ -21,7 +22,7 @@ parser = ArgumentParser()
 parser.add_argument("-c", "--config", default=None, required=True)
 parser.add_argument("-i", "--iterations", default=None, type=int)
 parser.add_argument(
-    "-x", "--existing-targets-file", default=False, const="last", nargs="?", type=str
+    "-x", "--recovery-file", default=False, const="last", nargs="?", type=str
 )
 parser.add_argument("--skip-tasks", nargs="*")
 parser.add_argument("--debug", default=False, action="store_true")
@@ -44,19 +45,24 @@ if __name__ == "__main__":
     config_file = Path(args.config)
     selector = TargetSelector.from_config(config_file)
 
+    extra_plotting_functions = []
     lc_plotting_function = plot_default_lightcurve
     if "supernovae" in config_file.stem or "sne" in config_file.stem:
         scoring_function = SupernovaPeakScore(
             use_compiled_lightcurve=True
         )  # This is a class - initialise it!
 
-        models_path = None  # selector.project_path / "models"
+        models_path = None  # selector.path_manager.project_path / "sncosmo_salt_models"
         modeling_function = SncosmoSaltModeler(
-            existing_models_path=models_path, use_emcee=False, show_traceback=False
+            existing_models_path=models_path,
+            use_emcee=False,
+            show_traceback=True,
         )
         lc_plotting_function = plot_sncosmo_lightcurve
 
-        modeling_function = empty_modeling
+        salt_param_plotter = SaltParamPlottingWrapper()
+        extra_plotting_functions.append(salt_param_plotter)
+
     elif "atlas_test" in config_file.stem:
         scoring_function = example_functions.latest_flux_atlas_requirement
         modeling_function = empty_modeling
@@ -70,7 +76,7 @@ if __name__ == "__main__":
     logger.info(f"use \033[36;1m {scoring_function.__name__}\033[0m scoring")
     logger.info(f"use \033[36;1m {modeling_function.__name__}\033[0m model")
 
-    if not args.existing_targets_file:
+    if not args.recovery_file:
         logger.info(f"NOT attempting to recover existing targets")
 
     try:
@@ -78,8 +84,9 @@ if __name__ == "__main__":
             scoring_function=scoring_function,
             modeling_function=modeling_function,
             lc_plotting_function=lc_plotting_function,
+            extra_plotting_functions=extra_plotting_functions,
             iterations=args.iterations,
-            existing_targets_file=args.existing_targets_file,
+            recovery_file=args.recovery_file,
             skip_tasks=args.skip_tasks,
         )
     except Exception as e:

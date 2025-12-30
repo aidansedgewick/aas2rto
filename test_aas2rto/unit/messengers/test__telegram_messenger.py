@@ -1,527 +1,372 @@
-import io
+import asyncio
+import pickle
+import pytest
+import string
 import yaml
 from pathlib import Path
-from PIL import Image
-
-import pytest
 
 import numpy as np
 
+import matplotlib.pyplot as plt
+
 import telegram
 
-from aas2rto.messengers import telegram_messenger
-from aas2rto.messengers.telegram_messenger import TelegramMessenger
-from aas2rto.exc import UnexpectedKeysWarning, MissingMediaWarning
+from aas2rto.exc import MissingKeysError
+from aas2rto.messaging.telegram_messenger import TelegramMessenger
 
 
-@pytest.fixture
-def config():
-    return {
-        "token": "12345",
-        "users": {1001: "user_001", 1002: "user_002"},
-        "sudoers": {1003: "user_003"},
-    }
+def write_image(filepath: Path):
+    fig, ax = plt.subplots(figsize=(1, 1))
+    fig.savefig(filepath)
+    plt.close(fig)
 
 
-@pytest.fixture
-def extra_users():
-    return {1004: "user_004", 1005: "user_005"}
+class Test__TelegramInit:
+    def test__telegram_init(self, telegram_config: dict):
+        # Act
+        msgr = TelegramMessenger(telegram_config)
 
+        # Assert
+        assert set(msgr.users.keys()) == set([101, 102, 901])
+        assert set(msgr.sudoers.keys()) == set([901])
 
-def save_image_to_path(filepath, size=(10, 10)):
-    x = np.random.uniform(0, 1, size) * 256
-    im = Image.fromarray(np.uint8(x))
-    im.save(filepath)
+    def test__users_is_int(self, telegram_config: dict):
+        # Arrange
+        telegram_config["users"] = 201
+        telegram_config["sudoers"] = 801
 
+        # Act
+        msgr = TelegramMessenger(telegram_config)
 
-class MockBot:
+        # Assert
+        assert set(msgr.users.keys()) == set([201, 801])
+        assert msgr.users[201] == "unknown_user"
+        assert msgr.users[801] == "unknown_sudoer"
 
-    def __init__(self, token):
-        self.token = token
+        assert set(msgr.sudoers.keys()) == set([801])
+        assert msgr.sudoers[801] == "unknown_sudoer"
 
-        self.messages_sent = []
-        self.media_sent = []
+    def test__no_token_raises(self, telegram_config: dict):
+        # Arrange
+        telegram_config.pop("token")
 
-    def send_message(self, chat_id=None, text=None, disable_web_page_preview=True):
-        if chat_id is None:
-            raise ValueError("chat_id is None.")
-        if text is None:
-            raise ValueError("text is None")
-        self.messages_sent.append((chat_id, text))
-        return (chat_id, text)
+        with pytest.raises(MissingKeysError):
+            msgr = TelegramMessenger(telegram_config)
 
-    def send_photo(self, chat_id, photo=None, caption=None):
-        if chat_id is None:
-            raise ValueError("chat_id is None.")
-        if photo is None:
-            raise ValueError("photo is None")
-        self.media_sent.append((chat_id, photo))
-        return (chat_id, photo)
-
-    def send_media_group(self, chat_id=None, media=None):
-        if isinstance(media, Path):
-            raise ValueError("send_media_group should have media=<list-of-media>")
-
-        if chat_id is None:
-            raise ValueError("chat_id is None.")
-        if media is None:
-            raise ValueError("media is None")
-
-        media_sent = [(chat_id, media_ii) for media_ii in media]
-        self.media_sent.extend(media_sent)
-        return media_sent
-
-
-@pytest.fixture(autouse=True)
-def mock_bot(monkeypatch):
-    monkeypatch.setattr("aas2rto.messengers.telegram_messenger.telegram.Bot", MockBot)
-
-
-class Test__TelegramMessengerInit:
-
-    def test__empty_config_has_nothing(self):
-
-        msgr = TelegramMessenger({})
-
-        assert msgr.token is None
-        assert isinstance(msgr.users, dict)
-        assert len(msgr.users) == 0
-        assert isinstance(msgr.sudoers, dict)
-        assert len(msgr.users) == 0
-
-    def test__normal_config(self, config):
-
-        msgr = TelegramMessenger(config)
-
-        assert msgr.token == "12345"
-
-        assert isinstance(msgr.users, dict)
-        assert set(msgr.users.keys()) == set([1001, 1002, 1003])  # user 003 added!
-        assert msgr.users[1001] == "user_001"
-        assert msgr.users[1002] == "user_002"
-        assert msgr.users[1003] == "user_003"
-
-        assert isinstance(msgr.sudoers, dict)
-        assert set(msgr.sudoers.keys()) == set([1003])
-        assert msgr.sudoers[1003] == "user_003"
-
-        assert msgr.users_file is None
-
-        assert msgr.bot is not None
-
-    def test__warn_on_unexpected_config_key(self, config):
-        config["unexp_kw"] = 10
-
-        with pytest.warns(UnexpectedKeysWarning):
-            msgr = TelegramMessenger(config)
-
-    def test__users_as_list(self, config):
-        config["users"] = [1001, 1002]
-
-        msgr = TelegramMessenger(config)
-
-        assert isinstance(msgr.users, dict)
-        assert set(msgr.users.keys()) == set([1001, 1002, 1003])  # user 003 added!
-        assert msgr.users[1001] == "unknown_user"
-        assert msgr.users[1002] == "unknown_user"
-        assert msgr.users[1003] == "user_003"
-
-        assert msgr.bot is not None
-
-    def test__sudoers_as_list(self, config):
-        config["sudoers"] = [1003]
-
-        msgr = TelegramMessenger(config)
-
-        assert isinstance(msgr.sudoers, dict)
-        assert set(msgr.users.keys()) == set([1001, 1002, 1003])  # user 003 added!
-        assert msgr.users[1001] == "user_001"
-        assert msgr.users[1002] == "user_002"
-        assert msgr.users[1003] == "unknown_sudoer"
-
-        assert isinstance(msgr.sudoers, dict)
-        assert msgr.sudoers[1003] == "unknown_sudoer"
-
-        assert msgr.bot is not None
-
-    def test__init_with_user_file(self, config, tmp_path):
-        config["users_file"] = str(tmp_path)
-
-        msgr = TelegramMessenger(config)
-
-        assert isinstance(msgr.users_file, Path)
-
-    def test__init_telegram_module_is_none(self, config, monkeypatch):
-
-        assert telegram_messenger.telegram is not None
-
-        with monkeypatch.context() as m:
-            m.setattr("aas2rto.messengers.telegram_messenger.telegram", None)
-            assert telegram_messenger.telegram is None
-
-            msgr = TelegramMessenger(config)
-
-            assert msgr.token is not None
-            assert msgr.bot is None
-
-        assert telegram_messenger.telegram is not None
-
-
-class Test__ReadNewUsers:
-
-    def test__new_users_is_empty(self, config, tmp_path):
-        users_file = tmp_path / "users.yaml"
-        config["users_file"] = users_file
-
-        msgr = TelegramMessenger(config)
-
-        result = msgr.read_new_users()
-        assert isinstance(result, dict)
-        assert len(result) == 0
-
-    def test__read_new_users(self, config: dict, extra_users: dict, tmp_path):
-        users_file = tmp_path / "users.yaml"
-        config["users_file"] = users_file
-
-        with open(users_file, "w+") as f:
-            yaml.dump(extra_users, f)
-
-        msgr = TelegramMessenger(config)
-        result = msgr.read_new_users()
-
-        assert set(result.keys()) == set([1004, 1005])
-        assert result[1004] == "user_004"
-        assert result[1005] == "user_005"
-
-    def test__read_new_users_missing_names(
-        self, config: dict, extra_users: dict, tmp_path
+    def test__bot_failing_returns_none(
+        self, telegram_config: dict, monkeypatch: pytest.MonkeyPatch
     ):
-        users_file = tmp_path / "users.yaml"
-        config["users_file"] = users_file
+        # Arrange
+        def get_bot_raises(*args, **kwargs):
+            raise Exception()
 
-        with open(users_file, "w+") as f:
-            yaml.dump(list(extra_users.keys()), f)
+        monkeypatch.setattr(TelegramMessenger, "get_bot", get_bot_raises)
 
-        msgr = TelegramMessenger(config)
-        result = msgr.read_new_users()
-
-        assert set(result.keys()) == set([1004, 1005])
-        assert result[1004] == "unknown_user"
-        assert result[1005] == "unknown_user"
+        # Act
+        with pytest.warns(UserWarning):
+            msgr = TelegramMessenger(telegram_config)
 
 
-class Test__SendTextMessages:
+class Test__GetBot:
+    def test__get_bot(self, telegram_config: dict):
+        # Arrange
+        msgr = TelegramMessenger(telegram_config)
 
-    def test__send_single_message_to_single_user(self, config):
+        # Act
+        bot = msgr.get_bot()
 
-        msgr = TelegramMessenger(config)
-
-        user_id = 101
-        message = "a test message"
-
-        sent_messages = msgr.send_to_user(user_id, texts=message)
-
-        assert isinstance(msgr.bot, MockBot)  # so we can track the messages sent!
-
-        assert len(msgr.bot.messages_sent) == 1
-
-        first_message = msgr.bot.messages_sent[0]
-        assert first_message[0] == 101
-        assert first_message[1] == "a test message"
-
-    def test__send_many_messages_to_single_user(self, config):
-
-        msgr = TelegramMessenger(config)
-
-        user_id = 101
-        msg_01 = "a test message"
-        msg_02 = "another message"
-
-        msgr.send_to_user(user_id, texts=[msg_01, msg_02])
-
-        assert isinstance(msgr.bot, MockBot)
-
-        assert len(msgr.bot.messages_sent) == 2
-
-        first_msg = msgr.bot.messages_sent[0]
-        assert first_msg[0] == 101
-        assert first_msg[1] == "a test message"
-        second_msg = msgr.bot.messages_sent[1]
-        assert second_msg[0] == 101
-        assert second_msg[1] == "another message"
-
-    def test__long_messages_are_chunked(self, config):
-
-        msg = "ABCDEFGHIJKLM"
-
-        msgr = TelegramMessenger(config)
-
-        msgr.CHUNK_MAX = 5
-        assert TelegramMessenger.CHUNK_MAX == 4000  # class not changed...
-
-        sent_messages = msgr.send_to_user(101, texts=msg)
-
-        assert len(sent_messages) == 3
-        assert sent_messages[0][1] == "ABCDE"
-        assert sent_messages[1][1] == "FGHIJ"
-        assert sent_messages[2][1] == "KLM"
-
-        assert len(msgr.bot.messages_sent) == 3
-        assert msgr.bot.messages_sent[0][1] == "ABCDE"
-        assert msgr.bot.messages_sent[1][1] == "FGHIJ"
-        assert msgr.bot.messages_sent[2][1] == "KLM"
+        # Assert
+        assert isinstance(bot, telegram.Bot)
 
 
-class Test__SendImages:
+class Test__ReadUsers:
+    def test__file_none_no_fail(self, telegram_config: dict, tmp_path: Path):
+        # Arrange
+        assert "users_file" not in telegram_config
+        msgr = TelegramMessenger(telegram_config)
 
-    def test__send_single_image_to_single_user(self, config, tmp_path):
+        # Act
+        new_users = msgr.read_users_file()
 
-        filepath = tmp_path / "testim.png"
-        save_image_to_path(filepath)
-        assert filepath.exists()
+        # Assert
+        assert isinstance(new_users, dict)
+        assert len(new_users) == 0
 
-        msgr = TelegramMessenger(config)
-        sent_messages = msgr.send_to_user(101, img_paths=filepath)
+    def test__missing_file_no_fail(self, telegram_config: dict, tmp_path: Path):
+        # Arrange
+        telegram_config["users_file"] = tmp_path / "new_users.yaml"
+        msgr = TelegramMessenger(telegram_config)
 
-        assert isinstance(msgr.bot, MockBot)
+        # Act
+        new_users = msgr.read_users_file()
 
-        assert len(sent_messages) == 1
-        assert sent_messages[0][0] == 101
-        assert isinstance(sent_messages[0][1], bytes)
-        # assert sent_messages[0][1].name == str(filepath)
+        # Assert
+        assert isinstance(new_users, dict)
+        assert len(new_users) == 0
 
-    def test__send_many_images_to_single_user(self, config, tmp_path):
+    def test__read_new_users(self, telegram_config: dict, tmp_path: Path):
+        # Arrange
+        new_users = {301: "new_user301", 302: "new_user302"}
+        users_path = tmp_path / "new_users.yaml"
+        with open(users_path, "w+") as f:
+            yaml.dump(new_users, f)
 
-        filepath_01 = tmp_path / "testim_01.png"
-        save_image_to_path(filepath_01)
-        assert filepath_01.exists()
+        telegram_config["users_file"] = users_path
+        msgr = TelegramMessenger(telegram_config)
 
-        filepath_02 = tmp_path / "testim_02.png"
-        save_image_to_path(filepath_02)
-        assert filepath_02.exists()
+        # Act
+        new_users = msgr.read_users_file()
 
-        msgr = TelegramMessenger(config)
+        # Assert
+        assert set(new_users.keys()) == set([301, 302])
 
-        sent_messages = msgr.send_to_user(101, img_paths=[filepath_01, filepath_02])
+    def test__read_empty_file(self, telegram_config: dict, tmp_path: Path):
+        # Arrange
+        users_path = tmp_path / "new_users.yaml"
+        users_path.touch()
+        telegram_config["users_file"] = users_path
+        msgr = TelegramMessenger(telegram_config)
 
-        assert len(sent_messages) == 2
-        assert sent_messages[0][0] == 101
-        assert isinstance(sent_messages[0][1], telegram.InputMediaPhoto)
-        assert sent_messages[0][1].media.filename == str(filepath_01)
-        assert sent_messages[1][0] == 101
-        assert isinstance(sent_messages[1][1], telegram.InputMediaPhoto)
-        assert sent_messages[1][1].media.filename == str(filepath_02)
+        # Act
+        new_users = msgr.read_users_file()
 
-    def test__missing_image_does_not_fail_send_to_user(self, config, tmp_path):
+        # Assert
+        assert isinstance(new_users, dict)
+        assert len(new_users) == 0
 
-        filepath_01 = tmp_path / "testim_01.png"
-        save_image_to_path(filepath_01)
-        assert filepath_01.exists()
 
-        filepath_02 = tmp_path / "testim_02.png"
-        # DON'T save the file here!
-        assert not filepath_02.exists()
+class Test__GetUsers:
+    def test__no_users_file(self, telegram_config: dict):
+        # Arrange
+        msgr = TelegramMessenger(telegram_config)
 
-        filepath_03 = tmp_path / "testim_03.png"
-        save_image_to_path(filepath_03)
-        assert filepath_03.exists()
+        # Act
+        users = msgr.get_users()
 
-        msgr = TelegramMessenger(config)
+        # Assert
+        assert set(users.keys()) == set([101, 102, 901])
 
-        img_paths = [filepath_01, filepath_02, filepath_03]
-        with pytest.warns(MissingMediaWarning):
-            sent_messages = msgr.send_to_user(101, img_paths=img_paths)
+    def test__with_users_file(self, telegram_config: dict, tmp_path: Path):
+        # Arrange
+        new_users = {301: "new_user301", 302: "new_user302"}
+        users_path = tmp_path / "new_users.yaml"
+        with open(users_path, "w+") as f:
+            yaml.dump(new_users, f)
 
-        assert len(sent_messages) == 2
-        assert sent_messages[0][0] == 101
-        assert isinstance(sent_messages[0][1], telegram.InputMediaPhoto)
-        assert sent_messages[0][1].media.filename == str(filepath_01)
-        assert isinstance(sent_messages[1][1], telegram.InputMediaPhoto)
-        assert sent_messages[1][1].media.filename == str(filepath_03)
+        telegram_config["users_file"] = users_path
+        msgr = TelegramMessenger(telegram_config)
+
+        # Act
+        users = msgr.get_users()
+
+        # Assert
+        assert set(users.keys()) == set([101, 102, 901, 301, 302])
+
+    def test__malformed_file_caught(self, telegram_config: dict, tmp_path: Path):
+        # Arrange
+        users_path = tmp_path / "new_users.yaml"
+        with open(users_path, "wb+") as f:
+            pickle.dump(np.arange(100), f)
+
+        telegram_config["users_file"] = users_path
+        msgr = TelegramMessenger(telegram_config)
+
+        # Act
+        with pytest.warns(UserWarning):
+            users = msgr.get_users()
+
+        # Assert
+        assert set(users.keys()) == set([101, 102, 901])
+
+    def test__empty_file(self, telegram_config: dict, tmp_path: Path):
+        # Arrange
+        users_path = tmp_path / "new_users.yaml"
+        users_path.touch()
+
+        telegram_config["users_file"] = users_path
+        msgr = TelegramMessenger(telegram_config)
+
+        # Act
+        users = msgr.get_users()
+
+        # Assert
+        assert set(users.keys()) == set([101, 102, 901])
+
+
+class Test__SendToUser:
+    def test__send_single_text(self, telegram_msgr: TelegramMessenger):
+        # Act
+        sent = telegram_msgr.send_to_user(201, texts="some_message")
+        # NOTE: this is with the monkeypatched object!
+
+        # Assert
+        assert len(sent) == 1
+        assert sent[0]["msg_type"] == "text"
+        assert sent[0]["user"] == 201
+
+    def test__send_long_message(self, telegram_msgr: TelegramMessenger):
+        # Arrange
+        chars = list(string.ascii_lowercase) + [" "]
+        msg = "".join(np.random.choice(chars, 4500))
+
+        # Act
+        sent = telegram_msgr.send_to_user(user=201, texts=msg)
+
+        # Assert
+        assert len(sent) == 2
+        assert sent[0]["length"] == 4000
+        assert sent[1]["length"] == 500
+
+    def test__send_single_photo(self, telegram_msgr: TelegramMessenger, tmp_path: Path):
+        # Arrange
+        img_path = tmp_path / "img001.png"
+        write_image(img_path)
+
+        # Act
+        sent = telegram_msgr.send_to_user(201, img_paths=img_path)
+        # NOTE: this is with the monkeypatched object!
+
+        # Assert
+        assert len(sent) == 1
+        assert sent[0]["msg_type"] == "single_photo"
+
+    def test__send_media_group(self, telegram_msgr: TelegramMessenger, tmp_path: Path):
+        # Arrange
+        img_paths = []
+        for ii in range(11):
+            img_path = tmp_path / f"img{ii:03d}.png"
+            write_image(img_path)
+            img_paths.append(img_path)
+
+        # Act
+        sent = telegram_msgr.send_to_user(201, img_paths=img_paths)
+
+        # Assert
+        assert len(sent) == 2
+        assert sent[0]["length"] == 10
+        assert sent[0]["msg_type"] == "media_group"
+        assert sent[1]["length"] == "n/a"
+        assert sent[1]["msg_type"] == "single_photo"
 
 
 class Test__MessageUsers:
+    def test__single_text(self, telegram_msgr: TelegramMessenger):
+        # Act
+        sent, exc = telegram_msgr.message_users(texts="a message")
 
-    def test__send_text_to_default_users(self, config):
+        # Assert
+        assert len(sent) == 3
+        assert sent[0]["user"] == 101
+        assert sent[1]["user"] == 102
+        assert sent[2]["user"] == 901
 
-        msgr = TelegramMessenger(config)
+    def test__single_named_user(self, telegram_msgr: TelegramMessenger):
 
-        sent_messages, exceptions = msgr.message_users(texts="sample message")
+        # Act
+        sent, exc = telegram_msgr.message_users(users=101, texts="a message")
 
-        assert len(sent_messages) == 3
-        assert sent_messages[0][0] == 1001
-        assert sent_messages[0][1] == "sample message"
-        assert sent_messages[1][0] == 1002
-        assert sent_messages[1][1] == "sample message"
-        assert sent_messages[2][0] == 1003
-        assert sent_messages[2][1] == "sample message"
+        # Assert
+        assert len(sent) == 1
+        assert sent[0]["user"] == 101
 
-    def test__send_text_to_single_users(self, config):
+    def test__send_single_photo(self, telegram_msgr: TelegramMessenger, tmp_path: Path):
+        # Arrange
+        img_path = tmp_path / "img001.png"
+        write_image(img_path)
 
-        msgr = TelegramMessenger(config)
+        # Act
+        sent, exc = telegram_msgr.message_users(img_paths=img_path)
 
-        sent_messages, exceptions = msgr.message_users(
-            users=101, texts="sample message"
-        )
+        # Arrange
+        assert len(sent) == 3
+        assert sent[0]["msg_type"] == "single_photo"
+        assert sent[1]["msg_type"] == "single_photo"
+        assert sent[2]["msg_type"] == "single_photo"
 
-        assert len(sent_messages) == 1
-        assert sent_messages[0][0] == 101
-        assert sent_messages[0][1] == "sample message"
+    def test__photo_path_as_str(self, telegram_msgr: TelegramMessenger, tmp_path: Path):
+        # Arrange
+        img_path = tmp_path / "img001.png"
+        write_image(img_path)
 
-    def test__send_text_to_many_users(self, config):
+        # Act
+        sent, exc = telegram_msgr.message_users(img_paths=str(img_path))
 
-        msgr = TelegramMessenger(config)
+        # Arrange
+        assert len(sent) == 3
+        assert sent[0]["msg_type"] == "single_photo"
+        assert sent[1]["msg_type"] == "single_photo"
+        assert sent[2]["msg_type"] == "single_photo"
 
-        sent_messages, exceptions = msgr.message_users(
-            users=[101, 102], texts="sample message"
-        )
+    def test__send_multi_img(self, telegram_msgr: TelegramMessenger, tmp_path: Path):
+        # Arrange
+        img_path_001 = tmp_path / "img001.png"
+        img_path_002 = tmp_path / "img002.png"
+        img_paths = [img_path_001, img_path_002]
+        for img_path in img_paths:
+            write_image(img_path)
 
-        assert len(sent_messages) == 2
-        assert sent_messages[0][0] == 101
-        assert sent_messages[0][1] == "sample message"
-        assert sent_messages[1][0] == 102
-        assert sent_messages[1][1] == "sample message"
+        # Act
+        sent, exc = telegram_msgr.message_users(img_paths=img_paths)
 
-    def test__sent_text_to_sudoers(self, config):
+        # Arrange
+        assert len(sent) == 3
+        assert sent[0]["msg_type"] == "media_group"
+        assert sent[1]["msg_type"] == "media_group"
+        assert sent[2]["msg_type"] == "media_group"
 
-        msgr = TelegramMessenger(config)
+    def test__skip_missing_img(self, telegram_msgr: TelegramMessenger, tmp_path: Path):
+        # Arrange
+        img_path_001 = tmp_path / "img001.png"
+        img_path_002 = tmp_path / "img002.png"
+        img_path_003 = tmp_path / "img003.png"
+        img_paths = [img_path_001, img_path_002, img_path_003]
+        write_image(img_path_001)
+        write_image(img_path_002)
 
-        sent_messages, exceptions = msgr.message_users(
-            users="sudoers", texts="sample message"
-        )
+        # Act
+        sent, exc = telegram_msgr.message_users(img_paths=img_paths)
 
-        assert len(sent_messages) == 1
-        assert sent_messages[0][0] == 1003
-        assert sent_messages[0][1] == "sample message"
+        # Arrange
+        assert len(sent) == 3
+        assert sent[0]["msg_type"] == "media_group"
+        assert sent[0]["length"] == 2
+        assert sent[1]["msg_type"] == "media_group"
+        assert sent[0]["length"] == 2
+        assert sent[2]["msg_type"] == "media_group"
+        assert sent[0]["length"] == 2
 
-    def test__send_text_to_extra_users(self, config, extra_users, tmp_path):
-        users_file = tmp_path / "users.yaml"
-        config["users_file"] = users_file
+        assert len(exc) == 1
+        assert f"Image img003.png missing!" in exc[0]
 
-        with open(users_file, "w+") as f:
-            yaml.dump(list(extra_users.keys()), f)
+    def test__send_to_sudoers(self, telegram_msgr: TelegramMessenger, tmp_path: Path):
+        # Act
+        sent, exc = telegram_msgr.message_users(users="sudoers", texts="some message")
 
-        msgr = TelegramMessenger(config)
+        # Assert
+        assert len(sent) == 1
+        assert sent[0]["user"] == 901
 
-        sent_messages, exceptions = msgr.message_users(texts="sample message")
-        assert len(sent_messages) == 5
+    def test__exception_caught(self, telegram_msgr: TelegramMessenger):
+        # Act
+        with pytest.warns(UserWarning):
+            # texts as list of non-str will fail!
+            sent, exc = telegram_msgr.message_users(texts=[[]])
 
-        assert sent_messages[0][0] == 1001
-        assert sent_messages[0][1] == "sample message"
-        assert sent_messages[1][0] == 1002
-        assert sent_messages[1][1] == "sample message"
-        assert sent_messages[2][0] == 1003
-        assert sent_messages[2][1] == "sample message"
-        assert sent_messages[3][0] == 1004
-        assert sent_messages[3][1] == "sample message"
-        assert sent_messages[4][0] == 1005
-        assert sent_messages[4][1] == "sample message"
+        # Assert
+        assert len(sent) == 0
+        assert len(exc) == 3
 
-    def send__single_photo(self, config, tmp_path):
+    def test__exc_in_send_to_user_caught(
+        self, telegram_msgr: TelegramMessenger, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Arrange
+        def patch_raise(*args, **kwargs):
+            raise Exception()
 
-        filepath_01 = tmp_path / "testim_01.png"
-        save_image_to_path(filepath_01)
-        assert filepath_01.exists()
+        monkeypatch.setattr(telegram_msgr, "send_to_user", patch_raise)
+        with pytest.raises(Exception):
+            telegram_msgr.send_to_user(101, texts=["should fail..."])
 
-        msgr = TelegramMessenger(config)
-
-        sent_messages, exceptions = msgr.message_users(img_paths=filepath_01)
-
-        assert len(sent_messages) == 3
-        assert sent_messages[0][0] == 1001
-        assert isinstance(sent_messages[0][1], bytes)
-        assert sent_messages[1][0] == 1002
-        assert isinstance(sent_messages[1][1], bytes)
-        assert sent_messages[2][0] == 1003
-        assert isinstance(sent_messages[2][1], bytes)
-
-    def test__send_many_photos(self, config, tmp_path):
-
-        filepath_01 = tmp_path / "testim_01.png"
-        save_image_to_path(filepath_01)
-        assert filepath_01.exists()
-
-        filepath_02 = tmp_path / "testim_02.png"
-        save_image_to_path(filepath_02)
-        assert filepath_02.exists()
-
-        msgr = TelegramMessenger(config)
-
-        sent_messages, exceptions = msgr.message_users(
-            img_paths=[filepath_01, filepath_02]
-        )
-
-        assert len(sent_messages) == 6
-
-        assert sent_messages[0][0] == 1001
-        assert isinstance(sent_messages[0][1], telegram.InputMediaPhoto)
-        assert sent_messages[0][1].media.filename == str(filepath_01)
-
-        assert sent_messages[1][0] == 1001
-        assert isinstance(sent_messages[1][1], telegram.InputMediaPhoto)
-        assert sent_messages[1][1].media.filename == str(filepath_02)
-
-        assert sent_messages[2][0] == 1002
-        assert isinstance(sent_messages[2][1], telegram.InputMediaPhoto)
-        assert sent_messages[2][1].media.filename == str(filepath_01)
-
-        assert sent_messages[3][0] == 1002
-        assert isinstance(sent_messages[3][1], telegram.InputMediaPhoto)
-        assert sent_messages[3][1].media.filename == str(filepath_02)
-
-        assert sent_messages[4][0] == 1003
-        assert isinstance(sent_messages[4][1], telegram.InputMediaPhoto)
-        assert sent_messages[4][1].media.filename == str(filepath_01)
-
-        assert sent_messages[5][0] == 1003
-        assert isinstance(sent_messages[5][1], telegram.InputMediaPhoto)
-        assert sent_messages[5][1].media.filename == str(filepath_02)
-
-    def test__missing_photo_not_sent(self, config, tmp_path):
-        filepath_01 = tmp_path / "testim_01.png"
-        save_image_to_path(filepath_01)
-        assert filepath_01.exists()
-
-        filepath_02 = tmp_path / "testim_02.png"
-        # intentionally not saved!
-        assert not filepath_02.exists()
-
-        filepath_03 = tmp_path / "testim_03.png"
-        save_image_to_path(filepath_03)
-        assert filepath_03.exists()
-
-        msgr = TelegramMessenger(config)
-
-        sent_messages, exceptions = msgr.message_users(
-            img_paths=[filepath_01, filepath_02, filepath_03]
-        )
-
-        assert len(exceptions) == 1
-        assert "testim_02.png missing!" in exceptions[0]
-
-        # ...everything else should behave as normal.
-        assert len(sent_messages) == 6
-
-        assert sent_messages[0][0] == 1001
-        assert isinstance(sent_messages[0][1], telegram.InputMediaPhoto)
-        assert sent_messages[0][1].media.filename == str(filepath_01)
-
-        assert sent_messages[1][0] == 1001
-        assert isinstance(sent_messages[1][1], telegram.InputMediaPhoto)
-        assert sent_messages[1][1].media.filename == str(filepath_03)
-
-        assert sent_messages[2][0] == 1002
-        assert isinstance(sent_messages[2][1], telegram.InputMediaPhoto)
-        assert sent_messages[2][1].media.filename == str(filepath_01)
-
-        assert sent_messages[3][0] == 1002
-        assert isinstance(sent_messages[3][1], telegram.InputMediaPhoto)
-        assert sent_messages[3][1].media.filename == str(filepath_03)
-
-        assert sent_messages[4][0] == 1003
-        assert isinstance(sent_messages[4][1], telegram.InputMediaPhoto)
-        assert sent_messages[4][1].media.filename == str(filepath_01)
-
-        assert sent_messages[5][0] == 1003
-        assert isinstance(sent_messages[5][1], telegram.InputMediaPhoto)
-        assert sent_messages[5][1].media.filename == str(filepath_03)
+        # Act
+        with pytest.warns(UserWarning):
+            telegram_msgr.message_users([101], texts=["exc will be caught!"])

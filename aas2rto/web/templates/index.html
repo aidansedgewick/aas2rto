@@ -1,0 +1,32 @@
+<html>
+    <head>
+        <title>AAS2RTO-web</title>
+    </head>
+
+    <body>
+        <h1>AAS2RTO Web</h1>
+
+        <h2>Science ranked list</h2>
+
+        <a href="{{ science_ranked_url }}">Science ranked targets</a>
+
+        <h2>Observatory ranked lists</h2>
+
+        {% for obs_name, url in obs_ranked_url_lookup.items() %}
+            <a href="{{ url }}">{{ obs_name }}</a><br>
+        {% endfor %}
+
+        <h2>Visible targets at observatories</h2>
+
+        {% for obs_name, url in obs_visible_url_lookup.items() %}
+            <a href="{{ url }}">{{ obs_name }}</a><br>
+        {% endfor %}
+
+    </body>
+
+    <footer>
+        <br>
+        <small>Last updated {{ update_time_str }} </small>
+    </footer>
+
+</html>

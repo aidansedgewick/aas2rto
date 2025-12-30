@@ -1,15 +1,19 @@
 # Exceptions
 
 
-class BadKafkaConfigError(Exception):
-    pass
-
-
 class MissingCoordinatesError(Exception):
     pass
 
 
 class MissingDateError(Exception):
+    pass
+
+
+class MissingKeysError(Exception):
+    pass
+
+
+class MissingRequiredConfigKeyError(Exception):
     pass
 
 
@@ -21,10 +25,30 @@ class NotATargetError(Exception):
     pass
 
 
+class UnexpectedKeysError(Exception):
+    pass
+
+
 # Warnings
 
 
 class DuplicateDataWarning(UserWarning):
+    pass
+
+
+class InvalidEphemWarning(UserWarning):
+    pass
+
+
+class MissingColumnWarning(UserWarning):
+    pass
+
+
+class MissingEphemInfoWarning(UserWarning):
+    pass
+
+
+class MissingFileWarning(UserWarning):
     pass
 
 
@@ -49,4 +73,8 @@ class UnknownObservatoryWarning(UserWarning):
 
 
 class UnknownPhotometryTagWarning(UserWarning):
+    pass
+
+
+class UnknownTargetWarning(UserWarning):
     pass

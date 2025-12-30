@@ -1,192 +1,215 @@
 import pytest
+from typing import Dict
 
 import numpy as np
 
-import pandas as pd
+import matplotlib.pyplot as plt
 
 from astropy.time import Time
 
 import sncosmo
 
-from aas2rto.target import Target, TargetData
-from aas2rto.modeling.sncosmo import SncosmoSaltModeler, initialise_model
-from aas2rto.plotters.sncosmo_plotter import SncosmoLightcurvePlotter
+from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
+from aas2rto.plotting.sncosmo_plotter import (
+    SncosmoLightcurvePlotter,
+    plot_sncosmo_lightcurve,
+    get_sample_quartiles,
+    get_model_median_params,
+)
+from aas2rto.target import Target
+from aas2rto.target_data import TargetData
 
 
 @pytest.fixture
-def fixed_t0():
-    t0 = 60020.0
-    return t0
-
-
-# @pytest.fixture
-# def t0_jd(fixed_t0):
-#     return fixed_t0 + 2_400_000.5
+def t_plot():
+    return Time(60010.0, format="mjd")
 
 
 @pytest.fixture
-def fixed_params(fixed_t0):
-    return dict(z=0.05, t0=fixed_t0, x0=2e-3, x1=-0.5, c=0.0)
-
-
-@pytest.fixture  # (scope="module")
-def true_model(fixed_params):
-    model = initialise_model()
-    model.update(fixed_params)
+def salt_model():
+    model = sncosmo.Model(source="salt3")
+    model.update(dict(z=0.02, x0=1e-2, x1=0.0, c=0.0, t0=60010.0))
+    result = dict(chisq=5.0, ndof=5, vparam_names=["z", "x0", "x1", "c", "t0"])
+    model.result = result
     return model
 
 
 @pytest.fixture
-def samples(fixed_params):
-    N = 500
+def salt_model_with_samples(salt_model):
+    mu_vals = [salt_model[p] for p in "z x0 x1 c t0".split()]
+    sig_vals = [0.005, 1e-4, 0.05, 0.01, 0.3]
+
     samples = np.column_stack(
-        [
-            fixed_params["z"] + np.random.normal(0, 0.005, N),
-            fixed_params["t0"] + np.random.normal(0, 1.0, N),
-            fixed_params["x0"] + np.random.normal(0, 4e-4, N),
-            fixed_params["x1"] + np.random.normal(0, 0.1, N),
-            fixed_params["c"] + np.random.normal(0, 5e-2, N),
-        ]
+        [np.random.normal(mu, sig, 500) for mu, sig in zip(mu_vals, sig_vals)]
     )
-    return samples
+
+    salt_model.result["samples"] = samples
+    return salt_model
 
 
 @pytest.fixture
-def model_with_samples(true_model, samples):
-    result = {"samples": samples, "vparam_names": "z t0 x0 x1 c".split()}
-    true_model.result = result
-    return true_model
+def target_with_models(target_to_plot: Target, salt_model: sncosmo.Model):
+    target_to_plot.models["sncosmo_salt"] = salt_model
+    return target_to_plot
 
 
 @pytest.fixture
-def dt_vals():
-    before = [-16.0, -15.0, -12.5, -11.0, -8.0, -5.5, -4.0, -2.0, -0.5]
-    after = [0.5, 3.0, 5.0, 7.5, 11.0, 14.0, 18.0, 22.0]
-    return before + after
+def target_with_samples(target_to_plot: Target, salt_model_with_samples: sncosmo.Model):
+    target_to_plot.models["sncosmo_salt"] = salt_model_with_samples
+    return target_to_plot
 
 
 @pytest.fixture
-def mock_lc(true_model, fixed_t0, dt_vals):
-    """
-    photometry samples are drawn FROM THE MODEL!
-    This is so we're not testing the actual fitting here. just plotting.
-    """
-
-    dt = np.array(dt_vals)
-    ztfg_t_grid = fixed_t0 + dt
-    ztfr_t_grid = fixed_t0 + dt + 0.1
-    gmag = true_model.bandmag("ztfg", "ab", ztfg_t_grid)
-    gmag = np.random.normal(gmag, 0.2, len(ztfg_t_grid))
-    rmag = true_model.bandmag("ztfr", "ab", ztfr_t_grid)
-    rmag = np.random.normal(rmag, 0.2, len(ztfr_t_grid))
-    gmag_tag = ["valid"] * len(dt)
-    rmag_tag = ["valid"] * len(dt)
-    gmag_tag[0] = "badqual"
-    gmag_tag[2] = "badqual"
-    gmag_tag[-1] = "badqual"
-    rmag_tag[1] = "badqual"
-    band_col = np.array(["ztfg"] * len(dt) + ["ztfr"] * len(dt))
-
-    t_grid = np.concatenate([ztfg_t_grid, ztfr_t_grid])
-    mag = np.concatenate([gmag, rmag])
-    magerr = np.array([0.1] * len(t_grid))
-    tagcol = np.concatenate([gmag_tag, rmag_tag])
-
-    df = pd.DataFrame(
-        {"mjd": t_grid, "mag": mag, "magerr": magerr, "band": band_col, "tag": tagcol}
-    )
-    df.sort_values("mjd", inplace=True, ignore_index=True)
-    return df
+def lc_plotter(t_plot: Time):
+    return SncosmoLightcurvePlotter(t_ref=t_plot)
 
 
-@pytest.fixture
-def mock_target(mock_lc):
-    t = Target("T101", ra=30.0, dec=60.0)
-    t.compiled_lightcurve = mock_lc
+@pytest.fixture(autouse=True)
+def close_all_plots():
+    # Arrange
+    pass  # Code BEFORE yield in fixture is setup. No setup here...
 
-    t.score_comments["no_observatory"] = ["some comment here", "another comment"]
-    return t
+    yield  # Test is run here
 
-
-@pytest.fixture
-def mock_target_model(mock_target, true_model):
-    mock_target.models["sncosmo_salt"] = true_model
-    return mock_target
+    # Cleanup
+    plt.close("all")  # Clean-up runs after each test
 
 
-@pytest.fixture
-def mock_target_model_samples(mock_target, model_with_samples):
-    mock_target.models["sncosmo_salt"] = model_with_samples
-    return mock_target
+class Test__SampleQuartilesHelper:
+    def test__get_samples(self, salt_model_with_samples: sncosmo.Model):
+        # Arrange
+        t_grid = np.arange(60000.0, 60020.0, 1.0)
+
+        # Act
+        lc_bounds = get_sample_quartiles(
+            t_grid, salt_model_with_samples, "ztfg", spacing=1, q=[0.16, 0.84]
+        )
+
+        # Assert
+        assert lc_bounds.ndim == 2
+
+        assert all(lc_bounds[0] < lc_bounds[1])  # upper bound brighter mag
+
+
+class Test__MedianModelHelper:
+    def test__get_model_median(self, salt_model_with_samples: sncosmo.Model):
+        # Arrange
+        bad_pdict = dict(z=np.nan, x0=np.nan, x1=np.nan, c=np.nan, t0=np.nan)
+        salt_model_with_samples.update(bad_pdict)
+
+        # Act
+        med_model = get_model_median_params(salt_model_with_samples)
+
+        # Assert
+        assert id(salt_model_with_samples) != id(med_model)  # ie. it's a copy
+
+        assert np.isclose(med_model["z"], 0.02, rtol=0.1)
+        assert np.isclose(med_model["x0"], 1e-2, rtol=0.1)
+        assert np.isclose(med_model["x1"], 0.0, atol=0.01)
+        assert np.isclose(med_model["c"], 0.0, atol=5e-3)
+        assert np.isclose(med_model["t0"], 60010.0, atol=1.0)
 
 
 class Test__PlotterInit:
-
     def test__plotter_init(self):
-        t_ref = Time(60045, format="mjd")
+        # Act
+        plotter = SncosmoLightcurvePlotter()
 
-        plotter = SncosmoLightcurvePlotter(t_ref=t_ref, grid_dt=1.0)
-
-        assert np.isclose(plotter.grid_dt, 1.0)
-        assert np.isclose(plotter.forecast_days, 15.0)
-
-        assert plotter.photometry_plotted is False
-        assert plotter.cutouts_added is False
-        assert plotter.axes_formatted is False
-        assert plotter.comments_added is False
-        assert plotter.models_plotted is False
-        assert plotter.samples_plotted is False
+        # Assert
+        assert not plotter.photometry_plotted  # inherited
+        assert not plotter.cutouts_added  # inherited
+        assert not plotter.axes_formatted  # inherited
+        assert not plotter.comments_added  # inherited
+        assert not plotter.target_has_models
+        assert not plotter.models_plotted
+        assert not plotter.samples_plotted
 
 
-class Test__Plotter:
+class Test__PlotModel:
+    def test__plot_model(
+        self, target_with_models: Target, lc_plotter: SncosmoLightcurvePlotter
+    ):
+        # Act
+        lc_plotter.plot_sncosmo_models(target_with_models)
 
-    def test__plotter_normal(self, mock_target_model_samples, tmp_path):
-        t_ref = Time(60045, format="mjd")
+        # Assert
+        assert not lc_plotter.photometry_plotted
+        assert lc_plotter.models_plotted
+        assert not lc_plotter.samples_plotted
 
-        plotter = SncosmoLightcurvePlotter.plot(
-            mock_target_model_samples, t_ref=t_ref, grid_dt=1.0
+    def test__no_model_no_fail(
+        self, target_to_plot: Target, lc_plotter: SncosmoLightcurvePlotter
+    ):
+        # Arrange
+        assert set(target_to_plot.models) == set()
+
+        # Act
+        lc_plotter.plot_sncosmo_models(target_to_plot)
+
+        # Assert
+        assert not lc_plotter.photometry_plotted
+        assert not lc_plotter.models_plotted
+        assert not lc_plotter.samples_plotted
+
+    def test__no_lc_no_fail(
+        self, target_with_models: Target, lc_plotter: SncosmoLightcurvePlotter
+    ):
+        # Arrange
+        target_with_models.compiled_lightcurve = None
+
+        # Assert
+        lc_plotter.plot_sncosmo_models(target_with_models)
+
+        # Assert
+        assert not lc_plotter.models_plotted
+
+
+class Test__PlotWithSamples:
+    def test__plot_with_samples(
+        self, target_with_samples: Target, lc_plotter: SncosmoLightcurvePlotter
+    ):
+        # Act
+        lc_plotter.plot_sncosmo_models(target_with_samples)
+
+        # Assert
+        assert lc_plotter.models_plotted
+        assert lc_plotter.samples_plotted
+
+
+class Test__PlotMethod:
+    def test__plot_method(self, target_with_samples: Target, t_plot: Time):
+        # Act
+        plotter = SncosmoLightcurvePlotter.plot(target_with_samples, t_ref=t_plot)
+
+        # Assert
+        assert plotter.photometry_plotted
+        assert plotter.cutouts_added
+        assert plotter.axes_formatted
+        assert plotter.comments_added
+        assert plotter.models_plotted
+        assert plotter.samples_plotted
+
+
+class Test__PlotFunc:
+
+    def test__return_plotter(self, target_with_samples: Target, t_plot: Time):
+        # Act
+        plotter = plot_sncosmo_lightcurve(
+            target_with_samples, t_ref=t_plot, return_plotter=True
         )
 
-        assert plotter.photometry_plotted is True
-        # assert plotter.cutouts_added is False
-        assert plotter.axes_formatted is True
-        assert plotter.comments_added is True
-        assert plotter.models_plotted is True
-        assert plotter.samples_plotted is True
+        # Assert
+        assert isinstance(plotter, SncosmoLightcurvePlotter)
+        assert plotter.photometry_plotted
+        assert plotter.cutouts_added
+        assert plotter.axes_formatted
+        assert plotter.comments_added
+        assert plotter.models_plotted
+        assert plotter.samples_plotted
 
-        fig_path = tmp_path / "target_with_samples.png"
-        plotter.fig.savefig(fig_path)
+    def test__figure(self, target_with_samples: Target, t_plot: Time):
+        # Act
+        result = plot_sncosmo_lightcurve(target_with_samples, t_ref=t_plot)
 
-    def test__plotter_no_samples(self, mock_target_model, tmp_path):
-        t_ref = Time(60045.0, format="mjd")
-
-        plotter = SncosmoLightcurvePlotter(t_ref=t_ref, grid_dt=1.0)
-
-        plotter.plot_sncosmo_models(mock_target_model)
-
-        assert plotter.photometry_plotted is False
-        assert plotter.cutouts_added is False
-        assert plotter.axes_formatted is False
-        assert plotter.comments_added is False
-        assert plotter.models_plotted is True
-        assert plotter.samples_plotted is False
-
-        fig_path = tmp_path / "target_model_no_samples_only.png"
-        plotter.fig.savefig(fig_path)
-
-    def test__plotter_with_samples(self, mock_target_model_samples, tmp_path):
-        t_ref = Time(60045, format="mjd")
-
-        plotter = SncosmoLightcurvePlotter(t_ref=t_ref, grid_dt=1.0)
-
-        plotter.plot_sncosmo_models(mock_target_model_samples)
-
-        assert plotter.photometry_plotted is False
-        assert plotter.cutouts_added is False
-        assert plotter.axes_formatted is False
-        assert plotter.comments_added is False
-        assert plotter.models_plotted is True
-        assert plotter.samples_plotted is True
-
-        fig_path = tmp_path / "target_model_with_samples_only.png"
-        plotter.fig.savefig(fig_path)
+        # Assert
+        assert isinstance(result, plt.Figure)

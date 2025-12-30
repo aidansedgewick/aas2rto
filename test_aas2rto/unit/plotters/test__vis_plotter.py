@@ -1,176 +1,185 @@
+import copy
 import pytest
 
-import numpy as np
+from astroplan import Observer
 
-import pandas as pd
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+from astropy.time import Time
 
 import matplotlib.pyplot as plt
 
-from astropy.coordinates import AltAz, EarthLocation, SkyCoord
-from astropy.table import Table, vstack
-from astropy.time import Time
-
-from astroplan import FixedTarget, Observer
-
-from aas2rto.exc import (
-    MissingDateError,
-    SettingLightcurveDirectlyWarning,
-    UnknownObservatoryWarning,
-)
-from aas2rto.obs_info import ObservatoryInfo
-from aas2rto.plotters.visibility_plotter import (
-    VisibilityPlotter,
-    plot_visibility,
-)
+from aas2rto.observatory.ephem_info import EphemInfo
+from aas2rto.plotting.visibility_plotter import VisibilityPlotter, plot_visibility
 from aas2rto.target import Target
-from aas2rto.target_data import TargetData
 
 
 @pytest.fixture
-def test_target():
-    return Target("T101", ra=45.0, dec=60.0)
+def ephem_target(basic_target: Target, lasilla_ephem: EphemInfo):
+    target_ephem = copy.copy(lasilla_ephem)
+    target_ephem.set_target_altaz(basic_target.coord)
+    basic_target.ephem_info["lasilla"] = target_ephem
+    return basic_target
 
 
 @pytest.fixture
-def test_observer():
-    location = EarthLocation(lat=55.6802, lon=12.5724, height=0.0)
-    return Observer(location, name="ucph")
+def lasilla_ephem(lasilla: Observer, t_fixed: Time):
+    return EphemInfo(lasilla, t_ref=t_fixed, dt=1.5 * u.hour)
 
 
-class Test__VisibilityPlotter:
-    def test__init(self, test_observer):
-        t_ref = Time(60000.0, format="mjd")
+@pytest.fixture
+def vis_plotter(lasilla: Observer, lasilla_ephem: EphemInfo):
+    return VisibilityPlotter(lasilla, ephem_info=lasilla_ephem)
 
-        plotter = VisibilityPlotter(test_observer, t_ref=t_ref)
 
-        assert np.isclose(plotter.t_grid[0].mjd, 60000.0)
-        assert np.isclose(plotter.t_grid[-1].mjd, 60001.0)
+@pytest.fixture(autouse=True)
+def close_all_plots():
+    # Arrange
+    pass  # Code BEFORE yield in fixture is setup. No setup here...
 
-        assert isinstance(plotter.obs_info, ObservatoryInfo)
-        assert isinstance(plotter.obs_info.moon_altaz, SkyCoord)  # apparenlty not AltAz
-        assert isinstance(plotter.obs_info.sun_altaz, SkyCoord)
-        assert hasattr(plotter.obs_info.moon_altaz, "alt")
-        assert hasattr(plotter.obs_info.sun_altaz, "alt")
-        assert plotter.obs_info.target_altaz is None
+    # Act
+    yield  # Test is run here
 
-        assert plotter.altitude_plotted is False
-        assert plotter.sky_plotted is False
-        assert plotter.moon_plotted is False
-        assert plotter.sun_plotted is False
-        assert plotter.axes_formatted is False
+    # Cleanup
+    plt.close("all")  # Code AFTER yield in fixture is cleanup/teardown
 
-    def test__plot_class_method(self, test_target, test_observer, tmp_path):
-        t_ref = Time(60000.0, format="mjd")
-        fig_path = tmp_path / "oc_plot_class_method.pdf"
-        assert not fig_path.exists()
 
-        plotter = VisibilityPlotter.plot(test_observer, test_target, t_ref=t_ref)
+class Test__VisPlotterInit:
+    def test__default_init(self, lasilla: Observer):
+        # Act
+        vp = VisibilityPlotter(lasilla)
 
-        assert np.allclose(plotter.fig.get_size_inches(), [6.0, 8.0])
-        assert isinstance(plotter.alt_ax, plt.Axes)
-        assert isinstance(plotter.sky_ax, plt.Axes)
+        # Assert
+        assert isinstance(vp.observatory, Observer)
+        assert isinstance(vp.ephem_info, EphemInfo)
+        assert isinstance(vp.t_grid, Time)
 
-        assert plotter.altitude_plotted
-        assert plotter.sky_plotted
-        assert plotter.moon_plotted
-        assert plotter.sun_plotted
-        assert plotter.axes_formatted
+        assert isinstance(vp.fig, plt.Figure)
+        assert isinstance(vp.alt_ax, plt.Axes)
+        assert isinstance(vp.sky_ax, plt.Axes)
 
-        plotter.fig.savefig(fig_path)
-        assert fig_path.exists()
+        assert not vp.altitude_plotted
+        assert not vp.sky_plotted
+        assert not vp.moon_plotted
+        assert not vp.sun_plotted
+        assert not vp.axes_formatted
 
-    def test__plot_method_no_alt(self, test_observer, test_target, tmp_path):
-        t_ref = Time(60000.0, format="mjd")
-        fig_path = tmp_path / "oc_plot_no_alt.pdf"
-        assert not fig_path.exists()
+    def test__init_use_existing_ephem(
+        self, lasilla: Observer, lasilla_ephem: EphemInfo
+    ):
+        # Act
+        vp = VisibilityPlotter(lasilla, ephem_info=lasilla_ephem)
 
-        dt = 1.0 / 24.0
-        plotter = VisibilityPlotter.plot(
-            test_observer, test_target, t_ref=t_ref, alt_ax=False, dt=dt
-        )
-        assert len(plotter.t_grid) == 25  # 24, + endpoint.
+        # Assert
+        assert id(vp.ephem_info) == id(lasilla_ephem)
 
-        assert np.allclose(plotter.fig.get_size_inches(), [6.0, 4.0])
-        assert plotter.alt_ax is None
-        assert isinstance(plotter.sky_ax, plt.Axes)
+    def test__init_no_sky(self, lasilla: Observer, lasilla_ephem: EphemInfo):
+        # Act
+        vp = VisibilityPlotter(lasilla, ephem_info=lasilla_ephem, sky_ax=False)
+        assert isinstance(vp.fig, plt.Figure)
+        assert isinstance(vp.alt_ax, plt.Axes)
+        assert vp.sky_ax is None
 
-        assert plotter.altitude_plotted is False
-        assert plotter.sky_plotted
-        assert plotter.moon_plotted
-        assert plotter.sun_plotted
-        assert plotter.axes_formatted
+    def test__init_no_alt(self, lasilla: Observer, lasilla_ephem: EphemInfo):
+        # Act
+        vp = VisibilityPlotter(lasilla, ephem_info=lasilla_ephem, alt_ax=False)
+        assert isinstance(vp.fig, plt.Figure)
+        assert vp.alt_ax is None
+        assert isinstance(vp.sky_ax, plt.Axes)
 
-        plotter.fig.savefig(fig_path)
-        assert fig_path.exists()
 
-    def test__plot_method_no_sky(self, test_observer, test_target, tmp_path):
-        t_ref = Time(60000.0, format="mjd")
-        fig_path = tmp_path / "oc_plot_no_sky.pdf"
-        assert not fig_path.exists()
+class Test__PlotTargetMethod:
+    def test__plot_target(
+        self, lasilla: Observer, lasilla_ephem: EphemInfo, ephem_target: Target
+    ):
+        # Arrange
+        vp = VisibilityPlotter(lasilla, ephem_info=lasilla_ephem)
 
-        dt = 1.0 / 24.0
-        plotter = VisibilityPlotter.plot(
-            test_observer, test_target, t_ref=t_ref, sky_ax=False, dt=dt
-        )
-        assert len(plotter.t_grid) == 25  # 24, + endpoint.
+        # Act
+        vp.plot_target(ephem_target)
 
-        assert np.allclose(plotter.fig.get_size_inches(), [6.0, 4.0])
-        assert isinstance(plotter.alt_ax, plt.Axes)
-        assert plotter.sky_ax is None
+        # Assert
+        assert vp.altitude_plotted
+        assert vp.sky_plotted
+        assert not vp.moon_plotted
+        assert not vp.sun_plotted
+        assert not vp.axes_formatted
 
-        assert plotter.altitude_plotted
-        assert plotter.sky_plotted is False
-        assert plotter.moon_plotted
-        assert plotter.sun_plotted
-        assert plotter.axes_formatted
+    def test__no_sky(
+        self, lasilla: Observer, lasilla_ephem: EphemInfo, ephem_target: Target
+    ):
+        # Arrange
+        vp = VisibilityPlotter(lasilla, ephem_info=lasilla_ephem, sky_ax=False)
 
-        plotter.fig.savefig(fig_path)
-        assert fig_path.exists()
+        # Act
+        vp.plot_target(ephem_target)
 
-    def test__plot_method_no_sun(self, test_observer, test_target, tmp_path):
-        t_ref = Time(60000.0, format="mjd")
-        fig_path = tmp_path / "oc_plot_no_sun.pdf"
-        assert not fig_path.exists()
+        # Assert
+        assert vp.altitude_plotted
+        assert not vp.sky_plotted
+        assert not vp.moon_plotted
+        assert not vp.sun_plotted
+        assert not vp.axes_formatted
 
-        dt = 1.0 / 24.0
-        plotter = VisibilityPlotter.plot(
-            test_observer, test_target, t_ref=t_ref, sun=False, dt=dt
-        )
-        assert len(plotter.t_grid) == 25  # 24, + endpoint.
+    def test__plot_target_no_alt(
+        self, lasilla: Observer, lasilla_ephem: EphemInfo, ephem_target: Target
+    ):
+        # Arrange
+        vp = VisibilityPlotter(lasilla, ephem_info=lasilla_ephem, alt_ax=False)
 
-        assert np.allclose(plotter.fig.get_size_inches(), [6.0, 8.0])
-        assert isinstance(plotter.alt_ax, plt.Axes)
-        assert isinstance(plotter.sky_ax, plt.Axes)
+        # Act
+        vp.plot_target(ephem_target)
 
-        assert plotter.altitude_plotted
-        assert plotter.sky_plotted
-        assert plotter.moon_plotted
-        assert plotter.sun_plotted is False
-        assert plotter.axes_formatted
+        # Assert
+        assert not vp.altitude_plotted
+        assert vp.sky_plotted
+        assert not vp.moon_plotted
+        assert not vp.sun_plotted
+        assert not vp.axes_formatted
 
-        plotter.fig.savefig(fig_path)
-        assert fig_path.exists()
+    def test__target_no_ephem(
+        self, lasilla: Observer, lasilla_ephem: EphemInfo, basic_target: Target
+    ):
+        # Arrange
+        vp = VisibilityPlotter(lasilla, ephem_info=lasilla_ephem)
+        assert set(basic_target.ephem_info.keys()) == set([])
 
-    def test__plot_method_no_moon(self, test_observer, test_target, tmp_path):
-        t_ref = Time(60000.0, format="mjd")
-        fig_path = tmp_path / "oc_plot_no_moon.pdf"
-        assert not fig_path.exists()
+        # Act
+        vp.plot_target(basic_target)
 
-        dt = 1.0 / 24.0
-        plotter = VisibilityPlotter.plot(
-            test_observer, test_target, t_ref=t_ref, moon=False, dt=dt
-        )
-        assert len(plotter.t_grid) == 25  # 24, + endpoint.
+        # Assert
+        assert vp.altitude_plotted
+        assert vp.sky_plotted
 
-        assert np.allclose(plotter.fig.get_size_inches(), [6.0, 8.0])
-        assert isinstance(plotter.alt_ax, plt.Axes)
-        assert isinstance(plotter.sky_ax, plt.Axes)
+    def test__plot_target_sky_coord(self, vis_plotter: VisibilityPlotter):
+        # Arrange
+        sky_coord = SkyCoord(ra=180.0, dec=0.0, unit="deg")
 
-        assert plotter.altitude_plotted
-        assert plotter.sky_plotted
-        assert plotter.moon_plotted is False
-        assert plotter.sun_plotted
-        assert plotter.axes_formatted
+        # Act
+        vis_plotter.plot_target(sky_coord)
 
-        plotter.fig.savefig(fig_path)
-        assert fig_path.exists()
+        # Assert
+        assert vis_plotter.altitude_plotted
+        assert vis_plotter.sky_plotted
+
+    def test__plot_fails_bad_coord(self, vis_plotter: VisibilityPlotter):
+        # Act
+        with pytest.raises(TypeError):
+            vis_plotter.plot_target(None)
+
+
+class Test__PlotClassMethod:
+    def test__all_options(
+        self, lasilla: Observer, lasilla_ephem: EphemInfo, ephem_target: Target
+    ):
+        # Act
+        vp = VisibilityPlotter.plot(lasilla, ephem_target, ephem_info=lasilla_ephem)
+
+        # Assert
+        assert isinstance(vp, VisibilityPlotter)
+
+        assert vp.altitude_plotted
+        assert vp.sky_plotted
+        assert vp.moon_plotted
+        assert vp.sun_plotted
+        assert vp.axes_formatted

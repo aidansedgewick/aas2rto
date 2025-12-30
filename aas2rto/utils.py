@@ -12,7 +12,12 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto.exc import UnexpectedKeysWarning, MissingKeysWarning
+from aas2rto.exc import (
+    MissingKeysError,
+    MissingKeysWarning,
+    UnexpectedKeysError,
+    UnexpectedKeysWarning,
+)
 
 logger = getLogger("aas2rto_utils")
 
@@ -39,6 +44,40 @@ def calc_file_age(filepath, t_ref, allow_missing=True):
     return dt.jd
 
 
+def clear_stale_files(dir: Path, t_ref=None, stale_age=60.0, depth=0, max_depth=3):
+    if depth > max_depth:
+        return
+
+    t_ref = t_ref or Time.now()
+
+    N_dirs = 0
+    N_files = 0
+
+    for filepath in dir.glob("*"):
+        if filepath.is_dir():
+            N_subdirs, N_subfiles = clear_stale_files(
+                filepath,
+                t_ref,
+                stale_age=stale_age,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
+            N_dirs = N_dirs + N_subdirs
+            N_files = N_files + N_subfiles
+            subdir_is_empty = not list(filepath.iterdir())
+            if subdir_is_empty:
+                logger.debug(f"removing empty subdir {filepath.name}")
+                filepath.rmdir()
+                N_dirs = N_dirs + 1
+        else:
+            file_age = calc_file_age(filepath, t_ref=t_ref)
+            if file_age > stale_age:
+                logger.debug(f"removing stale {filepath.name}")
+                filepath.unlink()
+                N_files = N_files + 1
+    return N_dirs, N_files
+
+
 def print_header(s: str) -> None:
     """
     Print a nicely formatted header line.
@@ -48,7 +87,7 @@ def print_header(s: str) -> None:
     s [str]
 
     eg. if your string s="Hello!", print:\n
-    \#\#\# ============ Hello! ============ \#\#\#
+    `### ============ Hello! ============ ###`
     """
     try:
         tsize = shutil.get_terminal_size()
@@ -62,17 +101,28 @@ def print_header(s: str) -> None:
     print(fmt_s)
 
 
-def check_config_keys(provided, expected, name: str = None) -> Tuple[List, List]:
+def check_config_keys(
+    provided, expected, name: str = None, warn=True
+) -> Tuple[List, List]:
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):
         expected = expected.keys()
-    unexpected_keys = check_unexpected_config_keys(provided, expected, name=name)
-    missing_keys = check_missing_config_keys(provided, expected, name=name)
+    unexpected_keys = check_unexpected_config_keys(
+        provided, expected, name=name, warn=warn
+    )
+    missing_keys = check_missing_config_keys(provided, expected, name=name, warn=warn)
     return unexpected_keys, missing_keys
 
 
-def check_unexpected_config_keys(provided, expected, name: str = None) -> list:
+def check_unexpected_config_keys(
+    provided,
+    expected,
+    name: str = None,
+    warn=True,
+    raise_exc=False,
+    exc_class=UnexpectedKeysError,
+) -> list:
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):
@@ -83,12 +133,27 @@ def check_unexpected_config_keys(provided, expected, name: str = None) -> list:
         msg = "\033[33;1munexpected keys\033[0m"
         if name is not None:
             msg = msg + f" in {name}"
-        msg = msg + ":\n    " + " ".join(unexpected_keys)
-        warnings.warn(UnexpectedKeysWarning(msg))
+
+        keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in unexpected_keys)
+        msg = msg + ":\n    " + keys_str
+        if raise_exc:
+            logger.error(msg)
+            raise exc_class(msg)
+        if warn:
+            logger.warning(msg)
+            warnings.warn(UnexpectedKeysWarning(msg))
     return list(unexpected_keys)
 
 
-def check_missing_config_keys(provided, expected, name: str = None) -> list:
+def check_missing_config_keys(
+    provided,
+    expected,
+    name: str = None,
+    warn=True,
+    raise_exc=False,
+    exc_class=MissingKeysError,
+) -> list:
+
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):
@@ -99,42 +164,18 @@ def check_missing_config_keys(provided, expected, name: str = None) -> list:
         msg = "\033[33;1mmissing keys\033[0m"
         if name is not None:
             msg = msg + f" in {name}"
-        msg = msg + ":\n    " + " ".join(missing_keys)
-        warnings.warn(MissingKeysWarning(msg))
+        keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in missing_keys)
+        msg = msg + ":\n    " + keys_str
+        if raise_exc:
+            logger.error(msg)
+            raise exc_class(msg)
+        if warn:
+            logger.warning(msg)
+            warnings.warn(MissingKeysWarning(msg))
     return list(missing_keys)
-
-
-def haversine(loc1: EarthLocation, loc2: EarthLocation, r=6371):
-    dlon = loc2.lon.rad - loc1.lon.rad
-    dlat = loc2.lat.rad - loc1.lat.rad
-    sin_hdlat = np.sin(dlat / 2.0)
-    sin_hdlon = np.sin(dlon / 2.0)
-    print(sin_hdlat, sin_hdlon)
-
-    a = sin_hdlat**2 + np.cos(loc1.lat.rad) * np.cos(loc2.lat.rad) * sin_hdlon**2
-
-    c = 2.0 * np.arcsin(np.sqrt(a))
-    return r * c
 
 
 def get_observatory_name(observatory: Union[Observer, None, str]):
     if isinstance(observatory, str):
         return observatory
-    if observatory is None:
-        return "no_observatory"
     return observatory.name
-
-
-def init_sfd_dustmaps():
-    try:
-        import dustmaps
-        from dustmaps import sfd
-    except ModuleNotFoundError as e:
-        msg = (
-            "`dusmaps` not imported properly. try:"
-            "\n    \033[33;1mpython3 -m pip install dustmaps\033[0m"
-        )
-        raise ModuleNotFoundError(msg)
-
-    logger.info("calling dustmaps.sfd.fetch()")
-    sfd.fetch()
