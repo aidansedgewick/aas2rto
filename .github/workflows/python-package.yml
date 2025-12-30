@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: [3.8, 3.9]
+        python-version: [3.9, 3.10, 3.12]
 
     steps:
     - uses: actions/checkout@v2
@@ -33,6 +33,7 @@ jobs:
     - name: Install package
       run: |
         python3 setup.py install
+        python3 scripts/init_sfd_maps.py
         # python3 -m pip install -e .
     #- name: Lint with flake8
     #  run: |
