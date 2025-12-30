@@ -16,7 +16,7 @@ dustmaps
 dust_extinction
 
 # messengers
-python-telegram-bot==13.12
+python-telegram-bot
 slack_sdk
 
 # brokers
@@ -25,3 +25,5 @@ fastavro
 lasair
 alerce
 
+# web-tools
+jinja2
