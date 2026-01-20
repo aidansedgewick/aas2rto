@@ -109,7 +109,11 @@ class BaseQueryManager(abc.ABC):
         for dir_name, path in self.paths_lookup.items():
             path.mkdir(exist_ok=True)
 
-    def load_single_lightcurve(self, target_id: str, t_ref: Time = None):
+    def load_single_lightcurve(
+        self, target_id: str, t_ref: Time = None
+    ) -> pd.DataFrame | Table:
+        # NOT an @abc.abstractmethod, as some QMs that do not have LCs will
+        # not implement (eg. TNS)
         logger.error(
             f"{self.name}: to call load_target_lightcurves, must implement load_single_lightcurve"
         )

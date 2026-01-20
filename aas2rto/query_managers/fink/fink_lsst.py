@@ -7,18 +7,18 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from aas2rto.exc import MissingCoordinatesError
-from aas2rto.query_managers.fink.fink_base import FinkBaseQueryManager
-from aas2rto.query_managers.fink.fink_query import FinkLSSTQuery
+from aas2rto.query_managers.fink.fink_base import BaseFinkQueryManager
+from aas2rto.query_managers.fink.fink_portal_client import FinkLSSTPortalClient
 from aas2rto.target import Target
 
 
 logger = getLogger(__name__.split(".")[-1])
 
 
-class FinkLSSTQueryManager(FinkBaseQueryManager):
+class FinkLSSTQueryManager(BaseFinkQueryManager):
     name = "fink_lsst"
     id_resolving_order = ("lsst", "fink_lsst", "tns")
-    fink_query = FinkLSSTQuery
+    portal_client_class = FinkLSSTPortalClient
     target_id_key = "diaObjectId"
     alert_id_key = "diaSourceId"
 

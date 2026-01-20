@@ -11,7 +11,7 @@ import pandas as pd
 from astropy import units as u
 from astropy.time import Time
 
-from aas2rto.query_managers.fink.fink_base import FinkAlert, FinkBaseQueryManager
+from aas2rto.query_managers.fink.fink_base import FinkAlert, BaseFinkQueryManager
 from aas2rto.query_managers.fink.fink_ztf import (
     FinkZTFQueryManager,
     process_ztf_alert,
@@ -363,5 +363,5 @@ class Test__FinkZTFQMInit:
         qm = FinkZTFQueryManager({}, tlookup, parent_path=tmp_path)
 
         # Assert
-        assert isinstance(qm, FinkBaseQueryManager)
+        assert isinstance(qm, BaseFinkQueryManager)
         assert hasattr(qm, "config")  # OK this is now just testing subclassing...

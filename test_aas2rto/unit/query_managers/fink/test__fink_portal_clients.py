@@ -7,23 +7,23 @@ from astropy import units as u
 from astropy.table import Table
 from astropy.time import Time
 
-from aas2rto.query_managers.fink.fink_query import (
-    FinkBaseQuery,
-    FinkLSSTQuery,
-    FinkZTFQuery,
-    FinkQueryError,
+from aas2rto.query_managers.fink.fink_portal_client import (
+    BaseFinkPortalClient,
+    FinkZTFPortalClient,
+    FinkLSSTPortalClient,
+    FinkPortalClientError,
 )
 
 ##===== Some helper functions here =====##
 
 
-class FinkCoolQuery(FinkBaseQuery):
+class FinkCoolPortalClient(BaseFinkPortalClient):
     api_url = "https://fink_cool.org/api/v1"
     imtypes = ("Difference", "Template")
     id_key = "target_id"
 
 
-class FinkBadQuery(FinkBaseQuery):
+class FinkBadQuery(FinkPortalClientError):
     pass
 
 
@@ -77,11 +77,11 @@ def patch_requests(monkeypatch: pytest.MonkeyPatch):
 ###===== Test helper functions here =====###
 
 
-class Test__ExampleFinkQuery:
+class Test__ExamplePortalClient:
 
     def test__post_is_patched(self):
         # Act
-        res = FinkCoolQuery.do_post("some_service", process=False)
+        res = FinkCoolPortalClient().do_post("some_service", process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -90,12 +90,14 @@ class Test__ExampleFinkQuery:
 
     def test__post_bad_status_raises(self):
         # Act
-        with pytest.raises(FinkQueryError):
-            res = FinkCoolQuery.do_post("service", status_code=404, content="some_msg")
+        with pytest.raises(FinkPortalClientError):
+            res = FinkCoolPortalClient().do_post(
+                "service", status_code=404, content="some_msg"
+            )
 
     def test__get_is_patched(self):
         # Act
-        res = FinkCoolQuery.do_get("some_service", process=False)
+        res = FinkCoolPortalClient().do_get("some_service", process=False)
 
         # Assert
         assert isinstance(res, MockGetResponse)
@@ -104,21 +106,23 @@ class Test__ExampleFinkQuery:
 
     def test__get_bad_status_code_raises(self):
         # Act
-        with pytest.raises(FinkQueryError):
-            res = FinkCoolQuery.do_get("service", status_code=404, content="some_msg")
+        with pytest.raises(FinkPortalClientError):
+            res = FinkCoolPortalClient().do_get(
+                "service", status_code=404, content="some_msg"
+            )
 
 
 ##====== Actual tests start here! =====###
 
 
-class Test__QueriesInit:
+class Test__PortalClientsInit:
     def test__ztf_query_init(self):
         # Act
-        q = FinkZTFQuery()
+        q = FinkZTFPortalClient()
 
     def test__lsst_query_init(self):
         # Act
-        q = FinkLSSTQuery()
+        q = FinkLSSTPortalClient()
 
 
 class Test__HelperFunctions:
@@ -127,7 +131,7 @@ class Test__HelperFunctions:
         data = {"p:key01": 1.0, "key02": 1.0, "p:q:key03": 1.0}
 
         # Act
-        FinkCoolQuery.fix_dict_keys_inplace(data)
+        FinkCoolPortalClient().fix_dict_keys_inplace(data)
 
         # Assert
         assert set(data.keys()) == set("key01 key02 key03".split())
@@ -137,7 +141,7 @@ class Test__HelperFunctions:
         kwargs = {"key01": 1.0, "key02_": 1.0, "key03__": 1.0}
 
         # Act
-        fixed = FinkCoolQuery.process_kwargs(**kwargs)
+        fixed = FinkCoolPortalClient().process_kwargs(**kwargs)
 
         # Assert
         assert set(fixed.keys()) == set("key01 key02 key03".split())
@@ -147,7 +151,9 @@ class Test__HelperFunctions:
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
 
         # Act
-        processed_data = FinkCoolQuery.process_data(data, return_type="records")
+        processed_data = FinkCoolPortalClient().process_data(
+            data, return_type="records"
+        )
 
         # Assert
         assert isinstance(processed_data, list)
@@ -160,7 +166,7 @@ class Test__HelperFunctions:
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
 
         # Act
-        df = FinkCoolQuery.process_data(data, return_type="pandas")
+        df = FinkCoolPortalClient().process_data(data, return_type="pandas")
 
         # Assert
         assert isinstance(df, pd.DataFrame)
@@ -171,7 +177,7 @@ class Test__HelperFunctions:
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
 
         # Act
-        table = FinkCoolQuery.process_data(data, return_type="astropy")
+        table = FinkCoolPortalClient().process_data(data, return_type="astropy")
 
         # Assert
         assert isinstance(table, Table)
@@ -183,7 +189,7 @@ class Test__HelperFunctions:
         res = MockPostResponse(json=dict(content=data))  # json.dumps INSIDE __init__
 
         # Act
-        processed = FinkCoolQuery.process_response(res, return_type="records")
+        processed = FinkCoolPortalClient().process_response(res, return_type="records")
 
         # Assert
         assert isinstance(processed, list)
@@ -197,13 +203,13 @@ class Test__HelperFunctions:
 
         # Act
         with pytest.raises(ValueError):
-            processed = FinkCoolQuery.process_response(res, return_type="blah")
+            processed = FinkCoolPortalClient().process_response(res, return_type="blah")
 
 
 class Test__BasicServices:
     def test__objects(self):
         # Act
-        res = FinkCoolQuery.objects(process=False)
+        res = FinkCoolPortalClient().objects(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -211,7 +217,7 @@ class Test__BasicServices:
 
     def test__cutouts(self):
         # Act
-        res = FinkCoolQuery.cutouts(kind="Difference", process=False)
+        res = FinkCoolPortalClient().cutouts(kind="Difference", process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -220,16 +226,16 @@ class Test__BasicServices:
     def test__cutouts_bad_kind(self):
         # Act
         with pytest.raises(ValueError):
-            res = FinkCoolQuery.cutouts(kind="Unknown", process=False)
+            res = FinkCoolPortalClient().cutouts(kind="Unknown", process=False)
 
     def test__cutouts_missing_kind(self):
         # Act
         with pytest.raises(ValueError):
-            res = FinkCoolQuery.cutouts(process=False)
+            res = FinkCoolPortalClient().cutouts(process=False)
 
     def test__latests(self):
         # Act
-        res = FinkCoolQuery.latests(process=False)
+        res = FinkCoolPortalClient().latests(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -237,7 +243,7 @@ class Test__BasicServices:
 
     def test__classes(self):
         # Act
-        res = FinkCoolQuery.classes(process=False)
+        res = FinkCoolPortalClient().classes(process=False)
 
         # Assert
         assert isinstance(res, MockGetResponse)
@@ -245,7 +251,7 @@ class Test__BasicServices:
 
     def test_explorer(self):
         # Act
-        res = FinkCoolQuery.explorer(process=False)
+        res = FinkCoolPortalClient().explorer(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -253,7 +259,7 @@ class Test__BasicServices:
 
     def test_conesearch(self):
         # Act
-        res = FinkCoolQuery.conesearch(process=False)
+        res = FinkCoolPortalClient().conesearch(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -261,7 +267,7 @@ class Test__BasicServices:
 
     def test_sso(self):
         # Act
-        res = FinkCoolQuery.sso(process=False)
+        res = FinkCoolPortalClient().sso(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -269,7 +275,7 @@ class Test__BasicServices:
 
     def test__ssocand(self):
         # Act
-        res = FinkCoolQuery.ssocand(process=False)
+        res = FinkCoolPortalClient().ssocand(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -277,7 +283,7 @@ class Test__BasicServices:
 
     def test__resolver(self):
         # Act
-        res = FinkCoolQuery.resolver(process=False)
+        res = FinkCoolPortalClient().resolver(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -285,7 +291,7 @@ class Test__BasicServices:
 
     def test__tracklet(self):
         # Act
-        res = FinkCoolQuery.tracklet(process=False)
+        res = FinkCoolPortalClient().tracklet(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -293,7 +299,7 @@ class Test__BasicServices:
 
     def test__schema(self):
         # Act
-        res = FinkCoolQuery.schema(process=False)
+        res = FinkCoolPortalClient().schema(process=False)
 
         # Assert
         assert isinstance(res, MockGetResponse)
@@ -301,7 +307,7 @@ class Test__BasicServices:
 
     def test__skymap(self):
         # Act
-        res = FinkCoolQuery.skymap(process=False)
+        res = FinkCoolPortalClient().skymap(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -309,7 +315,7 @@ class Test__BasicServices:
 
     def test__statistics(self):
         # Act
-        res = FinkCoolQuery.statistics(process=False)
+        res = FinkCoolPortalClient().statistics(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -317,7 +323,7 @@ class Test__BasicServices:
 
     def test__anomaly(self):
         # Act
-        res = FinkCoolQuery.anomaly(process=False)
+        res = FinkCoolPortalClient().anomaly(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -325,7 +331,7 @@ class Test__BasicServices:
 
     def test__ssoft(self):
         # Act
-        res = FinkCoolQuery.ssoft(process=False)
+        res = FinkCoolPortalClient().ssoft(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -338,7 +344,7 @@ class Test__QueryAndCollate:
         t_later = t_fixed + 1.0 * u.day
 
         # Act
-        FinkCoolQuery.latests_query_and_collate(
+        FinkCoolPortalClient().latests_query_and_collate(
             t_fixed, t_stop=t_later, n=10, return_type="pandas"
         )
 
@@ -347,7 +353,7 @@ class Test__QueryAndCollate:
         t_later = t_fixed + 1.0 * u.day
 
         # Act
-        FinkCoolQuery.latests_query_and_collate(
+        FinkCoolPortalClient().latests_query_and_collate(
             t_fixed, t_stop=t_later, n=10, return_type="astropy"
         )
 
@@ -356,6 +362,6 @@ class Test__QueryAndCollate:
         t_later = t_fixed + 1.0 * u.day
 
         # Act
-        FinkCoolQuery.latests_query_and_collate(
+        FinkCoolPortalClient().latests_query_and_collate(
             t_fixed, t_stop=t_later, n=10, return_type="astropy"
         )

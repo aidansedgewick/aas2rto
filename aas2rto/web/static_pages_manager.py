@@ -41,27 +41,27 @@ class StaticPagesManager:
         self.outputs_manager = outputs_manager
         self.path_manager = path_manager
 
-        self.prepare_web_directories()  # Do this first.
+        self.web_base_path = self.path_manager.web_path / "static"
+        self.index_path = self.web_base_path / "index.html"
+        self.web_im_path = self.web_base_path / "im"
+        self.web_lists_path = self.web_base_path / "lists"
+        self.web_target_path = self.web_base_path / "target"
 
         self.git_repo_status = None  # Mainly for testing
         self.check_git_config()
         self.prepare_git_repo()
+
+        self.create_web_directories()  # Do this last - allow for possible clone.
 
         self.web_environment = Environment(
             loader=FileSystemLoader(self.path_manager.web_templates_path)
         )
         self.last_git_publish = 0.0
 
-    def prepare_web_directories(self):
-        self.web_base_path = self.path_manager.web_path / "static"
+    def create_web_directories(self):
         self.web_base_path.mkdir(exist_ok=True, parents=True)
-
-        self.index_path = self.web_base_path / "index.html"
-
-        self.web_im_path = self.web_base_path / "im"
         self.web_im_path.mkdir(exist_ok=True, parents=True)
 
-        self.web_lists_path = self.web_base_path / "lists"
         self.web_lists_path.mkdir(exist_ok=True, parents=True)
 
         self.web_target_path = self.web_base_path / "target"
@@ -180,12 +180,16 @@ class StaticPagesManager:
         self.build_obs_ranked_pages(t_ref=t_ref)
         self.build_obs_visible_pages(t_ref=t_ref)
 
+        target_pages_built = 0
         for target_id, target in self.outputs_manager.target_lookup.items():
             target_page_path = self._get_target_page_path(target_id)
 
             if not target_page_path.exists() or target.updated:
                 self.build_webpage_for_target(target, t_ref=t_ref)
                 self.build_redirect_pages_for_target(target)
+                target_pages_built = target_pages_built + 1
+        if target_pages_built > 0:
+            logger.info(f"built target pages for {target_pages_built}")
 
     def build_index_page(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -335,7 +339,7 @@ class StaticPagesManager:
             additional_path_list.append(im_path)
 
         header_tags = dict(header_open="<h2>", header_close="</h2>")
-        link_tags = dict(link_open='<a href="', link_close='">')
+        link_tags = dict(link_open='<a href="http://', link_close='">link</a>')
         target_info_str = target.get_info_string(**header_tags, **link_tags)
 
         target_info_str = target_info_str.replace("\n", "<br>")
@@ -363,8 +367,11 @@ class StaticPagesManager:
             if alt_id == target.target_id:
                 continue  # DON'T rewrite real page data with redirect - endless loop!
             template = self.web_environment.get_template("target_redirect.html")
+            redirect_url = (
+                f"../{self._get_target_page_url(alt_id)}"  # must be rel link...
+            )
             page_data = dict(
-                redirect_url=self._get_target_page_url(alt_id),
+                redirect_url=redirect_url,
                 target_id=target.target_id,
             )
             rendered_page = template.render(page_data)

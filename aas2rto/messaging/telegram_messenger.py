@@ -253,6 +253,10 @@ class TelegramMessenger:
                     user, texts=texts, img_paths=img_paths_to_send, caption=caption
                 )
                 sent_messages.extend(sent)
+            except telegram.error.TimedOut as e:
+                msg = f"TimedOut error for user {user} ({user_label})"
+                warnings.warn(UserWarning(msg))
+                exceptions.append(msg)
             except Exception as e:
                 tr = traceback.format_exc()
                 msg = f"for user {user} ({user_label}):\n{tr}\n\n{e}\n\n"

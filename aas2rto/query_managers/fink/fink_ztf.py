@@ -18,20 +18,21 @@ from astropy.io import fits
 from astropy.time import Time
 
 from aas2rto.exc import MissingCoordinatesError
-from aas2rto.query_managers.fink.fink_base import FinkBaseQueryManager, FinkAlert
-from aas2rto.query_managers.fink.fink_query import FinkZTFQuery
+from aas2rto.query_managers.fink.fink_base import BaseFinkQueryManager, FinkAlert
+from aas2rto.query_managers.fink.fink_portal_client import FinkZTFPortalClient
 from aas2rto.target import Target
 from aas2rto.utils import check_missing_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
 
-class FinkZTFQueryManager(FinkBaseQueryManager):
+class FinkZTFQueryManager(BaseFinkQueryManager):
     name = "fink_ztf"
     id_resolving_order = ("ztf", "ztf_fink", "tns")
-    fink_query = FinkZTFQuery
     target_id_key = "objectId"
     alert_id_key = "candid"
+    portal_client_class = FinkZTFPortalClient
+    # DO NOT init portal_client here: happens in QM init, in case credentials needed...
 
     def process_single_alert(self, alert_data: FinkAlert, t_ref: Time = None) -> dict:
         topic, data, key = alert_data
@@ -210,7 +211,7 @@ def process_ztf_alert(
 
     if cutouts_filepath is not None:
         cutouts = {}
-        for imtype in FinkZTFQuery.imtypes:
+        for imtype in FinkZTFPortalClient.imtypes:
             cutout_data = data.get("cutout" + imtype, {}).get("stampData", None)
             if cutout_data is None:
                 continue

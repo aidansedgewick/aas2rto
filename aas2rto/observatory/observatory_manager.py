@@ -55,7 +55,6 @@ class ObservatoryManager:
         if not dt_unit.is_equivalent(u.s):
             raise u.UnitTypeError(f"{dt_unit} should be equiv. to 'u.s'")
         self.config["dt"] = self.config["dt"] * dt_unit
-        print(self.config["dt"])
 
     def init_observing_sites(self):
         self.sites: dict[str, Observer] = {}

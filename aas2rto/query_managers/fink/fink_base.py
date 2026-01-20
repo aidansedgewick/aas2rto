@@ -22,7 +22,7 @@ from astropy.time import Time
 
 from aas2rto.exc import MissingCoordinatesError, MissingTargetIdError
 from aas2rto.query_managers.base import BaseQueryManager
-from aas2rto.query_managers.fink.fink_query import FinkBaseQuery
+from aas2rto.query_managers.fink.fink_portal_client import BaseFinkPortalClient
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.utils import (
@@ -85,12 +85,28 @@ def updates_from_classifier_queries(
 
 
 # re-inherit from abc.ABC to indicate that FinkBaseQM should be subclassed...
-class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
+class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
     name: str = "fink"
-    id_resolving_order: tuple[str] = None
-    target_id_key: str = None
-    alert_id_key: str = None
-    fink_query: FinkBaseQuery = None
+
+    @property
+    @abc.abstractmethod
+    def id_resolving_order(self) -> tuple[str]:
+        pass
+
+    @property
+    @abc.abstractmethod
+    def target_id_key(self) -> str:
+        pass
+
+    @property
+    @abc.abstractmethod
+    def alert_id_key(self) -> str:
+        pass
+
+    @property
+    @abc.abstractmethod
+    def portal_client_class(self) -> type[BaseFinkPortalClient]:
+        pass
 
     DEFAULT_TASKS = ("alerts", "queries", "lightcurves", "cutouts", "stale_files")
     REQUIRED_KAFKA_PARAMS = ("username", "group.id", "bootstrap.servers", "topics")
@@ -103,6 +119,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
         "lightcurve_chunk_size": 25,
         "lightcurve_columns": None,
         "kafka": None,
+        # "portal_credentials": None, # Placeholder - currently no creds for portal...
         "n_alerts": 10,
         "alert_timeout": 10.0,
         "fink_classes": None,
@@ -142,6 +159,15 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
 
         # Set the TargetLookup
         self.target_lookup = target_lookup
+
+        # Initialize the portal client - maybe credentials needed in future...
+        if self.portal_client_class is not None:
+            self.portal_client: BaseFinkPortalClient = self.portal_client_class()
+            # Portal client is init here, NOT in subclass def (see eg. FinkZTFQuMgr)
+        else:
+            msg = f"portal_client_class is None for {self.name}. query_lcs will probably fail..."
+            logger.warning()
+            self.portal_client = None
 
         # Process the paths
         self.process_paths(
@@ -415,7 +441,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
 
             ##== Perform the query
             t_start = t_ref - lookback * u.day
-            new_results = self.fink_query.latests_query_and_collate(
+            new_results = self.portal_client.latests_query_and_collate(
                 t_start=t_start, class_=fink_class, return_type="pandas"
             )  # trailing "_"  from 'class_' is stripped...
             if len(new_results) == 0:
@@ -558,7 +584,7 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
 
             t1 = time.perf_counter()
             try:
-                result = self.fink_query.objects(return_type="pandas", **payload)
+                result = self.portal_client.objects(return_type="pandas", **payload)
                 chunk_results.append(result)
             except Exception as e:
                 msg = f"LC query chunk {ii+1} failed:\n    {type(e).__name__}: {e}"
@@ -613,6 +639,21 @@ class FinkBaseQueryManager(BaseQueryManager, abc.ABC):
                 targets_modified.append(target_id)
         logger.info(f"loaded missing alerts for {len(targets_modified)} targets")
         return targets_modified
+
+    def query_cutouts(self):
+        for target_id, target in self.target_lookup.items():
+            fink_id = self.get_fink_id_from_target(target)
+            if fink_id is None:
+                continue
+            fink_data = target.target_data.get(self.name, None)
+            if fink_data is None:
+                continue
+            if fink_data.detections is None:
+                continue
+            latest_alert_id = fink_data.detections[self.alert_id_key].iloc[-1]
+            latest_cutout_filepath = self.get_alert_cutout_filepath(self)
+            if not latest_cutout_filepath.exists():
+                self.fink_query
 
     def load_cutouts(self):
         loaded_cutouts = []

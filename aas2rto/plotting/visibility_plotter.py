@@ -254,6 +254,7 @@ class VisibilityPlotter:
                 loc="lower center",
                 bbox_to_anchor=(0.5, 1.01),
                 handles=self.legend_handles,
+                ncols=3,
             )
             self.alt_ax.add_artist(legend)
         if self.sky_ax is not None:
