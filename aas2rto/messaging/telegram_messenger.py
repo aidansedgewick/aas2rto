@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import time
 
@@ -7,7 +9,6 @@ import warnings
 import yaml
 from logging import getLogger
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 from astropy.time import Time
 
@@ -135,10 +136,10 @@ class TelegramMessenger:
     def send_to_user(
         self,
         user,
-        texts: List[str] = None,
-        img_paths: List[Path] = None,
+        texts: list[str] = None,
+        img_paths: list[Path] = None,
         caption=None,
-    ) -> List:
+    ) -> list:
         texts = texts or []
         if isinstance(texts, str):
             texts = [texts]
@@ -213,10 +214,10 @@ class TelegramMessenger:
     def message_users(
         self,
         users=None,
-        texts: List[str] = None,
-        img_paths: List[Path] = None,
+        texts: list[str] = None,
+        img_paths: list[Path] = None,
         caption=None,
-    ) -> Tuple[List, List]:
+    ) -> tuple[list, list]:
         if isinstance(users, int):
             users = [users]
 

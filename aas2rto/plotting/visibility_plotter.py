@@ -4,7 +4,6 @@ import traceback
 import warnings
 from logging import getLogger
 from pathlib import Path
-from typing import Callable, Dict, List, Union
 
 import numpy as np
 

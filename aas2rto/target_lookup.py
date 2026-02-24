@@ -3,7 +3,6 @@ import yaml
 from collections import defaultdict
 from logging import getLogger
 from pathlib import Path
-from typing import Dict, List
 
 import numpy as np
 
@@ -34,8 +33,8 @@ class TargetLookup:
 
     def __init__(self):
 
-        self.lookup: Dict[str, Target] = {}
-        self.id_mapping: Dict[str, str] = {}
+        self.lookup: dict[str, Target] = {}
+        self.id_mapping: dict[str, str] = {}
 
     def __len__(self):
         return len(self.lookup)
@@ -141,7 +140,7 @@ class TargetLookup:
                 raise ValueError(msg)
         self[target.target_id] = target
 
-    def add_target_list(self, target_list: List[Target]):
+    def add_target_list(self, target_list: list[Target]):
         for target in target_list:
             self.add_target(target)
 
@@ -254,7 +253,7 @@ class TargetLookup:
         self,
         target_id_list=None,
         t_ref=None,
-    ) -> List[Target]:
+    ) -> list[Target]:
         t_ref = t_ref or Time.now()
 
         if target_id_list is None:
@@ -345,7 +344,7 @@ def group_nearby_coordinates(coords: SkyCoord, seplimit=5 * u.arcsec) -> list:
 
     Returns
     -------
-    components : `List[List[int]]`
+    components : `list[list[int]]`
         list of lists: each sublist contains the indexes into `coords` which make
         up one connected group.
         Every index is included exactly once (ie. there are some sublists which
@@ -392,7 +391,7 @@ def dfs_util(connected: list, vert: int, edges: dict, visited: dict, depth=0):
     return connected
 
 
-def merge_targets(targets: List[Target], sort=False, warn_overwrite=True):
+def merge_targets(targets: list[Target], sort=False, warn_overwrite=True):
     """
     Merge all target data into a single target.
     Choose the first target (ie, with coords, target_id, etc), and

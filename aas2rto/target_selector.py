@@ -10,7 +10,7 @@ import yaml
 from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Callable, Dict, List, Set
+from typing import Callable
 
 import numpy as np
 
@@ -305,7 +305,7 @@ class TargetSelector:
         modeling_function: Callable = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
-        extra_plotting_functions: List[Callable] = None,
+        extra_plotting_functions: list[Callable] = None,
         skip_tasks: list = None,
         iteration: int = -1,
         t_ref: Time = None,
@@ -527,10 +527,10 @@ class TargetSelector:
         self,
         scoring_function: Callable = None,
         observatory_scoring_function: Callable = None,
-        modeling_function: List[Callable] = None,
+        modeling_function: list[Callable] = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
-        extra_plotting_functions: List[Callable] = None,
+        extra_plotting_functions: list[Callable] = None,
         recovery_file=False,
         skip_tasks=None,
         iterations=None,
@@ -554,7 +554,7 @@ class TargetSelector:
             It should have the 'standard' signature defined above.
             It should return:\n
                 `score : float`
-                `comments : List of str, optional`
+                `comments : list of str, optional`
 
         observatory_scoring_function : Callable, optional
             The scoring function to evaluate at observatories.

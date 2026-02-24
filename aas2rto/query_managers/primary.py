@@ -2,7 +2,6 @@ import time
 import warnings
 from logging import getLogger
 from pathlib import Path
-from typing import Dict
 
 from astropy.time import Time
 
@@ -40,7 +39,7 @@ class PrimaryQueryManager:
 
     def __init__(
         self,
-        config: Dict,
+        config: dict,
         target_lookup: TargetLookup,
         path_manager: PathManager,
     ):
@@ -68,7 +67,7 @@ class PrimaryQueryManager:
         self.query_managers = self._initialise_query_manager_lookup()
         self.initialize_query_managers()
 
-    def _initialise_query_manager_lookup(self) -> Dict[str, BaseQueryManager]:
+    def _initialise_query_manager_lookup(self) -> dict[str, BaseQueryManager]:
         """Only for type hinting..."""
         return {}
 

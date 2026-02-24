@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import copy
 import time
 import traceback
 import warnings
 from logging import getLogger
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable
 
 import numpy as np
 
@@ -44,14 +46,14 @@ class Target:
         the main name your target should be called by.
     coord: astropy.coordinates.SkyCoord
         the (latest) coordinate of the target.
-    target_data: Dict[str, aas2rto.target_data.TargetData]
+    target_data: dict[str, aas2rto.target_data.TargetData]
         A lookup of data from various sources.
         An entry for `fink` data, one for `atlas` data, one for `tns` data, etc...
     source:
         which data created this target? will be added into alt_ids. eg.
         >>> t = Target("T101", 30.0, 30.0, source="src01")
         >>> "src01" in t.alt_ids # True
-    alt_ids: Dict [str, str]
+    alt_ids: dict [str, str]
         Lookup to keep track of other names for this target.
         eg. ZTF24abcdef might also be called SN 24abc.
         So alt_ids might be: `{'tns': 'SN 24abc'}`
@@ -72,9 +74,9 @@ class Target:
         self,
         target_id: str,
         coord: SkyCoord,
-        target_data: Dict[str, TargetData] = None,
+        target_data: dict[str, TargetData] = None,
         source: str = None,
-        alt_ids: Dict[str, str] = None,
+        alt_ids: dict[str, str] = None,
         base_score: float = None,
         target_of_opportunity: bool = False,
         t_ref: Time = None,
@@ -304,7 +306,7 @@ class Target:
         return result[0]  # Otherwise just return the score.
 
     def get_latest_obs_score(
-        self, observatory: Union[Observer, str], return_time: bool = False
+        self, observatory: Observer | str, return_time: bool = False
     ):
         """
         Provide a string (observatory name) and return.
@@ -343,7 +345,7 @@ class Target:
         return result[0]  # Otherwise just return the score.
 
     def get_latest_obs_rank(
-        self, observatory: Union[Observer, str], return_time: bool = False
+        self, observatory: Observer | str, return_time: bool = False
     ):
         """
         Provide a string (observatory name) and return.

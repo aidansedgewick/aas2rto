@@ -1,8 +1,9 @@
+from __future__ import annotations  # Must come first
+
 import abc
 import time
 import warnings
 from logging import getLogger
-from typing import Callable, Dict, List
 
 from pathlib import Path
 
@@ -114,7 +115,7 @@ class BaseQueryManager(abc.ABC):
         if isinstance(extra_directories, str):
             extra_directories = [extra_directories]
 
-        self.paths_lookup: Dict[str, Path] = {}
+        self.paths_lookup: dict[str, Path] = {}
         for dir_name in list(directories) + list(extra_directories):
             path = self.data_path / dir_name
             self.paths_lookup[dir_name] = path
@@ -243,7 +244,7 @@ class LightcurveQueryManager(BaseQueryManager, abc.ABC):
 
     def load_target_lightcurves(
         self,
-        id_list: List[str] = None,
+        id_list: list[str] = None,
         only_flag_updated: bool = True,
         t_ref: Time = None,
     ):

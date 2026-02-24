@@ -1,6 +1,6 @@
 from logging import getLogger
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable
 
 import numpy as np
 
@@ -23,7 +23,7 @@ def parse_scoring_result(result, func_name=""):
     err_msg = (
         f"scoring function {func_name} should return\n"
         f"    score : float, or\n"
-        f"    (score, comment_list) : Tuple[float, List[str]]"
+        f"    (score, comment_list) : tuple[float, list[str]]"
     )
     missing_comments = [f"function {func_name}: no score_comments provided"]
 
@@ -238,7 +238,7 @@ class ScoringManager:
 
     def new_target_initial_check(
         self, scoring_function: Callable, t_ref: Time = None
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Evaluate the score for targets which have not been scored before (ie, new targets)
         with fixed observatory = `None`.

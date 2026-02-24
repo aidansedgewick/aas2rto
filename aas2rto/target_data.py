@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import warnings
 from logging import getLogger
-from typing import Union, Dict
 
 import numpy as np
 
@@ -117,7 +116,7 @@ class TargetData:
 
     def add_lightcurve(
         self,
-        lightcurve: Union[pd.DataFrame, Table],
+        lightcurve: pd.DataFrame | Table,
         tag_col: str = None,
         date_col: str = None,
         include_badqual: bool = False,

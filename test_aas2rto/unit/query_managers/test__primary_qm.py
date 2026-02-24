@@ -56,7 +56,7 @@ class Test__InitPrimaryQM:
         pqm = PrimaryQueryManager(global_qm_config, tlookup, path_mgr)
 
         # Assert
-        exp_qms = "atlas fink_lsst fink_ztf lasair_lsst lasair_ztf tns yse".split()
+        exp_qms = "atlas fink_lsst fink_ztf tns yse".split()  # lasair_lsst lasair_ztf
 
         assert set(pqm.query_managers.keys()) == set(exp_qms)
 

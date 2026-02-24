@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import shutil
 import time
 import warnings
 from logging import getLogger
-from typing import List, Tuple, Union
 
 from pathlib import Path
 
@@ -138,7 +139,7 @@ def check_safe_to_query(
 
 def check_config_keys(
     provided, expected, name: str = None, warn=True
-) -> Tuple[List, List]:
+) -> tuple[list, list]:
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):
@@ -210,7 +211,7 @@ def check_missing_config_keys(
     return list(missing_keys)
 
 
-def get_observatory_name(observatory: Union[Observer, None, str]):
+def get_observatory_name(observatory: Observer | str | None):
     if isinstance(observatory, str):
         return observatory
     return observatory.name

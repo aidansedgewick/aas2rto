@@ -2,7 +2,6 @@ import shutil
 import warnings
 from logging import getLogger
 from pathlib import Path
-from typing import Dict, List
 
 import numpy as np
 
@@ -96,7 +95,7 @@ class OutputsManager:
 
     def write_target_comments(
         self,
-        target_list: List[Target] = None,
+        target_list: list[Target] = None,
         outdir: Path = None,
         t_ref: Time = None,
     ) -> None:

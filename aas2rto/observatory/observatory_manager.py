@@ -2,7 +2,6 @@ import copy
 import warnings
 from logging import getLogger
 from pathlib import Path
-from typing import Dict
 
 from astropy import units as u
 from astropy.coordinates import EarthLocation
