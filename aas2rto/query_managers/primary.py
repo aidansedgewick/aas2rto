@@ -14,7 +14,8 @@ from aas2rto.target_lookup import TargetLookup
 # from aas2rto.query_managers.alerce import AlerceQueryManager
 from aas2rto.query_managers.atlas import AtlasQueryManager
 from aas2rto.query_managers.fink import FinkLSSTQueryManager, FinkZTFQueryManager
-from aas2rto.query_managers.lasair import LasairLSSTQueryManager, LasairZTFQueryManager
+
+# from aas2rto.query_managers.lasair import LasairLSSTQueryManager, LasairZTFQueryManager
 from aas2rto.query_managers.tns import TNSQueryManager
 from aas2rto.query_managers.yse import YSEQueryManager
 
@@ -28,8 +29,8 @@ EXPECTED_QUERY_MANAGERS = {
     "atlas": AtlasQueryManager,
     "fink_lsst": FinkLSSTQueryManager,
     "fink_ztf": FinkZTFQueryManager,
-    "lasair_lsst": LasairLSSTQueryManager,
-    "lasair_ztf": LasairZTFQueryManager,
+    # "lasair_lsst": LasairLSSTQueryManager,
+    # "lasair_ztf": LasairZTFQueryManager,
     "tns": TNSQueryManager,
     "yse": YSEQueryManager,
 }

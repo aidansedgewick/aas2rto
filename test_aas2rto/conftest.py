@@ -768,8 +768,8 @@ def global_qm_config(
     return {
         "fink_lsst": copy.deepcopy(fink_config),
         "fink_ztf": copy.deepcopy(fink_config),
-        "lasair_ztf": copy.deepcopy(lasair_ztf_config),
-        "lasair_lsst": copy.deepcopy(lasair_lsst_config),
+        # "lasair_ztf": copy.deepcopy(lasair_ztf_config),
+        # "lasair_lsst": copy.deepcopy(lasair_lsst_config),
         "atlas": copy.deepcopy(atlas_config),
         "yse": copy.deepcopy(yse_config),
         "tns": copy.deepcopy(tns_config),
