@@ -141,12 +141,31 @@ class OutputsManager:
             )
             self.obs_ranked_lists[obs_name] = ranked_list
 
+    def clear_plots_from_path(self, plots_path: Path, fmt: str = "png"):
+        removed = 0
+        try:
+            print_path = plots_path.relative_to(self.path_manager.project_path)
+        except Exception as e:
+            print_path = plots_path
+
+        logger.info(f"remove all '*.{fmt}' from {print_path}")
+        if plots_path.exists():
+            for plot in plots_path.glob(f"*.{fmt}"):
+                plot.unlink()
+                removed = removed + 1
+        logger.info(f"removed {removed} '{fmt}' plots")
+
     def rank_targets_on_science_score(
         self, plots: bool = False, write_list: bool = True, t_ref: Time = None
     ) -> pd.DataFrame:
         t_ref = t_ref or Time.now()
 
         plots_path = self.path_manager.get_output_plots_path("science_score")
+
+        if plots:
+            self.clear_plots_from_path(plots_path)
+        else:
+            logger.info("not clearing existing plots from outputs (as plots=False)")
 
         minimum_score = self.config["minimum_score"]
         unranked_value = self.config["unranked_value"]
@@ -196,6 +215,11 @@ class OutputsManager:
         obs_name = utils.get_observatory_name(observatory)
         list_name = f"obs_{obs_name}"
         plots_path = self.path_manager.get_output_plots_path(f"obs_{obs_name}")
+
+        if plots:
+            self.clear_plots_from_path(plots_path)
+        else:
+            logger.info("not clearing existing plots from outputs (as plots=False)")
 
         minimum_score = self.config["minimum_score"]
         unranked_value = self.config["unranked_value"]

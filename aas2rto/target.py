@@ -82,14 +82,14 @@ class Target:
         t_ref = t_ref or Time.now()
 
         # Basics
-        self.target_id = target_id
+        self.target_id = str(target_id)
 
         self.update_coordinates(coord)
         self.base_score = base_score or self.default_base_score
         self.compiled_lightcurve = None
 
         # Target data
-        self.target_data = target_data or {}
+        self.target_data: dict[str, TargetData] = target_data or {}
 
         # Observatory data
         self.ephem_info = {}  # {"no_observatory": None}

@@ -8,7 +8,7 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from aas2rto import utils
-from aas2rto.query_managers.base import BaseQueryManager
+from aas2rto.query_managers.base import LightcurveQueryManager
 from aas2rto.query_managers.yse.yse_client import YSEClient, YSEClientError
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
@@ -68,16 +68,10 @@ def updates_from_explorer_queries(
     return pd.DataFrame(updated_rows)
 
 
-def get_yse_id_from_target(target: Target) -> str:
-    for alt_key in ["tns", "yse"]:
-        yse_id = target.alt_ids.get(alt_key)
-        if yse_id is not None:
-            return yse_id
-    return None  # Otherwise, there's no available yse_id
-
-
-class YSEQueryManager(BaseQueryManager):
+class YSEQueryManager(LightcurveQueryManager):
     name = "yse"
+
+    id_resolving_order = ("tns", "yse")
 
     default_config = {
         "credentials": None,
@@ -287,32 +281,32 @@ class YSEQueryManager(BaseQueryManager):
             msg = f"new YSE detection from '{query_name}' at {t_str}"
             target.info_messages.append(msg)
 
-    def get_lightcurves_to_query(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
+    # def select_lightcurves_to_query(self, t_ref: Time = None):
+    #     t_ref = t_ref or Time.now()
 
-        max_age = self.config["lightcurve_update_interval"]
+    #     max_age = self.config["lightcurve_update_interval"]
 
-        to_query = []
-        no_yse_id = []
-        for target_id, target in self.target_lookup.items():
-            yse_id = get_yse_id_from_target(target)
-            if yse_id is None:
-                no_yse_id.append(target_id)
-                continue  # There's no yse_id associated with this target.
+    #     to_query = []
+    #     no_yse_id = []
+    #     for target_id, target in self.target_lookup.items():
+    #         yse_id = get_yse_id_from_target(target)
+    #         if yse_id is None:
+    #             no_yse_id.append(target_id)
+    #             continue  # There's no yse_id associated with this target.
 
-            lightcurve_filepath = self.get_lightcurve_filepath(yse_id)
-            file_age = utils.calc_file_age(lightcurve_filepath, t_ref=t_ref)
-            if file_age > max_age:
-                to_query.append(yse_id)
+    #         lightcurve_filepath = self.get_lightcurve_filepath(yse_id)
+    #         file_age = utils.calc_file_age(lightcurve_filepath, t_ref=t_ref)
+    #         if file_age > max_age:
+    #             to_query.append(yse_id)
 
-        logger.info(f"{len(to_query)} need querying ({len(no_yse_id)} have no YSE ID)")
-        return to_query
+    #     logger.info(f"{len(to_query)} need querying ({len(no_yse_id)} have no YSE ID)")
+    #     return to_query
 
     def query_lightcurves(self, id_list: list[str] = None, t_ref: Time = None):
         t_ref = t_ref or Time.now()
         if id_list is None:
             # Can't just query all in target_lookup, some may not have valid yse_id...
-            id_list = self.get_lightcurves_to_query()
+            id_list = self.select_lightcurves_to_query()
 
         max_failed_queries = self.config["max_failed_queries"]
         max_qtime = self.config["max_query_time"]
@@ -359,7 +353,9 @@ class YSEQueryManager(BaseQueryManager):
         t_ref = t_ref or Time.now()
 
         target = self.target_lookup.get(target_id, None)
-        yse_id = get_yse_id_from_target(target)
+        yse_id = self.get_relevant_id_from_target(target)
+        if yse_id is None:
+            return None
 
         lightcurve_filepath = self.get_lightcurve_filepath(yse_id)
         if lightcurve_filepath.exists():

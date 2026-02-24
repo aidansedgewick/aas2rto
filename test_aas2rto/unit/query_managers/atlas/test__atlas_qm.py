@@ -51,18 +51,18 @@ def t_write(t_fixed: Time):
 
 @pytest.fixture
 def write_atlas_lc(
-    atlas_qm: AtlasQueryManager, lc_atlas: pd.DataFrame, t_write: Time
+    atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame, t_write: Time
 ) -> NoReturn:
     fpath = atlas_qm.get_lightcurve_filepath("T00")
-    lc_atlas.to_csv(fpath, index=False)
+    atlas_lc.to_csv(fpath, index=False)
     os.utime(fpath, (t_write.unix, t_write.unix))
     return None
 
 
 class Test__ProcessAtlasLC:
-    def test__full_lc(self, lc_atlas: pd.DataFrame):
+    def test__full_lc(self, atlas_lc: pd.DataFrame):
         # Act
-        processed_lc = process_atlas_lightcurve(lc_atlas)
+        processed_lc = process_atlas_lightcurve(atlas_lc)
 
         # Assert
         assert "mjd" in processed_lc.columns
@@ -200,11 +200,11 @@ class Test__RecoverQueryData:
         assert lc.empty
 
     def test__empty_no_overwrite_existing(
-        self, atlas_qm: AtlasQueryManager, lc_atlas: pd.DataFrame
+        self, atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame
     ):
         # Arrange
         lc_filepath = atlas_qm.get_lightcurve_filepath("T_no_data")
-        lc_atlas.to_csv(lc_filepath, index=False)
+        atlas_lc.to_csv(lc_filepath, index=False)
 
         # Act
         status, lc = atlas_qm.recover_query_data("T_no_data", "T_no_data")
@@ -263,7 +263,7 @@ class Test__SelectQueryCandidates:
         t_later = t_fixed + 5.0 * u.day
 
         # Act
-        candidates = atlas_qm.select_query_candidates(t_ref=t_later)
+        candidates = atlas_qm.select_lightcurves_to_query(t_ref=t_later)
 
         # Assert
         assert set(candidates) == set(["T00"])
@@ -277,7 +277,7 @@ class Test__SelectQueryCandidates:
         t_later = t_write + 3.0 * u.day  # QM updates old LCs after 2 days.
 
         # Act
-        candidates = atlas_qm.select_query_candidates(t_ref=t_later)
+        candidates = atlas_qm.select_lightcurves_to_query(t_ref=t_later)
 
         # Assert
         assert set(candidates) == set(["T00"])
@@ -290,7 +290,7 @@ class Test__SelectQueryCandidates:
         t_later = t_write + 1.0 * u.day  # QM updates old LCs after 2 days.
 
         # Act
-        candidates = atlas_qm.select_query_candidates(t_ref=t_later)
+        candidates = atlas_qm.select_lightcurves_to_query(t_ref=t_later)
 
         # Assert
         assert set(candidates) == set()
@@ -301,7 +301,7 @@ class Test__SelectQueryCandidates:
         atlas_qm.config["query_faint_limit"] = 15.0
 
         # Act
-        candidates = atlas_qm.select_query_candidates(t_ref=t_later)
+        candidates = atlas_qm.select_lightcurves_to_query(t_ref=t_later)
 
         # Assert
         assert set(candidates) == set()
@@ -312,7 +312,7 @@ class Test__SelectQueryCandidates:
         atlas_qm.config["query_stale_limit"] = 1.0  # should come to 60004
 
         # Act
-        candidates = atlas_qm.select_query_candidates(t_ref=t_later)
+        candidates = atlas_qm.select_lightcurves_to_query(t_ref=t_later)
 
         # Assert
         assert set(candidates) == set()
@@ -323,7 +323,7 @@ class Test__SelectQueryCandidates:
         atlas_qm.target_lookup["T00"].science_score_history = []
 
         # Act
-        candidates = atlas_qm.select_query_candidates(t_ref=t_later)
+        candidates = atlas_qm.select_lightcurves_to_query(t_ref=t_later)
 
         # Assert
         assert set(candidates) == set()
@@ -334,7 +334,7 @@ class Test__SelectQueryCandidates:
         atlas_qm.target_lookup["T00"].update_science_score_history(-1.0, t_fixed)
 
         # Act
-        candidates = atlas_qm.select_query_candidates(t_ref=t_later)
+        candidates = atlas_qm.select_lightcurves_to_query(t_ref=t_later)
 
         # Assert
         assert set(candidates) == set()
@@ -345,7 +345,7 @@ class Test__SelectQueryCandidates:
         atlas_qm.target_lookup["T00"].compiled_lightcurve = None
 
         # Act
-        candidates = atlas_qm.select_query_candidates(t_ref=t_later)
+        candidates = atlas_qm.select_lightcurves_to_query(t_ref=t_later)
 
         # Assert
         assert set(candidates) == set()
@@ -495,11 +495,11 @@ class Test__ResubmitThrottled:
 
 class Test__LoadLCs:
 
-    def test__load_single_lc(self, atlas_qm: AtlasQueryManager, lc_atlas: pd.DataFrame):
+    def test__load_single_lc(self, atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame):
         # Arrange
         lc_filepath = atlas_qm.get_lightcurve_filepath("T00")
-        lc_atlas.to_csv(lc_filepath, index=False)
-        atlas_qm.config["alt_id_priority"] = ("src01", "src02")
+        atlas_lc.to_csv(lc_filepath, index=False)
+        atlas_qm.id_resolving_order = ("src01", "src02")
 
         # Act
         lc = atlas_qm.load_single_lightcurve("T00")
@@ -508,12 +508,12 @@ class Test__LoadLCs:
         assert len(lc) == 12
 
     def test__load_from_alt_source(
-        self, atlas_qm: AtlasQueryManager, lc_atlas: pd.DataFrame
+        self, atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame
     ):
         # Arrange
         lc_filepath = atlas_qm.get_lightcurve_filepath("target_A")
-        lc_atlas.to_csv(lc_filepath, index=False)
-        atlas_qm.config["alt_id_priority"] = ("src01", "src02")
+        atlas_lc.to_csv(lc_filepath, index=False)
+        atlas_qm.id_resolving_order = ("src01", "src02")
         # T00 has src02: target_A - see unit/conftest.py
 
         # Act
@@ -536,12 +536,12 @@ class Test__LoadLCs:
         assert loaded_lc is None
 
     def test__superclass_load_lightcurves(
-        self, atlas_qm: AtlasQueryManager, lc_atlas: pd.DataFrame, t_fixed: Time
+        self, atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame, t_fixed: Time
     ):
         # Arrange
         lc_filepath = atlas_qm.get_lightcurve_filepath("T00")
-        lc_atlas.to_csv(lc_filepath, index=False)
-        atlas_qm.config["alt_id_priority"] = ("src01", "src02")
+        atlas_lc.to_csv(lc_filepath, index=False)
+        atlas_qm.id_resolving_order = ("src01", "src02")
 
         # Act
         atlas_qm.load_target_lightcurves(t_ref=t_fixed)
@@ -554,12 +554,12 @@ class Test__LoadLCs:
 
 class Test__RenameLCs:
     def test__rename_to_alt_src(
-        self, atlas_qm: AtlasQueryManager, lc_atlas: pd.DataFrame
+        self, atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame
     ):
         # Arrange
         T00_lc_filepath = atlas_qm.get_lightcurve_filepath("T00")
-        lc_atlas.to_csv(T00_lc_filepath, index=False)
-        atlas_qm.config["alt_id_priority"] = ("src03", "src02", "src01")
+        atlas_lc.to_csv(T00_lc_filepath, index=False)
+        atlas_qm.id_resolving_order = ("src03", "src02", "src01")
         # T00: src03 doesn't exist, src02 = target_A, src01 = T00
 
         # Act
@@ -574,12 +574,12 @@ class Test__RenameLCs:
         assert not T00_lc_filepath.exists()
 
     def test__skip_already_renamed(
-        self, atlas_qm: AtlasQueryManager, lc_atlas: pd.DataFrame
+        self, atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame
     ):
         # Arrange
         T00_lc_filepath = atlas_qm.get_lightcurve_filepath("target_A")
-        lc_atlas.to_csv(T00_lc_filepath, index=False)
-        atlas_qm.config["alt_id_priority"] = ("src03", "src02", "src01")
+        atlas_lc.to_csv(T00_lc_filepath, index=False)
+        atlas_qm.id_resolving_order = ("src03", "src02", "src01")
         # T00: src03 doesn't exist, src02 = target_A, src01 = T00
 
         # Act
@@ -595,12 +595,12 @@ class Test__RenameLCs:
 
 class Test__PerformAllTasks:
     def test__iter_zero(
-        self, atlas_qm: AtlasQueryManager, lc_atlas: pd.DataFrame, t_fixed: Time
+        self, atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame, t_fixed: Time
     ):
         # Arrange
         T01_lc_filepath = atlas_qm.get_lightcurve_filepath("T01")
-        lc_atlas.to_csv(T01_lc_filepath, index=False)
-        atlas_qm.config["alt_id_priority"] = ("src01", "src02")
+        atlas_lc.to_csv(T01_lc_filepath, index=False)
+        atlas_qm.id_resolving_order = ("src01", "src02")
 
         # Act
         atlas_qm.perform_all_tasks(iteration=0, t_ref=t_fixed)
@@ -617,12 +617,12 @@ class Test__PerformAllTasks:
         assert "atlas" in T01.target_data.keys()
 
     def test__normal_iter(
-        self, atlas_qm: AtlasQueryManager, lc_atlas: pd.DataFrame, t_fixed: Time
+        self, atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame, t_fixed: Time
     ):
         # Arrange
         T01_lc_filepath = atlas_qm.get_lightcurve_filepath("T01")
-        lc_atlas.to_csv(T01_lc_filepath, index=False)
-        atlas_qm.config["alt_id_priority"] = ("src01", "src02")
+        atlas_lc.to_csv(T01_lc_filepath, index=False)
+        atlas_qm.id_resolving_order = ("src01", "src02")
 
         # Act
         atlas_qm.perform_all_tasks(iteration=1, t_ref=t_fixed)

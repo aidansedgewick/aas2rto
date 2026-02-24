@@ -285,12 +285,12 @@ class TargetSelector:
             logger.warning(f"failed:{len(failed)} (no compiled lc!)")
         return compiled, failed
 
-    def clear_output_plots(self, fig_fmt="png"):
-        for obs_name, observatory in self.observatory_manager.sites.items():
-            plot_dir = self.path_manager.get_output_plots_path(obs_name, mkdir=False)
-            if plot_dir.exists():
-                for plot in plot_dir.glob(f"*.{fig_fmt}"):
-                    os.remove(plot)
+    # def clear_output_plots(self, fig_fmt="png"):
+    #     for obs_name, observatory in self.observatory_manager.sites.items():
+    #         plot_dir = self.path_manager.get_output_plots_path(obs_name, mkdir=False)
+    #         if plot_dir.exists():
+    #             for plot in plot_dir.glob(f"*.{fig_fmt}"):
+    #                 os.remove(plot)
 
     def perform_web_tasks(self, t_ref: Time = None):
         self.web_manager.perform_all_web_tasks()
@@ -480,7 +480,7 @@ class TargetSelector:
         # ======================== Ranking and lists ======================== #
         t1 = time.perf_counter()
         if "ranking" not in skip_tasks:
-            self.clear_output_plots()  # In prep for the new outputs
+            # self.clear_output_plots()  # In prep for the new outputs
             self.outputs_manager.build_ranked_target_lists(
                 t_ref=t_ref, plots=True, write_list=True
             )

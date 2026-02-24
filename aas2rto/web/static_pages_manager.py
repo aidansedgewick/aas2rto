@@ -367,9 +367,7 @@ class StaticPagesManager:
             if alt_id == target.target_id:
                 continue  # DON'T rewrite real page data with redirect - endless loop!
             template = self.web_environment.get_template("target_redirect.html")
-            redirect_url = (
-                f"../{self._get_target_page_url(alt_id)}"  # must be rel link...
-            )
+            redirect_url = f"../{self._get_target_page_url(target.target_id)}"  # REL!
             page_data = dict(
                 redirect_url=redirect_url,
                 target_id=target.target_id,

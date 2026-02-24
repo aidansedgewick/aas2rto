@@ -21,7 +21,7 @@ class FinkPortalClientError(Exception):
     pass
 
 
-class BaseFinkPortalClient(abc.ABC):
+class FinkBasePortalClient(abc.ABC):
 
     TIMEOUT_LIKELY = 58.0
 
@@ -41,7 +41,7 @@ class BaseFinkPortalClient(abc.ABC):
         pass
 
     def __init__(self):
-        pass
+        pass  # In case of credentials required, implement here
 
     @staticmethod
     def fix_dict_keys_inplace(data: dict):
@@ -241,13 +241,13 @@ class BaseFinkPortalClient(abc.ABC):
         )
 
 
-class FinkZTFPortalClient(BaseFinkPortalClient):
+class FinkZTFPortalClient(FinkBasePortalClient):
     api_url = "https://api.ztf.fink-portal.org/api/v1"
     id_key = "objectId"
-    imtypes = ("Difference", "Template", "Science")
+    imtypes = ("Difference", "Science", "Template")
 
 
-class FinkLSSTPortalClient(BaseFinkPortalClient):
+class FinkLSSTPortalClient(FinkBasePortalClient):
     api_url = "https://api.lsst.fink-portal.org/api/v1"
     id_key = "diaObjectId"
-    imtypes = ("Difference", "Template")
+    imtypes = ("Difference", "Science", "Template")

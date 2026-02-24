@@ -10,7 +10,7 @@ from astropy.time import Time
 
 from aas2rto.exc import MissingKeysError, UnexpectedKeysError
 from aas2rto.query_managers.base import BaseQueryManager
-from aas2rto.query_managers.yse.yse import YSEQueryManager, get_yse_id_from_target
+from aas2rto.query_managers.yse.yse import YSEQueryManager
 from aas2rto.query_managers.yse.yse_client import YSEClient, YSEClientError
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
@@ -20,7 +20,7 @@ from aas2rto.target_lookup import TargetLookup
 @pytest.fixture
 def yse_qm(yse_config: dict, tlookup: TargetLookup, tmp_path: Path):
     tlookup["T00"].alt_ids["tns"] = "2023J"
-    tlookup.update_target_id_mappings()
+    tlookup.update_target_id_mappings()  # so that tlookup["2023J"] returns target
     return YSEQueryManager(yse_config, tlookup, tmp_path)
 
 
@@ -60,35 +60,46 @@ def write_existing_lightcurve(existing_lightcurve_filepath: Path, yse_lc: pd.Dat
 
 
 class Test__GetYSEId:
-    def test__yse_only(self, basic_target: Target):
+
+    @pytest.fixture(autouse=True)
+    def _remove_empty_tmp_dirs(self, remove_tmp_dirs: NoReturn):
+        pass  # remove_tmp_dirs defined in unit/contfest.py, executed with autouse=True
+
+    def test__yse_only(self, yse_config: dict, tlookup: TargetLookup, tmp_path: Path):
         # Arrange
-        assert set(basic_target.alt_ids.keys()) == set(["src01", "src02"])  # a reminder
-        basic_target.alt_ids["yse"] = "YSE_01"
+        qm = YSEQueryManager(yse_config, tlookup, tmp_path)
+        target = qm.target_lookup["T00"]  # NO yse_qm fixture here: T00 alt_ids modified
+        assert set(target.alt_ids.keys()) == set(["src01", "src02"])  # a reminder
+        target.alt_ids["yse"] = "YSE_01"
 
         # Act
-        yse_id = get_yse_id_from_target(basic_target)
+        yse_id = qm.get_relevant_id_from_target(target)
 
         # Assert
         assert yse_id == "YSE_01"
 
-    def test__prefer_tns(self, basic_target: Target):
+    def test__prefer_tns(self, yse_config: dict, tlookup: TargetLookup, tmp_path: Path):
         # Arrange
-        assert set(basic_target.alt_ids.keys()) == set(["src01", "src02"])  # a reminder
-        basic_target.alt_ids["yse"] = "YSE_01"
-        basic_target.alt_ids["tns"] = "2023J"
+        qm = YSEQueryManager(yse_config, tlookup, tmp_path)
+        target = qm.target_lookup["T00"]  # NO yse_qm fixture here: T00 alt_ids modified
+        assert set(target.alt_ids.keys()) == set(["src01", "src02"])  # a reminder
+        target.alt_ids["yse"] = "YSE_01"
+        target.alt_ids["tns"] = "2023J"
 
         # Act
-        yse_id = get_yse_id_from_target(basic_target)
+        yse_id = qm.get_relevant_id_from_target(target)
 
         # Assert
         assert yse_id == "2023J"
 
-    def test__neither(self, basic_target: Target):
+    def test__neither(self, yse_config: dict, tlookup: TargetLookup, tmp_path: Path):
         # Arrange
-        assert set(basic_target.alt_ids.keys()) == set(["src01", "src02"])  # a reminder
+        qm = YSEQueryManager(yse_config, tlookup, tmp_path)
+        target = qm.target_lookup["T00"]  # NO yse_qm fixture here: T00 alt_ids modified
+        assert set(target.alt_ids.keys()) == set(["src01", "src02"])  # a reminder
 
         # Act
-        yse_id = get_yse_id_from_target(basic_target)
+        yse_id = qm.get_relevant_id_from_target(target)
 
         # Assert
         assert yse_id is None
@@ -325,7 +336,7 @@ class Test__GetLightcurvesToQuery:
         t_future = t_fixed + 2.0 * u.day
 
         # Act
-        to_query = yse_qm.get_lightcurves_to_query(t_ref=t_future)
+        to_query = yse_qm.select_lightcurves_to_query(t_ref=t_future)
 
         # Assert
         assert set(to_query) == set(["2023J"])  # NOT T01, as it has no tns/yse id
@@ -343,7 +354,7 @@ class Test__GetLightcurvesToQuery:
         os.utime(existing_lightcurve_filepath, (t_fixed.unix, t_fixed.unix))
 
         # Act
-        to_query = yse_qm.get_lightcurves_to_query(t_ref=t_future)
+        to_query = yse_qm.select_lightcurves_to_query(t_ref=t_future)
 
         # Assert
         assert set(to_query) == set(["2023J"])  # NOT T01, as it has no tns/yse_id
@@ -361,7 +372,7 @@ class Test__GetLightcurvesToQuery:
         os.utime(existing_lightcurve_filepath, (t_fixed.unix, t_fixed.unix))
 
         # Act
-        to_query = yse_qm.get_lightcurves_to_query(t_ref=t_future)
+        to_query = yse_qm.select_lightcurves_to_query(t_ref=t_future)
 
         # Assert
         assert set(to_query) == set()  # NOT T01, as it has no tns/yse_id

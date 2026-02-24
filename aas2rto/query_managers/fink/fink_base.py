@@ -20,15 +20,20 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.time import Time
 
-from aas2rto.exc import MissingCoordinatesError, MissingTargetIdError
-from aas2rto.query_managers.base import BaseQueryManager
-from aas2rto.query_managers.fink.fink_portal_client import BaseFinkPortalClient
+from aas2rto.exc import (
+    BadKafkaConfigError,
+    MissingCoordinatesError,
+    MissingTargetIdError,
+)
+from aas2rto.query_managers.base import LightcurveQueryManager, KafkaQueryManager
+from aas2rto.query_managers.fink.fink_portal_client import FinkBasePortalClient
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.utils import (
     calc_file_age,
-    check_unexpected_config_keys,
+    check_safe_to_query,
     check_missing_config_keys,
+    check_unexpected_config_keys,
     chunk_list,
 )
 
@@ -44,11 +49,19 @@ if fink_client is not None:
 logger = getLogger(__name__.split(".")[-1])
 
 
-class BadKafkaConfigError(Exception):
-    pass
-
-
 FinkAlert = NewType("FinkAlert", tuple[str, dict, str])
+
+EXTRA_FINK_ALERT_KEYS = (
+    # "timestamp", # doesn't exist anymore?!
+    "cdsxmatch",
+    "rf_snia_vs_nonia",
+    "snn_snia_vs_nonia",
+    "snn_sn_vs_all",
+    "mulens",
+    "roid",
+    "nalerthist",
+    "rf_kn_vs_nonkn",
+)
 
 
 def updates_from_classifier_queries(
@@ -85,32 +98,92 @@ def updates_from_classifier_queries(
 
 
 # re-inherit from abc.ABC to indicate that FinkBaseQM should be subclassed...
-class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
-    name: str = "fink"
+class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
     @property
     @abc.abstractmethod
     def id_resolving_order(self) -> tuple[str]:
-        pass
+        """The order that the QM should prefer IDs for queries to the FINK portal.
+
+        eg. ("lsst", "fink_lsst", "tns") would first check in a target's alt_ids
+        for a 'lsst' ID, then a 'fink_lsst' ID, and finally a 'tns' ID."""
 
     @property
     @abc.abstractmethod
     def target_id_key(self) -> str:
-        pass
+        """The key used as target_id from FINK alerts/lightcurves.
+
+        eg. 'objectId' for ZTF, 'diaObjectId' for LSST"""
 
     @property
     @abc.abstractmethod
     def alert_id_key(self) -> str:
-        pass
+        """The key used as alert_id from FINK alerts/lightcurves
+
+        eg. 'candid' for ZTF, 'diaSourceId' for LSST"""
 
     @property
     @abc.abstractmethod
-    def portal_client_class(self) -> type[BaseFinkPortalClient]:
-        pass
+    def portal_client_class(self) -> type[FinkBasePortalClient]:
+        """The class -- NOT instance -- of the PortalClient which should be used
+
+        See aas2rto.query_managers.fink.fink_portal_client
+        """
+
+    ##===== Methods for subclasses to define here =====##
+
+    @abc.abstractmethod
+    def process_single_alert(self, alert_data: FinkAlert) -> dict:
+        """process_single_alert(self, alert_data: tuple[str, dict, str]):
+
+        Returns a dict (the processed alert), or None (if ignoring the alert).
+        The argument alert_data [tuple] is: topic [str], alert[dict], key [str].
+        You should also save any alert and cutouts in this function."""
+
+    @abc.abstractmethod
+    def apply_updates_from_alert(self, processed_alert: dict, t_ref: Time = None):
+        """apply_updates_from_alert(self, processed_alert: dict, t_ref: Time):
+
+        Accept a processed alert (from your process_single_alert() method),
+        which you can use to  mark any targets as updated, and add messages
+        that will be sent out by eg. slack or telegram."""
+
+    @abc.abstractmethod
+    def new_target_from_alert(
+        self, processed_alert: dict, t_ref: Time = None
+    ) -> Target:
+        """new_target_from_alert(self, alert: dict, t_ref: Time)
+
+        Create a single `Target` from a processed alert (dict)"""
+
+    @abc.abstractmethod
+    def new_target_from_record(self, query_record: dict) -> Target:
+        """new_target_from_record(self, alert: dict, t_ref: Time):\n"
+
+        Create a single `Target` from dict - the result of a fink 'latests' query,
+        with whatever attributes this query result may have."""
+
+    @abc.abstractmethod
+    def process_fink_lightcurve(self, unprocessed_lc: pd.DataFrame) -> pd.DataFrame:
+        """process_fink_lc(self, unprocessed_lc: pd.DataFrame):"""
+
+    @abc.abstractmethod
+    def load_missing_alerts_for_target(self, fink_id: str) -> bool:
+        """load_missing_alerts_for_target(self, target_id: str):"""
+
+    @abc.abstractmethod
+    def load_cutouts_for_alert(self, fink_id: str, alert_id: int) -> dict | None:
+        """load_cutouts(self, fink_id: int, alert_id: int):
+
+        Your function should accept fink_id [str] and alert_id [int].
+        If the cutouts for this id exist, return a dict.
+        If they don't exist, return None."""
+
+    ##===== Generic methods start here =====##
 
     DEFAULT_TASKS = ("alerts", "queries", "lightcurves", "cutouts", "stale_files")
     REQUIRED_KAFKA_PARAMS = ("username", "group.id", "bootstrap.servers", "topics")
-    required_directories = ("lightcurves", "cutouts", "alerts", "query_results")
+    REQUIRED_DIRECTORIES = ("alerts", "cutouts", "lightcurves", "query_results")
 
     default_config = {
         "max_failed_queries": 10,
@@ -145,12 +218,10 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
 
     ##===== initialisation here =====##
 
-    def __init__(
-        self, fink_config: dict, target_lookup: TargetLookup, parent_path: Path = None
-    ):
+    def __init__(self, config: dict, target_lookup: TargetLookup, parent_path: Path):
         # Config steps
         self.config = self.default_config.copy()
-        self.config.update(fink_config)
+        self.config.update(config)
 
         check_unexpected_config_keys(
             self.config, self.default_config, name=f"{self.name}_config", raise_exc=True
@@ -161,27 +232,14 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         self.target_lookup = target_lookup
 
         # Initialize the portal client - maybe credentials needed in future...
-        if self.portal_client_class is not None:
-            self.portal_client: BaseFinkPortalClient = self.portal_client_class()
-            # Portal client is init here, NOT in subclass def (see eg. FinkZTFQuMgr)
-        else:
-            msg = f"portal_client_class is None for {self.name}. query_lcs will probably fail..."
-            logger.warning()
-            self.portal_client = None
+        self.portal_client: FinkBasePortalClient = self.portal_client_class()
 
         # Process the paths
         self.process_paths(
-            parent_path=parent_path, directories=self.required_directories
+            parent_path=parent_path, directories=self.REQUIRED_DIRECTORIES
         )
 
-        if self.id_resolving_order is None:
-            msg = (
-                f"FinkBaseQM subclass '{self.name}' should  "
-                f"implement attr \033[032;1m'id_resolving_order'\033[0m]:"
-                f"   the preferred order to check alt_ids for the existing key."
-            )
-            raise NotImplementedError(msg)
-
+        # Are there any ZTF tasks we want to skip?
         self.tasks = self.config.get("tasks")
         check_unexpected_config_keys(
             self.tasks,
@@ -193,13 +251,13 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
     def process_kafka_config(self):
         self.kafka_config = self.config.get("kafka", None)
         if self.kafka_config is None:
-            logger.info("No 'kafka' in FINK config: will not listen for alerts")
+            logger.info(f"No 'kafka' in {self.name} config: will not listen for alerts")
             return
         else:
             missing_keys = check_missing_config_keys(
                 self.kafka_config,
                 self.REQUIRED_KAFKA_PARAMS,
-                name="fink.kafka",
+                name=f"{self.name}.kafka",
                 raise_exc=True,
                 exc_class=BadKafkaConfigError,
             )
@@ -211,15 +269,16 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
 
         if fink_client is None:
             msg = (
-                "error importing fink_client.\n"
-                "    Fix broken module, or remove `kafka` from fink_config"
+                f"Error importing 'fink_client'.\n"
+                f"    Fix broken module with \033[32 python3 -m pip install fink_client\033[0m\n"
+                f"    or remove `kafka` from {self.name} config"
             )
             raise ModuleNotFoundError(msg)
 
     ##===== Path methods here =====##
 
     def get_alert_directory(self, fink_id: str, mkdir: bool = True):
-        alert_dir = self.paths_lookup["alerts"] / fink_id
+        alert_dir = self.paths_lookup["alerts"] / str(fink_id)
         if mkdir:
             alert_dir.mkdir(exist_ok=True, parents=True)
         return alert_dir
@@ -231,7 +290,7 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         return alert_dir / f"{alert_id}.{fmt}"
 
     def get_cutouts_directory(self, fink_id: str, mkdir: bool = True):
-        cutouts_dir = self.paths_lookup["cutouts"] / fink_id
+        cutouts_dir = self.paths_lookup["cutouts"] / str(fink_id)
         if mkdir:
             cutouts_dir.mkdir(exist_ok=True, parents=True)
         return cutouts_dir
@@ -249,72 +308,7 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         file_stem = fink_class.replace(" ", "_")
         return self.paths_lookup["query_results"] / f"{file_stem}.{fmt}"
 
-    ##===== Methods for subclasses to define here =====##
-
-    def process_single_alert(self, alert_data: FinkAlert) -> dict:
-        help_msg = (
-            f"Return a dict (the processed alert), or None (if ignoring the alert).\n    "
-            f"The argument alert_data [tuple] is: topic [str], alert[dict], key [str]\n    "
-            f"You should also save any alert and cutouts in this function."
-        )
-        raise NotImplementedError(
-            f"process_single_alert(self, alert_data: tuple[str, dict, str]):\n"
-            f"    not implemented for {self.name}\n    {help_msg}"
-        )
-
-    def apply_updates_from_alert(self, processed_alert: dict):
-        help_msg = (
-            f"Accept a processed alert (from your process_single_alert() method),\n    "
-            f"which you can use to  mark any targets as updated, and add messages\n    "
-            f"that will be sent out by eg. slack or telegram."
-        )
-        raise NotImplementedError(
-            f"apply_updates_from_alert(self, processed_alert: dict, t_ref: Time):\n"
-            f"    not implemented for {self.name}:\n    {help_msg}"
-        )
-
-    def add_target_from_alert(self, alert: dict, t_ref: Time = None) -> Target:
-        raise NotImplementedError(
-            f"add_target_from_alert(self, alert: dict, t_ref: Time)\n"
-            f"     not implemented for {self.name}"
-        )
-
-    def add_target_from_record(self, query_record: dict):
-        help_msg = (
-            f"Create new targets from dict - the result of a fink 'latests'\n    "
-            f"query, with whatever attributes this query result may have."
-        )
-        raise NotImplementedError(
-            f"add_target_from_alert(self, alert: dict, t_ref: Time):\n"
-            f"     not implemented for {self.name}:\n    {help_msg}"
-        )
-
-    def process_fink_lightcurve(self, unprocessed_lc: pd.DataFrame) -> pd.DataFrame:
-        help_msg = ""
-        raise NotImplementedError(
-            f"process_fink_lc(self, unprocessed_lc: pd.DataFrame):"
-            f"    not implemented for {self.name}:\n    {help_msg}"
-        )
-
-    def load_missing_alerts_for_target(self, fink_id: str) -> Target | None:
-        help_msg = ""
-        raise NotImplementedError(
-            f"load_missing_alerts_for_target(self, target_id: str):"
-            f"    not implemented for {self.name}:\n    {help_msg}"
-        )
-
-    def load_cutouts_for_alert(self, fink_id: str, alert_id: int) -> dict | None:
-        help_msg = (
-            f"Your function should accept fink_id [str] and alert_id [int].\n    "
-            f"If the cutouts for this id exist, return a dict.\n    "
-            f"If they don't exist, return None."
-        )
-        raise NotImplementedError(
-            f"not implemented for {self.name}:"
-            f"    load_cutouts(self, fink_id: int, alert_id: int):\n    {help_msg}"
-        )
-
-    ##===== Main methods here =====##
+    ##===== Generic methods for FINK here =====##
 
     def listen_for_alerts(self, t_ref: Time = None) -> list[dict]:
         if self.kafka_config is None:
@@ -331,7 +325,7 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
                 logger.info(f"listen for up to {n_alerts} from {topic}")
                 for ii in range(n_alerts):
                     try:
-                        alert_data = consumer.poll(timeout=timeout)
+                        alert_data: FinkAlert = consumer.poll(timeout=timeout)
                     except Exception as e:
                         logger.warning(f"In poll:\n    {type(e)}: {e}")
                         alert_data = (None, None, None)  # match return from no-alert
@@ -346,39 +340,6 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         logger.info(f"{len(alerts)} alerts from all topics")
         return alerts
 
-    def new_targets_from_alerts(
-        self, processed_alerts: list[dict], t_ref: Time = None
-    ) -> list[str]:
-        t_ref = t_ref or Time.now()
-
-        targets_added = []
-        existing_skipped = []
-        for alert in processed_alerts:
-            target_id = alert[self.target_id_key]
-
-            ##== Do we already know about it?
-            existing_target = self.target_lookup.get(target_id, None)
-            if existing_target is not None:
-                existing_skipped.append(target_id)
-                continue
-
-            ##== Otherwise add it...
-            target = self.add_target_from_alert(alert, t_ref=t_ref)
-            if isinstance(target, Target):
-                targets_added.append(target.target_id)
-            if isinstance(target, str):
-                msg = (
-                    "Your added 'add_target_from_alert() "
-                    "should return the Target() you just added, or None - not 'str'"
-                )
-                logger.warning(msg)
-                targets_added.append(target)
-
-        N_added = len(targets_added)
-        N_skipped = len(existing_skipped)
-        logger.info(f"added {N_added} new targets (skipped {N_skipped} existing)")
-        return targets_added
-
     def update_info_messages(self, processed_alerts: list[dict], t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
@@ -387,7 +348,10 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
 
     def load_single_lightcurve(self, target_id: str, t_ref: Time = None):
         target = self.target_lookup.get(target_id, None)
-        fink_id = self.get_fink_id_from_target(target)
+        if target is None:
+            return None
+
+        fink_id = self.get_relevant_id_from_target(target)
 
         lightcurve_filepath = self.get_lightcurve_filepath(fink_id)
         if lightcurve_filepath.exists():
@@ -400,13 +364,6 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         else:
             lightcurve = None
         return lightcurve
-
-    def get_fink_id_from_target(self, target: Target):
-        for alt_key in self.id_resolving_order:
-            fink_id = target.alt_ids.get(alt_key, None)
-            if fink_id is not None:
-                return fink_id
-        return None
 
     def fink_classifier_queries(self, t_ref: Time = None) -> list[dict]:
         t_ref = t_ref or Time.now()
@@ -478,7 +435,7 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
             return results.to_dict("records")
         return []
 
-    def new_targets_from_query_records(self, query_records: list[dict]):
+    def add_targets_from_query_records(self, query_records: list[dict]):
         targets_added = []
         existing_skipped = []
         for record in query_records:
@@ -490,42 +447,14 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
                 existing_skipped.append(target_id)
                 continue
 
-            target = self.add_target_from_record(record)
-            if isinstance(target, Target):
-                targets_added.append(target.target_id)
-            if isinstance(target, str):
-                msg = (
-                    "Your added 'add_target_from_alert() "
-                    "should return the Target() you just added, or None - not 'str'"
-                )
-                logger.warning(msg)
-                targets_added.append(target)
+            target = self.new_target_from_record(record)
+            self.target_lookup.add_target(target)
+            targets_added.append(target.target_id)
 
         N_added = len(targets_added)
         N_skipped = len(existing_skipped)
         logger.info(f"added {N_added} new targets (skipped {N_skipped} existing)")
         return targets_added
-
-    def get_lightcurves_to_query(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        to_query = []
-        no_fink_id = []
-        max_age = self.config["lightcurve_update_interval"]
-        for target_id, target in self.target_lookup.items():
-            fink_id = self.get_fink_id_from_target(target)
-            if fink_id is None:
-                no_fink_id.append(target_id)
-                continue
-            lightcurve_filepath = self.get_lightcurve_filepath(fink_id)
-            lc_age = calc_file_age(lightcurve_filepath, t_ref=t_ref)
-            if lc_age > max_age:
-                to_query.append(fink_id)
-        msg = f"LCs for {len(to_query)} targets need updating (age > {max_age:.1f}d or missing)"
-        logger.info(msg)
-        if len(no_fink_id) > 0:
-            logger.info(f"({len(no_fink_id)} have no relevant id for '{self.name}')")
-        return to_query
 
     def query_lightcurves(
         self,
@@ -536,19 +465,19 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         """
         Returns
         -------
-        success, missing, failed
+        success, missing, failed: int
         """
 
         t_ref = t_ref or Time.now()
 
         if fink_id_list is None:
             # Can't just query all in target_lookup, some may not have valid fink_id...
-            fink_id_list = self.get_lightcurves_to_query()
+            fink_id_list = self.select_lightcurves_to_query(
+                t_ref=t_ref
+            )  # super() method
         logger.info(f"attempt to query {len(fink_id_list)} LCs")
 
         chunk_size = self.config["lightcurve_chunk_size"]
-        max_failed_queries = self.config["max_failed_queries"]
-        max_qtime = self.config["max_query_time"]
 
         success = []
         missing = []
@@ -560,16 +489,13 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         for ii, fink_id_chunk in enumerate(
             chunk_list(fink_id_list, chunk_size=chunk_size)
         ):
-            # Is it sensible to conitnue with queries, or is everything failing?
-            if failed_queries >= max_failed_queries:
-                logger.warning(f"Too many failed LC queries ({failed_queries})")
-                logger.warning(f"Stop LC queries for now")
-                break
-            t_elapsed = time.perf_counter() - t_start
-            if t_elapsed > max_qtime:
-                msg = f"LC queries taking too long ({t_elapsed:.1f}s > max {max_qtime:.1f}s)"
-                logger.warning(msg)
-                logger.warning("stop for now")
+            if not check_safe_to_query(
+                t_start=t_start,
+                failed_queries=failed_queries,
+                max_query_time=self.config["max_query_time"],
+                max_failed_queries=self.config["max_failed_queries"],
+            ):
+                logger.warning("Stop LC queries for now")
                 break
 
             chunk_str = ",".join(fink_id_chunk)
@@ -606,11 +532,13 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
             for fink_id in fink_id_chunk:
                 unprocessed_lc = result[result[self.target_id_key] == fink_id]
                 processed_lc = self.process_fink_lightcurve(unprocessed_lc)
-                lightcurve_filepath = self.get_lightcurve_filepath(fink_id)
+
                 if processed_lc.empty:
                     missing.append(fink_id)
                 else:
                     success.append(fink_id)
+
+                lightcurve_filepath = self.get_lightcurve_filepath(fink_id)
                 processed_lc.to_csv(lightcurve_filepath, index=False)
 
         if bulk_filepath is not None:
@@ -630,7 +558,7 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
     def integrate_alerts(self):
         targets_modified = []
         for target_id, target in self.target_lookup.items():
-            fink_id = self.get_fink_id_from_target(target)
+            fink_id = self.get_relevant_id_from_target(target)
             if fink_id is None:
                 continue
             alerts_loaded = self.load_missing_alerts_for_target(fink_id)
@@ -640,27 +568,56 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         logger.info(f"loaded missing alerts for {len(targets_modified)} targets")
         return targets_modified
 
-    def query_cutouts(self):
+    def query_latest_cutouts(self):
+
+        success = []
+        missing = []
+        failed = []
+        failed_queries = 0
+
+        t_start = time.perf_counter()
         for target_id, target in self.target_lookup.items():
-            fink_id = self.get_fink_id_from_target(target)
+
+            if not check_safe_to_query(
+                t_start=t_start,
+                failed_queries=failed_queries,
+                max_query_time=self.config["max_query_time"],
+                max_failed_queries=self.config["max_failed_queries"],
+            ):
+                logger.warning("Stop cutouts queries for now")
+                break
+
+            fink_id = self.get_relevant_id_from_target(target)
             if fink_id is None:
-                continue
+                continue  # There is no relevant ID to ask FINK for cutouts.
             fink_data = target.target_data.get(self.name, None)
             if fink_data is None:
-                continue
+                continue  # The target has no fink data.
             if fink_data.detections is None:
-                continue
+                continue  # The target has no detections
             latest_alert_id = fink_data.detections[self.alert_id_key].iloc[-1]
-            latest_cutout_filepath = self.get_alert_cutout_filepath(self)
+            latest_cutout_filepath = self.get_cutouts_filepath(fink_id, latest_alert_id)
+
             if not latest_cutout_filepath.exists():
-                self.fink_query
+                payload = {
+                    self.target_id_key: fink_id,
+                    self.alert_id_key: latest_alert_id,
+                }
+                try:
+                    cutouts = self.portal_client.cutouts(**payload)
+                except Exception as e:
+                    failed_queries = failed_queries + 1
+                    continue
+
+                with open(latest_cutout_filepath, "rb") as f:
+                    pickle.dump(cutouts, f)
 
     def load_cutouts(self):
         loaded_cutouts = []
         missing_cutouts = []
         skipped_reload = []
         for target_id, target in self.target_lookup.items():
-            fink_id = self.get_fink_id_from_target(target)
+            fink_id = self.get_relevant_id_from_target(target)
             if fink_id is None:
                 continue
             fink_data = target.target_data.get(self.name, None)
@@ -702,7 +659,7 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         # Are we in startup?
         if iteration == 0:
             # If yes, we don't want to do anything other than load existing data.
-            self.load_target_lightcurves()
+            self.load_target_lightcurves()  # Use per-QM load_single_lightcurve()
             self.integrate_alerts()
             self.load_cutouts()
             return
@@ -710,13 +667,13 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
         # Are there any new alerts?
         if "alerts" in self.tasks:
             processed_alerts = self.listen_for_alerts()
-            self.new_targets_from_alerts(processed_alerts, t_ref=t_ref)
+            self.add_targets_from_alerts(processed_alerts, t_ref=t_ref)
             self.update_info_messages(processed_alerts, t_ref=t_ref)
 
         # Any targets flagged as interesting *not* from alerts?
         if "queries" in self.tasks:
             updated_query_records = self.fink_classifier_queries()
-            self.new_targets_from_query_records(updated_query_records)
+            self.add_targets_from_query_records(updated_query_records)
 
         # Who needs a lightcurve updating?
         if "lightcurves" in self.tasks:
@@ -729,8 +686,48 @@ class BaseFinkQueryManager(BaseQueryManager, abc.ABC):
 
         # Load any cutouts
         if "cutouts" in self.tasks:
+            self.query_latest_cutouts()
             self.load_cutouts()
 
         # Clear stale files
         self.clear_stale_files(self.config["stale_file_age"])
         return
+
+
+def readstamp(stamp: str, return_type="array", gzipped=True) -> np.array:
+    """Read the stamp data inside an alert.
+    Copied directly from Fink's utils:
+    https://github.com/astrolabsoftware/fink-science-portal/blob/master/apps/utils.py#L216 ...
+
+    Parameters
+    ----------
+    stamp: str
+        String containing binary data for the stamp
+    return_type: str
+        Data block of HDU 0 (`array`) or original FITS uncompressed (`FITS`) as file-object.
+        Default is `array`.
+
+    Returns
+    -------
+    data: np.array
+        2D array containing image data (`array`) or FITS file uncompressed as file-object (`FITS`)
+    """
+
+    def extract_stamp(fitsdata):
+        with fits.open(fitsdata, ignore_missing_simple=True) as hdul:
+            if return_type == "array":
+                data = hdul[0].data
+            elif return_type == "FITS":
+                data = io.BytesIO()
+                hdul.writeto(data)
+                data.seek(0)
+        return data
+
+    if not isinstance(stamp, io.BytesIO):
+        stamp = io.BytesIO(stamp)
+
+    if gzipped:
+        with gzip.open(stamp, "rb") as f:
+            return extract_stamp(io.BytesIO(f.read()))
+    else:
+        return extract_stamp(stamp)

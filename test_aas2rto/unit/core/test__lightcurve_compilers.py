@@ -9,9 +9,10 @@ from astropy.time import Time
 
 from aas2rto.lightcurve_compilers import (
     DefaultLightcurveCompiler,
-    prepare_ztf_data,
-    prepare_yse_data,
     prepare_atlas_data,
+    prepare_lsst_data,
+    prepare_yse_data,
+    prepare_ztf_data,
 )
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
@@ -24,8 +25,33 @@ class Test__PrepZTF:
 
         # Assert
         assert isinstance(processed_ztf, pd.DataFrame)
-        exp_columns = "mjd mag magerr diffmaglim band tag candid source".split()
+        exp_columns = "mjd mag magerr diffmaglim band tag alert_id source".split()
         assert set(processed_ztf.columns) == set(exp_columns)
+
+
+class Test__PrepLSST:
+    def test__prep_lsst(self, lsst_td: TargetData):
+        # Act
+        processed_lsst = prepare_lsst_data(lsst_td)
+
+        # Assert
+        assert isinstance(processed_lsst, pd.DataFrame)
+        exp_columns = "mjd mag magerr diffmaglim band tag alert_id source".split()
+        assert set(processed_lsst.columns) == set(exp_columns)
+
+    def test__prep_lsst_tag(self, lsst_lc: TargetData):
+        # Arrange
+        tag_data = ["badqual", "badqual", "badqual", "valid", "valid", "valid"]
+        lsst_lc.loc[:, "tag"] = tag_data
+        td = TargetData(lightcurve=lsst_lc)
+
+        # Act
+        processed_lsst = prepare_lsst_data(td)
+
+        # Assert
+        print(processed_lsst[["tag", "alert_id", "mjd"]])
+        assert processed_lsst["tag"].iloc[2] == "badqual"
+        assert processed_lsst["tag"].iloc[3] == "valid"
 
 
 class Test__PrepAtlas:
@@ -35,7 +61,7 @@ class Test__PrepAtlas:
 
         # Assert
         assert isinstance(result, pd.DataFrame)
-        exp_columns = "mjd jd mag magerr diffmaglim tag band N_exp source".split()
+        exp_columns = "mjd mag magerr diffmaglim tag band N_exp source".split()
         set(result.columns) == set(exp_columns)
         assert len(result) == 5
 

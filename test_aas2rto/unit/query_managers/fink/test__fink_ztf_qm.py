@@ -2,7 +2,7 @@ import copy
 import pickle
 import pytest
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import NoReturn
 
 import numpy as np
 
@@ -11,54 +11,24 @@ import pandas as pd
 from astropy import units as u
 from astropy.time import Time
 
-from aas2rto.query_managers.fink.fink_base import FinkAlert, BaseFinkQueryManager
+from aas2rto.query_managers.fink.fink_base import (
+    FinkBaseQueryManager,
+    FinkAlert,
+    EXTRA_FINK_ALERT_KEYS,
+)
 from aas2rto.query_managers.fink.fink_ztf import (
     FinkZTFQueryManager,
-    process_ztf_alert,
-    process_ztf_lightcurve,
-    apply_ztf_updates_to_target,
-    target_from_ztf_alert,
+    process_fink_ztf_alert,
+    target_from_fink_ztf_alert,
+    process_fink_ztf_lightcurve,
+    apply_fink_ztf_updates_to_target,
 )
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
 
 @pytest.fixture
-def ztf_alert_extras():
-    return {
-        "cdsxmatch": 1.0,
-        "rf_snia_vs_nonia": 1.0,
-        "snn_snia_vs_nonia": 1.0,
-        "snn_sn_vs_all": 1.0,
-        "mulens": 0.1,
-        "roid": 0.1,
-        "nalerthist": 4,
-        "rf_kn_vs_nonkn": 0.3,
-    }
-
-
-@pytest.fixture
-def ztf_alert_base(ztf_alert_extras):
-    return {
-        "objectId": "ZTF00abc",
-        "candidate": {"ra": 180.0, "dec": -30.0},
-        **ztf_alert_extras,
-    }
-
-
-@pytest.fixture
-def mock_cutouts():
-    return dict(
-        cutoutScience=dict(stampData=np.random.normal(0.0, 0.1, (10, 10))),
-        cutoutDifference=dict(stampData=np.random.normal(0.0, 0.1, (10, 10))),
-        cutoutTemplate=dict(stampData=np.random.normal(0.0, 0.1, (10, 10))),
-    )
-
-
-@pytest.fixture
-def fink_ztf_alert_list(
-    ztf_alert_base: dict, mock_cutouts: Dict[str, np.array], t_fixed: Time
-):
+def fink_ztf_alert_list(ztf_alert_base: dict, fink_alert_extras: dict, t_fixed: Time):
     alert_data_list = []
     for ii in range(5):
         # prepare "main" data
@@ -68,13 +38,10 @@ def fink_ztf_alert_list(
         alert["candidate"]["sigpsf"] = 0.1
         alert["candidate"]["fid"] = (ii % 2) + 1  # 1 or 2
         alert["candid"] = 1000_2000_3000_4000 + ii  # some long integer
-        # now add cutouts
-        alert_cutouts = copy.deepcopy(mock_cutouts)
-        science_data = alert_cutouts["cutoutScience"]["stampData"]
-        alert_cutouts["cutoutScience"]["stampData"] = science_data + ii
-        alert.update(alert_cutouts)  # cutouts need to be in "top level"
 
-        alert_data = ("cool_sne", alert, "some_string")
+        alert.update(copy.deepcopy(fink_alert_extras))  # some FINK annotations
+
+        alert_data = ("cool_ztf_sne", alert, "some_string")
         alert_data_list.append(alert_data)
     return alert_data_list
 
@@ -84,16 +51,9 @@ def patched_ztf_qm(
     fink_config: dict,
     tlookup: TargetLookup,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-
-    def mock_readstamp(data, return_type="array"):
-        return data
-
+    patch_fink_readstamp: NoReturn,
+) -> FinkZTFQueryManager:
     qm = FinkZTFQueryManager(fink_config, tlookup, parent_path=tmp_path)
-    monkeypatch.setattr(
-        "aas2rto.query_managers.fink.fink_ztf.readstamp", mock_readstamp
-    )
     return qm
 
 
@@ -111,17 +71,17 @@ def processed_ztf_alert_list(
         processed_alerts.append(processed_alert)
 
         # Ensure alerts are dumped!
-        candid = processed_alert["candid"]
-        alert_path = alert_dir / f"{candid}.json"
+        alert_id = processed_alert["candid"]
+        alert_path = alert_dir / f"{alert_id}.json"
         assert alert_path.exists()  #
-        cutouts_path = cutouts_dir / f"{candid}.pkl"
+        cutouts_path = cutouts_dir / f"{alert_id}.pkl"
         assert cutouts_path.exists()
     return processed_alerts
 
 
 @pytest.fixture
-def unprocessed_lc_ztf(lc_ztf: pd.DataFrame):
-    lc = lc_ztf.copy()
+def unprocessed_ztf_lc(ztf_lc: pd.DataFrame):
+    lc = ztf_lc.copy()
     lc.loc[:, "objectId"] = "ZTF00xyz"
     lc["jd"] = Time(lc["mjd"].values, format="mjd").jd
     lc.drop("mjd", axis=1, inplace=True)
@@ -132,15 +92,54 @@ def unprocessed_lc_ztf(lc_ztf: pd.DataFrame):
 
 
 class Test__ProcessZTFAlert:
-    def test__process_ztf_alert(self):
-        pass
+
+    @pytest.fixture
+    def ztf_alert_data(self, ztf_alert_base: dict, fink_alert_extras: dict):
+        # Arrange
+        alert = copy.deepcopy(ztf_alert_base)
+        alert.update(fink_alert_extras)
+        return ("some_topic", alert, "some_schema")
+
+    def test__process_ztf_alert(self, ztf_alert_data: dict):
+
+        # Act
+        proc_alert = process_fink_ztf_alert(ztf_alert_data)
+
+        # Assert
+        candidate_keys = "objectId ra dec candid jd magpsf sigpsf fid".split()
+        cutout_keys = [f"cutout{x}" for x in "Science Difference Template".split()]
+
+        assert all([k in proc_alert.keys() for k in candidate_keys])
+        assert all([k in proc_alert.keys() for k in EXTRA_FINK_ALERT_KEYS])  # copied!
+        # cutout removed before JSON!
+        assert all([k not in proc_alert.keys() for k in cutout_keys])
+
+        # Cutouts are removed from alert in order to json!
+        assert "topic" in proc_alert
+        assert "candidate" not in proc_alert.keys()  # flattened.
+
+    def test__write_alert_data(
+        self, ztf_alert_data: FinkAlert, patch_fink_readstamp: NoReturn, tmp_path: Path
+    ):
+        # Arrange
+        alert_path = tmp_path / "alert.json"
+        cutouts_path = tmp_path / "cutouts.pkl"
+
+        # Act
+        proc_alert = process_fink_ztf_alert(
+            ztf_alert_data, alert_filepath=alert_path, cutouts_filepath=cutouts_path
+        )
+
+        # Assert
+        assert alert_path.exists()
+        assert cutouts_path.exists()
 
 
 class Test__ProcessAlerts:
     def test__alert_processed(
         self,
         patched_ztf_qm: FinkZTFQueryManager,
-        fink_ztf_alert_list: List[Tuple],
+        fink_ztf_alert_list: list[tuple],
         tmp_path: Path,
     ):
         # Arrange
@@ -178,7 +177,7 @@ class Test__TargetFromAlert:
         alert = processed_ztf_alert_list[0]
 
         # Act
-        target = target_from_ztf_alert(alert)
+        target = target_from_fink_ztf_alert(alert)
 
         # Assert
         assert isinstance(target, Target)
@@ -191,11 +190,10 @@ class Test__TargetFromAlert:
         alert = processed_ztf_alert_list[0]
 
         # Act
-        target = patched_ztf_qm.add_target_from_alert(alert)
+        targets_added = patched_ztf_qm.add_targets_from_alerts([alert])
 
         # Assert
-        assert isinstance(target, Target)
-        assert target.target_id == "ZTF00abc"
+        assert set(targets_added) == set(["ZTF00abc"])
 
         # now check it's in the target_lookup
         assert "ZTF00abc" in patched_ztf_qm.target_lookup
@@ -209,7 +207,7 @@ class Test__ApplyUpdatesFromTarget:
         alert = processed_ztf_alert_list[0]
 
         # Act
-        apply_ztf_updates_to_target(basic_target, alert, t_ref=t_fixed)
+        apply_fink_ztf_updates_to_target(basic_target, alert, t_ref=t_fixed)
 
         # Assert
         assert len(basic_target.info_messages) == 1
@@ -223,7 +221,8 @@ class Test__ApplyUpdatesFromTarget:
     ):
         # Arrange
         alert = processed_ztf_alert_list[0]
-        patched_ztf_qm.add_target_from_alert(alert)
+        target = patched_ztf_qm.new_target_from_alert(alert)
+        patched_ztf_qm.target_lookup.add_target(target)
 
         # Act
         patched_ztf_qm.apply_updates_from_alert(alert)
@@ -247,6 +246,7 @@ class Test__ApplyUpdatesFromTarget:
 
 
 class Test__LoadMissingAlerts:
+
     def test__no_existing_lc(
         self,
         patched_ztf_qm: FinkZTFQueryManager,
@@ -257,9 +257,10 @@ class Test__LoadMissingAlerts:
         # Arrange
         alert_dir = tmp_path / "fink_ztf/alerts/ZTF00abc"
         assert alert_dir.exists()
-        # alerts are dumped in creation of processed_ztf_alert_list
+        # alerts are dumped in creation of creation of `processed_ztf_alert_list
         alert = processed_ztf_alert_list[0]
-        ZTF00abc = patched_ztf_qm.add_target_from_alert(alert, t_ref=t_fixed)
+        ZTF00abc = patched_ztf_qm.new_target_from_alert(alert, t_ref=t_fixed)
+        patched_ztf_qm.target_lookup.add_target(ZTF00abc)
         assert set(ZTF00abc.target_data.keys()) == set()
 
         # Act
@@ -279,10 +280,11 @@ class Test__LoadMissingAlerts:
         tmp_path: Path,
     ):
         # Arrange
-        alert = process_ztf_alert(fink_ztf_alert_list[0])
+        alert = process_fink_ztf_alert(fink_ztf_alert_list[0])
         alert_dir = tmp_path / "fink_ztf/alerts/ZTF00abc"
         assert not alert_dir.exists()
-        ZTF00abc = patched_ztf_qm.add_target_from_alert(alert, t_ref=t_fixed)
+        ZTF00abc = patched_ztf_qm.new_target_from_alert(alert, t_ref=t_fixed)
+        patched_ztf_qm.target_lookup.add_target(ZTF00abc)
 
         # Act
         alerts_loaded = patched_ztf_qm.load_missing_alerts_for_target("ZTF00abc")
@@ -300,7 +302,8 @@ class Test__LoadMissingAlerts:
     ):
         # Arrange
         alert = processed_ztf_alert_list[0]
-        ZTF00abc = patched_ztf_qm.add_target_from_alert(alert, t_ref=t_fixed)
+        ZTF00abc = patched_ztf_qm.new_target_from_alert(alert, t_ref=t_fixed)
+        patched_ztf_qm.target_lookup.add_target(ZTF00abc)
         lc = pd.DataFrame(processed_ztf_alert_list[:3])
         lc.loc[:, "tag"] = "badqual"  # to check we don't re-load unnecessarily
         ztf_data = ZTF00abc.get_target_data("fink_ztf")
@@ -322,7 +325,8 @@ class Test__LoadMissingAlerts:
     ):
         # Arrange
         alert = processed_ztf_alert_list[0]
-        ZTF00abc = patched_ztf_qm.add_target_from_alert(alert, t_ref=t_fixed)
+        ZTF00abc = patched_ztf_qm.new_target_from_alert(alert, t_ref=t_fixed)
+        patched_ztf_qm.target_lookup.add_target(ZTF00abc)
         lc = pd.DataFrame(processed_ztf_alert_list)
         ztf_data = ZTF00abc.get_target_data("fink_ztf")
         ztf_data.add_lightcurve(lc)
@@ -335,23 +339,23 @@ class Test__LoadMissingAlerts:
 
 
 class Test__ProcessZTFLC:
-    def test__process_ztf_lc(self, unprocessed_lc_ztf: pd.DataFrame):
+    def test__process_ztf_lc(self, unprocessed_ztf_lc: pd.DataFrame):
         # Assert
-        assert "mjd" not in unprocessed_lc_ztf.columns
-        assert "candid" in unprocessed_lc_ztf.columns
+        assert "mjd" not in unprocessed_ztf_lc.columns
+        assert "candid" in unprocessed_ztf_lc.columns
 
         # Act
-        lc = process_ztf_lightcurve(unprocessed_lc_ztf)
+        lc = process_fink_ztf_lightcurve(unprocessed_ztf_lc)
 
         # Assert
         assert "mjd" in lc.columns
 
-    def test__candid_inserted(self, unprocessed_lc_ztf: pd.DataFrame):
+    def test__candid_inserted(self, unprocessed_ztf_lc: pd.DataFrame):
         # Arrange
-        unprocessed_lc_ztf.drop("candid", axis=1, inplace=True)
+        unprocessed_ztf_lc.drop("candid", axis=1, inplace=True)
 
         # Act
-        lc = process_ztf_lightcurve(unprocessed_lc_ztf)
+        lc = process_fink_ztf_lightcurve(unprocessed_ztf_lc)
 
         # Assert
         assert "candid" in lc.columns
@@ -363,5 +367,5 @@ class Test__FinkZTFQMInit:
         qm = FinkZTFQueryManager({}, tlookup, parent_path=tmp_path)
 
         # Assert
-        assert isinstance(qm, BaseFinkQueryManager)
+        assert isinstance(qm, FinkBaseQueryManager)
         assert hasattr(qm, "config")  # OK this is now just testing subclassing...

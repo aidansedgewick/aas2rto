@@ -74,6 +74,9 @@ class ModelingManager:
 
         for modeling_func in modeling_functions:
 
+            if modeling_func is None:
+                continue
+
             try:
                 model_key = modeling_func.__name__
             except AttributeError as e:

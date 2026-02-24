@@ -8,7 +8,7 @@ from astropy.table import Table
 from astropy.time import Time
 
 from aas2rto.query_managers.fink.fink_portal_client import (
-    BaseFinkPortalClient,
+    FinkBasePortalClient,
     FinkZTFPortalClient,
     FinkLSSTPortalClient,
     FinkPortalClientError,
@@ -17,14 +17,15 @@ from aas2rto.query_managers.fink.fink_portal_client import (
 ##===== Some helper functions here =====##
 
 
-class FinkCoolPortalClient(BaseFinkPortalClient):
+class FinkCoolPortalClient(FinkBasePortalClient):
+    # DON'T use api.cool.fink-portal.org, so no chance of traffic to fink-portal.org
     api_url = "https://fink_cool.org/api/v1"
     imtypes = ("Difference", "Template")
     id_key = "target_id"
 
 
-class FinkBadQuery(FinkPortalClientError):
-    pass
+# class FinkBadQuery(FinkPortalClientError):
+#     pass
 
 
 class MockElapsed:
