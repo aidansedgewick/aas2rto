@@ -97,7 +97,7 @@ class PickleableF99Dust(sncosmo.PropagationEffect):
         ebv = self._parameters[0]
 
         inv_wave = 1e4 / wave  # per micron
-        axav = F99.evaluate(inv_wave, Rv=self._r_v)
+        axav = F99().evaluate(inv_wave, Rv=self._r_v)
 
         av = self._r_v * ebv
         ext = np.power(10.0, -0.4 * axav * av)

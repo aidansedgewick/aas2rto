@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import shutil
+import time
 import warnings
 from logging import getLogger
-from typing import List, Tuple, Union
 
 from pathlib import Path
 
@@ -101,9 +103,43 @@ def print_header(s: str) -> None:
     print(fmt_s)
 
 
+def check_safe_to_query(
+    t_start: float = None,
+    failed_queries: int = None,
+    max_query_time: float = 60.0,
+    max_failed_queries: int = 10,
+):
+    """
+    Helper method - check if there have been to many failed queries, or if we're
+    querying for too long this loop.
+
+    Parameters
+    ----------
+    t_start: float, optional
+        if queries take longer than self.config["max_query_time"], return False
+        use the result of time.perf_counter()
+    failed_queries: int
+        if failed queries is
+    """
+
+    # Is it sensible to conitnue with queries, or is everything failing?
+    if failed_queries is not None:
+        if failed_queries >= max_failed_queries:
+            logger.warning(f"Too many failed queries ({failed_queries})")
+            return False
+
+    if t_start is not None:
+        t_elapsed = time.perf_counter() - t_start
+        if t_elapsed > max_query_time:
+            msg = f"queries taking too long ({t_elapsed:.1f}s > max {max_query_time:.1f}s)"
+            logger.warning(msg)
+            return False
+    return True
+
+
 def check_config_keys(
     provided, expected, name: str = None, warn=True
-) -> Tuple[List, List]:
+) -> tuple[list, list]:
     if isinstance(provided, dict):
         provided = provided.keys()
     if isinstance(expected, dict):
@@ -175,7 +211,7 @@ def check_missing_config_keys(
     return list(missing_keys)
 
 
-def get_observatory_name(observatory: Union[Observer, None, str]):
+def get_observatory_name(observatory: Observer | str | None):
     if isinstance(observatory, str):
         return observatory
     return observatory.name

@@ -10,7 +10,7 @@ import yaml
 from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Callable, Dict, List, Set
+from typing import Callable
 
 import numpy as np
 
@@ -285,12 +285,12 @@ class TargetSelector:
             logger.warning(f"failed:{len(failed)} (no compiled lc!)")
         return compiled, failed
 
-    def clear_output_plots(self, fig_fmt="png"):
-        for obs_name, observatory in self.observatory_manager.sites.items():
-            plot_dir = self.path_manager.get_output_plots_path(obs_name, mkdir=False)
-            if plot_dir.exists():
-                for plot in plot_dir.glob(f"*.{fig_fmt}"):
-                    os.remove(plot)
+    # def clear_output_plots(self, fig_fmt="png"):
+    #     for obs_name, observatory in self.observatory_manager.sites.items():
+    #         plot_dir = self.path_manager.get_output_plots_path(obs_name, mkdir=False)
+    #         if plot_dir.exists():
+    #             for plot in plot_dir.glob(f"*.{fig_fmt}"):
+    #                 os.remove(plot)
 
     def perform_web_tasks(self, t_ref: Time = None):
         self.web_manager.perform_all_web_tasks()
@@ -305,7 +305,7 @@ class TargetSelector:
         modeling_function: Callable = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
-        extra_plotting_functions: List[Callable] = None,
+        extra_plotting_functions: list[Callable] = None,
         skip_tasks: list = None,
         iteration: int = -1,
         t_ref: Time = None,
@@ -480,7 +480,7 @@ class TargetSelector:
         # ======================== Ranking and lists ======================== #
         t1 = time.perf_counter()
         if "ranking" not in skip_tasks:
-            self.clear_output_plots()  # In prep for the new outputs
+            # self.clear_output_plots()  # In prep for the new outputs
             self.outputs_manager.build_ranked_target_lists(
                 t_ref=t_ref, plots=True, write_list=True
             )
@@ -527,10 +527,10 @@ class TargetSelector:
         self,
         scoring_function: Callable = None,
         observatory_scoring_function: Callable = None,
-        modeling_function: List[Callable] = None,
+        modeling_function: list[Callable] = None,
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
-        extra_plotting_functions: List[Callable] = None,
+        extra_plotting_functions: list[Callable] = None,
         recovery_file=False,
         skip_tasks=None,
         iterations=None,
@@ -554,7 +554,7 @@ class TargetSelector:
             It should have the 'standard' signature defined above.
             It should return:\n
                 `score : float`
-                `comments : List of str, optional`
+                `comments : list of str, optional`
 
         observatory_scoring_function : Callable, optional
             The scoring function to evaluate at observatories.

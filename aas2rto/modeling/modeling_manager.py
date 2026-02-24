@@ -2,7 +2,7 @@ import warnings
 from dataclasses import dataclass
 from logging import getLogger
 from multiprocessing import Pool
-from typing import Any, Callable, List
+from typing import Any, Callable
 
 from astropy.time import Time
 
@@ -63,7 +63,7 @@ class ModelingManager:
         self.path_manager = path_manager
 
     def build_target_models(
-        self, modeling_functions: List[Callable], t_ref: Time = None
+        self, modeling_functions: list[Callable], t_ref: Time = None
     ):
 
         lazy = self.config["lazy_modeling"]
@@ -73,6 +73,9 @@ class ModelingManager:
             modeling_functions = [modeling_functions]
 
         for modeling_func in modeling_functions:
+
+            if modeling_func is None:
+                continue
 
             try:
                 model_key = modeling_func.__name__

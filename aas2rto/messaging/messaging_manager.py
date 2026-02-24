@@ -1,7 +1,6 @@
 import time
 import traceback
 from logging import getLogger
-from typing import Dict
 
 from astropy.time import Time
 
@@ -25,7 +24,7 @@ class MessagingManager:
 
     def __init__(
         self,
-        messengers_config: Dict[str, Dict],
+        messengers_config: dict[str, dict],
         target_lookup: TargetLookup,
         path_manager: PathManager,
     ):

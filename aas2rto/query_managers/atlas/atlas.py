@@ -12,7 +12,7 @@ from astropy.time import Time
 from aas2rto import utils
 from aas2rto.exc import UnknownTargetWarning
 from aas2rto.query_managers.atlas.atlas_client import AtlasClient
-from aas2rto.query_managers.base import BaseQueryManager
+from aas2rto.query_managers.base import LightcurveQueryManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
@@ -35,14 +35,14 @@ class AtlasCredentialError(Exception):
     pass
 
 
-class AtlasQueryManager(BaseQueryManager):
+class AtlasQueryManager(LightcurveQueryManager):
     name = "atlas"
 
     comment_delim = ":"
-    DEFAULT_ID_PRIORITY = ("tns", "atlas", "yse", "ztf", "ls4", "lsst")
+    id_resolving_order = ("tns", "atlas", "yse", "ztf", "lsst", "ls4")
     default_config = {
         "credentials": None,
-        "alt_id_priority": DEFAULT_ID_PRIORITY,
+        # "alt_id_priority": DEFAULT_ID_PRIORITY,
         "project_identifier": None,
         "lightcurve_query_lookback": 30.0,
         "max_submitted": 20,
@@ -55,7 +55,7 @@ class AtlasQueryManager(BaseQueryManager):
     }
     config_comments = {
         "credentials": "**REQUIRED**: {'token': <>} OR {'username': <>, 'password': <>}",
-        "alt_id_priority": f"Naming preference for LCs, default={DEFAULT_ID_PRIORITY}",
+        # "alt_id_priority": f"Naming preference for LCs, default={DEFAULT_ID_PRIORITY}",
         "project_identifier": f"A unique string for this project eg. 'bright_sne_ia'",
         "lightcurve_query_lookback": "How long [DAYS] should LCs query in the past?",
         "max_submitted": "How many queries (per project!!) in queue at once? MAX~25",
@@ -226,7 +226,13 @@ class AtlasQueryManager(BaseQueryManager):
         logger.info(f"{len(finished_queries)} finished, {len(ongoing_queries)} ongoing")
         return finished_queries, ongoing_queries, error_queries
 
-    def select_query_candidates(self, t_ref: Time = None):
+    def select_lightcurves_to_query(self, t_ref: Time = None):
+        """OVERRIDES superclass's method.
+
+        Because ATLAS forced-phot server is more limited, there are more
+        checks on if it's useful to submit or not.
+        """
+
         t_ref = t_ref or Time.now()
 
         too_faint = 0
@@ -284,7 +290,7 @@ class AtlasQueryManager(BaseQueryManager):
         object_series = pd.Series(score_lookup)
         object_series.sort_values(inplace=True, ascending=False)
         logger.info(f"{len(object_series)} suitable targets")
-        return object_series.index
+        return object_series.index.to_list()
 
     def submit_query(self, target: Target, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -411,7 +417,7 @@ class AtlasQueryManager(BaseQueryManager):
 
         lightcurve_filepath = None
 
-        for alt_key in self.config["alt_id_priority"]:
+        for alt_key in self.id_resolving_order:
             alt_id = target.alt_ids.get(alt_key, None)
             if alt_id is not None:
                 candidate_filepath = self.get_lightcurve_filepath(alt_id)
@@ -428,14 +434,14 @@ class AtlasQueryManager(BaseQueryManager):
         return lightcurve
 
     def update_lightcurve_filenames(self):
-        alt_id_priority = self.config["alt_id_priority"]
+        # alt_id_priority = self.config["alt_id_priority"]
 
         t_start = time.perf_counter()
         renamed = []
         skipped = []
         for target_id, target in self.target_lookup.items():
             best_id = None
-            for alt_key in alt_id_priority:
+            for alt_key in self.id_resolving_order:
                 alt_id = target.alt_ids.get(alt_key, None)
                 if alt_id is None:
                     continue
@@ -469,7 +475,7 @@ class AtlasQueryManager(BaseQueryManager):
 
         self.retry_throttled_queries()
 
-        query_candidates = self.select_query_candidates(t_ref=t_ref)
+        query_candidates = self.select_lightcurves_to_query(t_ref=t_ref)
         self.submit_new_queries(query_candidates)
 
         self.load_target_lightcurves(t_ref=t_ref, only_flag_updated=False)

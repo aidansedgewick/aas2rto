@@ -1,4 +1,5 @@
 import copy
+import gzip
 import json
 import pickle
 import pytest
@@ -13,18 +14,19 @@ import pandas as pd
 
 from astropy import units as u
 from astropy.coordinates import SkyCoord
+from astropy.io import fits
 from astropy.time import Time
 
 from fink_client.consumer import AlertConsumer
 
-from aas2rto.exc import UnexpectedKeysError, UnexpectedKeysWarning
+from aas2rto.exc import BadKafkaConfigError, UnexpectedKeysError, UnexpectedKeysWarning
 from aas2rto.query_managers.fink.fink_base import (
     FinkAlert,
     FinkBaseQueryManager,
-    BadKafkaConfigError,
     updates_from_classifier_queries,
+    readstamp,
 )
-from aas2rto.query_managers.fink.fink_query import FinkBaseQuery
+from aas2rto.query_managers.fink.fink_portal_client import FinkBasePortalClient
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
@@ -40,10 +42,7 @@ def target_from_mock_alert(processed_alert: dict, t_ref: Time = None):
     return Target(target_id, coord, source="fink_cool", t_ref=t_ref)
 
 
-def process_single_mock_alert(
-    alert_data: FinkAlert,
-    t_ref: Time = None,
-):
+def process_single_mock_alert(alert_data: FinkAlert, t_ref: Time = None):
     topic, alert, key = alert_data
     processed_alert = copy.deepcopy(alert["candidate"])
     processed_alert["target_id"] = alert["target_id"]
@@ -52,7 +51,7 @@ def process_single_mock_alert(
     return processed_alert
 
 
-class MockFinkQuery:
+class MockFinkPortalClient:
     objects = None
     latests_query_and_collate = None
 
@@ -60,20 +59,18 @@ class MockFinkQuery:
 class FinkExampleQM(FinkBaseQueryManager):
     name = "fink_cool"
     id_resolving_order = ("cool_survey", "fink_cool")
-    fink_query = MockFinkQuery
+    portal_client_class = MockFinkPortalClient  # NOT initialised here.
     target_id_key = "target_id"
     alert_id_key = "obs_id"
 
-    def add_target_from_alert(self, processed_alert: dict, t_ref: Time = None):
-        target_id = processed_alert["target_id"]
-        if target_id in self.target_lookup:
-            return None
-        target = target_from_mock_alert(processed_alert, t_ref=t_ref)
-        self.target_lookup.add_target(target)
-        return target
-
     def process_single_alert(self, alert_data: FinkAlert, t_ref=None):
         return process_single_mock_alert(alert_data, t_ref=t_ref)
+
+    def new_target_from_alert(self, processed_alert: dict, t_ref: Time = None):
+        return target_from_mock_alert(processed_alert, t_ref=t_ref)
+
+    def new_target_from_record(self, record: dict, t_ref: Time = None):
+        return target_from_mock_alert(record, t_ref=t_ref)
 
     def apply_updates_from_alert(self, processed_alert: dict, t_ref: Time = None):
         fink_id = processed_alert["target_id"]
@@ -81,16 +78,6 @@ class FinkExampleQM(FinkBaseQueryManager):
         target = self.target_lookup[fink_id]
         target.updated = True
         target.info_messages.append(f"{fink_id} alert with alert_id {alert_id}")
-
-    def add_target_from_record(self, record: dict):
-        fink_id = record["target_id"]
-        exising_target = self.target_lookup.get(fink_id, None)
-        if isinstance(exising_target, Target):
-            return None
-        coord = SkyCoord(record["ra"], record["dec"], unit="deg")
-        target = Target(fink_id, coord, source="cool_survey")
-        self.target_lookup.add_target(target)
-        return target
 
     def process_fink_lightcurve(self, unprocessed_lc: pd.DataFrame):
         unprocessed_lc.insert(0, "new_col", 100.0)
@@ -107,18 +94,23 @@ class FinkExampleQM(FinkBaseQueryManager):
 
     def load_cutouts_for_alert(self, fink_id: str, alert_id: int):
         cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
-        print(cutouts_filepath)
         if cutouts_filepath.exists():
-            print("cutouts path exists!")
             with open(cutouts_filepath, "rb") as f:
                 cutouts = pickle.load(f)
             return cutouts
         return None
 
 
+class BadPortalClient:
+    pass
+
+
 class FinkBadQM(FinkBaseQueryManager):
     name = "fink_fail"
     id_resolving_order = ("fail", "fink_fail")
+    portal_client_class = BadPortalClient
+    target_id_key = "target_id"
+    alert_id_key = "alert_id"
 
 
 ##===== Now define pytest fixtures =====##
@@ -248,8 +240,8 @@ def patched_qm(
     qm.target_lookup["T00"].alt_ids["cool_survey"] = "T00"
     qm.target_lookup["T01"].alt_ids["cool_survey"] = "T01"
 
-    monkeypatch.setattr(qm.fink_query, "objects", mock_objects)
-    monkeypatch.setattr(qm.fink_query, "latests_query_and_collate", mock_latests)
+    monkeypatch.setattr(qm.portal_client, "objects", mock_objects)
+    monkeypatch.setattr(qm.portal_client, "latests_query_and_collate", mock_latests)
     return qm
 
 
@@ -300,6 +292,8 @@ class Test__HelperFunctions:
         assert alert[1]["obs_id"] == 1000
 
     def test__mock_poll(self, mock_alert_stream: AlertStream):
+        """Do I understand how python closures work?"""
+
         # Arrange
         def mock_poll():
             return next(mock_alert_stream)
@@ -323,14 +317,14 @@ class Test__HelperFunctions:
 
     def test__fq_objects_is_patched(self, patched_qm: FinkBaseQueryManager):
         # Act
-        lc = patched_qm.fink_query.objects(target_id="T00")
+        lc = patched_qm.portal_client.objects(target_id="T00")
 
         # Assert
         assert len(lc) == 14  # etc.
 
     def test__fq_objects_empty_for_bad_target(self, patched_qm: FinkBaseQueryManager):
         # Act
-        lc = patched_qm.fink_query.objects(target_id="T01")
+        lc = patched_qm.portal_client.objects(target_id="T01")
 
         # Assert
         assert len(lc) == 0
@@ -338,65 +332,67 @@ class Test__HelperFunctions:
     def test__fq_raise_on_request(self, patched_qm: FinkBaseQueryManager):
         # Act
         with pytest.raises(ValueError):
-            lc = patched_qm.fink_query.objects(target_id="T_fail")
+            lc = patched_qm.portal_client.objects(target_id="T_fail")
 
     def test__fq_objects_no_target_id_raises(self, patched_qm: FinkBaseQueryManager):
         # Act
         with pytest.raises(ValueError):
-            lc = patched_qm.fink_query.objects()
+            lc = patched_qm.portal_client.objects()
 
     def test__fq_latests_is_patched(self, patched_qm: FinkBaseQueryManager):
         # Act
-        results = patched_qm.fink_query.latests_query_and_collate(class_="cool_sne")
+        results = patched_qm.portal_client.latests_query_and_collate(class_="cool_sne")
 
         # Assert
         assert len(results) == 3
 
     def test__fq_latests_empty_for_bad_class(self, patched_qm: FinkBaseQueryManager):
         # Act
-        results = patched_qm.fink_query.latests_query_and_collate(class_="boring_sne")
+        results = patched_qm.portal_client.latests_query_and_collate(
+            class_="boring_sne"
+        )
 
         # Assert
         assert len(results) == 0
         assert set(results.columns) == set("target_id lastdate fink_class".split())
 
-    def test__fq_latests_missing_class_raises(self, patched_qm: FinkBaseQueryManager):
+    def test__fq_latests_empty_class_raises(self, patched_qm: FinkBaseQueryManager):
         # Act
         with pytest.raises(ValueError):
-            lc = patched_qm.fink_query.latests_query_and_collate()
+            lc = patched_qm.portal_client.latests_query_and_collate()
 
 
 class Test__ExampleQMFunctions:
-    def test__add_target_from_alert(
+    def test__new_target_from_alert(
         self, patched_qm: FinkBaseQueryManager, mock_alert_list: list, t_fixed: Time
     ):
         # Arrange
         processed_alert = process_single_mock_alert(mock_alert_list[0])
 
         # Act
-        target = patched_qm.add_target_from_alert(processed_alert)
+        target = patched_qm.new_target_from_alert(processed_alert)
 
         # Assert
         assert isinstance(target, Target)
 
-        assert set(patched_qm.target_lookup.keys()) == set(["T00", "T01", "T101"])
+        # assert set(patched_qm.target_lookup.keys()) == set(["T00", "T01", "T101"])
 
-    def test__no_add_existing_target(
-        self, patched_qm: FinkBaseQueryManager, mock_alert_list: list, t_fixed: Time
-    ):
-        # Arrange
-        processed_alert = process_single_mock_alert(mock_alert_list[0])
-        coord = SkyCoord(ra=120.0, dec=-60.0, unit="deg")
-        t101 = Target("T101", coord)  # different coord! to check alert not added
-        patched_qm.target_lookup.add_target(t101)
+    # def test__no_add_existing_target(
+    #     self, patched_qm: FinkBaseQueryManager, mock_alert_list: list, t_fixed: Time
+    # ):
+    #     # Arrange
+    #     processed_alert = process_single_mock_alert(mock_alert_list[0])
+    #     coord = SkyCoord(ra=120.0, dec=-60.0, unit="deg")
+    #     t101 = Target("T101", coord)  # different coord! to check alert not added
+    #     patched_qm.target_lookup.add_target(t101)
 
-        # Act
-        added_target = patched_qm.add_target_from_alert(processed_alert)
+    #     # Act
+    #     added_target = patched_qm.add_target_from_alert(processed_alert)
 
-        # Assert
-        assert added_target is None
+    #     # Assert
+    #     assert added_target is None
 
-        assert np.isclose(patched_qm.target_lookup["T101"].coord.ra.deg, 120.0)
+    #     assert np.isclose(patched_qm.target_lookup["T101"].coord.ra.deg, 120.0)
 
     def test__process_alerts(
         self, patched_qm: FinkBaseQueryManager, mock_alert_list: list[FinkAlert]
@@ -439,7 +435,7 @@ class Test__FinkBaseQMInit:
 
         # Act
         with pytest.raises(UnexpectedKeysError):
-            qm = FinkBaseQueryManager(fink_config, tlookup, parent_path=tmp_path)
+            qm = FinkExampleQM(fink_config, tlookup, parent_path=tmp_path)
 
 
 class Test__KafkaConfig:
@@ -515,68 +511,76 @@ class Test__PathMethods:
         assert lc_path == tmp_path / "fink_cool/cutouts/test_id/000.pkl"
 
 
-class Test__MissingFunctionsRaise:
-    def test__no_id_resolving_order_raises(self, tlookup: TargetLookup, tmp_path: Path):
-        # Arrange
-        class NoIdOrderFinkQM(FinkBaseQueryManager):
-            name = "no_order"
-
+class Test__MissingAbstractMethodsRaises:
+    def test__missing(self):
         # Act
-        with pytest.raises(NotImplementedError):
-            qm = NoIdOrderFinkQM({}, tlookup, parent_path=tmp_path)
+        with pytest.raises(TypeError):
+            qm = FinkBadQM({}, {})  # OK this is just testing ABC methods.
 
-    def test__no_target_from_alert_raises(
-        self, mock_alert_list: list, bad_qm: FinkBaseQueryManager
-    ):
-        # Arrange
-        alert = process_single_mock_alert(mock_alert_list[0])
 
-        # Act
-        with pytest.raises(NotImplementedError):
-            bad_qm.add_target_from_alert(alert)
+# class Test__MissingFunctionsRaise:
+#     # def test__no_id_resolving_order_raises(self, tlookup: TargetLookup, tmp_path: Path):
+#     #     # Arrange
+#     #     class NoIdOrderFinkQM(FinkBaseQueryManager):
+#     #         name = "no_order"
 
-    def test__no_target_from_record_raises(
-        self, mock_alert_list: list, bad_qm: FinkBaseQueryManager, t_fixed: Time
-    ):
-        # Arrange
-        alert = process_single_mock_alert(mock_alert_list[0])
+#     #     # Act
+#     #     with pytest.raises(NotImplementedError):
+#     #         qm = NoIdOrderFinkQM({}, tlookup, parent_path=tmp_path)
+#     # ==== test redundant - this is implemented with abstract base method
 
-        # Act
-        with pytest.raises(NotImplementedError):
-            bad_qm.add_target_from_record(alert)
+#     def test__no_target_from_alert_raises(
+#         self, mock_alert_list: list, bad_qm: FinkBaseQueryManager
+#     ):
+#         # Arrange
+#         alert = process_single_mock_alert(mock_alert_list[0])
 
-    def test__no_apply_updates_raises(
-        self, mock_alert_list: list, bad_qm: FinkBaseQueryManager, t_fixed: Time
-    ):
-        # Arrange
-        alert = process_single_mock_alert(mock_alert_list[0])
-        target = target_from_mock_alert(alert, t_ref=t_fixed)
+#         # Act
+#         with pytest.raises(NotImplementedError):
+#             bad_qm.new_target_from_alert(alert)
 
-        # Act
-        with pytest.raises(NotImplementedError):
-            bad_qm.apply_updates_from_alert(alert)
+#     def test__no_target_from_record_raises(
+#         self, mock_alert_list: list, bad_qm: FinkBaseQueryManager, t_fixed: Time
+#     ):
+#         # Arrange
+#         alert = process_single_mock_alert(mock_alert_list[0])
 
-    def test__no_process_alert_raises(
-        self, mock_alert_list: list, bad_qm: FinkBaseQueryManager
-    ):
-        # Act
-        with pytest.raises(NotImplementedError):
-            bad_qm.process_single_alert(mock_alert_list[0])
+#         # Act
+#         with pytest.raises(NotImplementedError):
+#             bad_qm.new_target_from_record(alert)
 
-    def test__no_process_fink_lc_raises(self, bad_qm: FinkBaseQueryManager):
-        # Act
-        with pytest.raises(NotImplementedError):
-            bad_qm.process_fink_lightcurve(pd.DataFrame(columns=["target_id"]))
+#     def test__no_apply_updates_raises(
+#         self, mock_alert_list: list, bad_qm: FinkBaseQueryManager, t_fixed: Time
+#     ):
+#         # Arrange
+#         alert = process_single_mock_alert(mock_alert_list[0])
+#         target = target_from_mock_alert(alert, t_ref=t_fixed)
 
-    def test__no_load_alerts_raises(self, bad_qm: FinkBaseQueryManager):
-        # Act
-        with pytest.raises(NotImplementedError):
-            bad_qm.load_missing_alerts_for_target("T00")
+#         # Act
+#         with pytest.raises(NotImplementedError):
+#             bad_qm.apply_updates_from_alert(alert)
 
-    def test__no_load_cutouts_raises(self, bad_qm: FinkBaseQueryManager):
-        # Act
-        with pytest.raises(NotImplementedError):
-            bad_qm.load_cutouts_for_alert("T00", 1000)
+#     def test__no_process_alert_raises(
+#         self, mock_alert_list: list, bad_qm: FinkBaseQueryManager
+#     ):
+#         # Act
+#         with pytest.raises(NotImplementedError):
+#             bad_qm.process_single_alert(mock_alert_list[0])
+
+#     def test__no_process_fink_lc_raises(self, bad_qm: FinkBaseQueryManager):
+#         # Act
+#         with pytest.raises(NotImplementedError):
+#             bad_qm.process_fink_lightcurve(pd.DataFrame(columns=["target_id"]))
+
+#     def test__no_load_alerts_raises(self, bad_qm: FinkBaseQueryManager):
+#         # Act
+#         with pytest.raises(NotImplementedError):
+#             bad_qm.load_missing_alerts_for_target("T00")
+
+#     def test__no_load_cutouts_raises(self, bad_qm: FinkBaseQueryManager):
+#         # Act
+#         with pytest.raises(NotImplementedError):
+#             bad_qm.load_cutouts_for_alert("T00", 1000)
 
 
 class Test__ListenForAlerts:
@@ -616,12 +620,12 @@ class Test__ListenForAlerts:
 
 
 class Test__TargetsFromAlerts:
-    def test__new_targets(self, patched_qm: FinkBaseQueryManager, t_fixed: Time):
+    def test__add_targets(self, patched_qm: FinkBaseQueryManager, t_fixed: Time):
         # Arrange
         processed_alerts = patched_qm.listen_for_alerts()
 
         # Act
-        new_targets = patched_qm.new_targets_from_alerts(
+        new_targets = patched_qm.add_targets_from_alerts(
             processed_alerts, t_ref=t_fixed
         )
 
@@ -638,7 +642,7 @@ class Test__TargetsFromAlerts:
         patched_qm.target_lookup.add_target(t101)
 
         # Act
-        new_targets = patched_qm.new_targets_from_alerts(processed_alerts)
+        new_targets = patched_qm.add_targets_from_alerts(processed_alerts)
 
         # Assert
         assert set(new_targets) == set()
@@ -669,18 +673,18 @@ class Test__GetFinkIdFromTarget:
         patched_qm.target_lookup.add_target(target)
 
         # Act
-        fink_id = patched_qm.get_fink_id_from_target(target)
+        fink_id = patched_qm.get_relevant_id_from_target(target)
 
         # Assert
         assert fink_id == "COOL_000"
 
     def test__none_from_no_alt_id(self, patched_qm: FinkBaseQueryManager):
         # Arrange
-        target = Target("T901", SkyCoord(ra=0.0, dec=0.0, unit="deg"))
+        target = Target("T901", SkyCoord(ra=0.0, dec=0.0, unit="deg"))  # "cool_id" set
         patched_qm.target_lookup.add_target(target)
 
         # Act
-        fink_id = patched_qm.get_fink_id_from_target(target)
+        fink_id = patched_qm.get_relevant_id_from_target(target)  # "cool_id" requied
 
         # Assert
         assert fink_id is None
@@ -834,12 +838,12 @@ class Test__FinkClassifierQueries:
 
 
 class Test__NewTargetsFromQueryRecords:
-    def test__new_targets(self, patched_qm: FinkBaseQueryManager):
+    def test__add_targets(self, patched_qm: FinkBaseQueryManager):
         # Arrange
         query_records = patched_qm.fink_classifier_queries()
 
         # Act
-        new_targets = patched_qm.new_targets_from_query_records(query_records)
+        new_targets = patched_qm.add_targets_from_query_records(query_records)
 
         # Assert
         assert set(new_targets) == set(["T201", "T202", "T203"])
@@ -857,7 +861,7 @@ class Test__GetLCsToQuery:
         lc_fink.to_csv(lc_filepath, index=False)
 
         # Act
-        to_query = patched_qm.get_lightcurves_to_query()
+        to_query = patched_qm.select_lightcurves_to_query()
 
         # Assert
         assert set(to_query) == set(["T01"])
@@ -872,7 +876,7 @@ class Test__GetLCsToQuery:
         patched_qm.config["lightcurve_update_interval"] = 1.0
 
         # Act
-        to_query = patched_qm.get_lightcurves_to_query(t_ref=t_future)
+        to_query = patched_qm.select_lightcurves_to_query(t_ref=t_future)
 
         # Assert
         assert set(to_query) == set(["T00", "T01"])
@@ -881,11 +885,11 @@ class Test__GetLCsToQuery:
 class Test__QueryLCs:
     def test__query_all(self, patched_qm: FinkBaseQueryManager):
         # Act
-        success, missing, failed = patched_qm.query_lightcurves()
+        success, empty, failed = patched_qm.query_lightcurves()
 
         # Assert
         assert set(success) == set(["T00"])
-        assert set(missing) == set(["T01"])
+        assert set(empty) == set(["T01"])
         assert set(failed) == set()
 
         exp_lc_file = patched_qm.get_lightcurve_filepath("T00")
@@ -900,24 +904,24 @@ class Test__QueryLCs:
         patched_qm.config["lightcurve_chunk_size"] = 1
 
         # Act
-        success, missing, failed = patched_qm.query_lightcurves(
+        success, empty, failed = patched_qm.query_lightcurves(
             fink_id_list=["T00", "T_fail"]
         )
 
         # Assert
         assert set(success) == set(["T00"])
-        assert set(missing) == set()
+        assert set(empty) == set()
         assert set(failed) == set(["T_fail"])
 
-    def test__all_missing_counted(self, patched_qm: FinkBaseQueryManager):
+    def test__all_empty_counted(self, patched_qm: FinkBaseQueryManager):
         # Act
-        success, missing, failed = patched_qm.query_lightcurves(
+        success, empty, failed = patched_qm.query_lightcurves(
             fink_id_list=["T01", "T02", "T03"]
         )
 
         # Assert
-        len(missing) == 3
-        set(missing) == set(["T01", "T02", "T03"])
+        len(empty) == 3
+        set(empty) == set(["T01", "T02", "T03"])
 
     def test__quit_after_n_failed(self, patched_qm: FinkBaseQueryManager):
         # Arrange
@@ -926,11 +930,11 @@ class Test__QueryLCs:
         id_list = "T_fail_01 T_fail_02 T_fail_03 T_fail_04 T_fail_05".split()
 
         # Act
-        success, missing, failed = patched_qm.query_lightcurves(fink_id_list=id_list)
+        success, empty, failed = patched_qm.query_lightcurves(fink_id_list=id_list)
 
         # Assert
         assert set(success) == set()
-        assert set(missing) == set()
+        assert set(empty) == set()
         assert len(failed) == 3
         assert set(failed) == set(["T_fail_01", "T_fail_02", "T_fail_03"])
 
@@ -944,12 +948,12 @@ class Test__QueryLCs:
         patched_qm.config["max_query_time"] = 0.3
 
         # Act
-        success, missing, failed = patched_qm.query_lightcurves(
+        success, empty, failed = patched_qm.query_lightcurves(
             fink_id_list=["T_sleep", "T01"]
         )
 
         # Assert
-        assert set(missing) == set(["T_sleep"])
+        assert set(empty) == set(["T_sleep"])
         # didn't make it to T01 -- quit after 0.3 sec
 
     def test__bulk_query(self, patched_qm: FinkBaseQueryManager, tmp_path: Path):
@@ -977,6 +981,54 @@ class Test__QueryLCs:
         assert bulk_filepath.exists()
         loaded_lc = pd.read_csv(bulk_filepath)
         assert set(loaded_lc.columns) == set(["target_id", "obs_id", "mjd"])
+
+
+class Test__LoadSingleLC:
+    def test__load_lc(self, patched_qm: FinkBaseQueryManager, lc_pandas: pd.DataFrame):
+        # Arrange
+        lc_filepath = patched_qm.get_lightcurve_filepath("T00")
+        lc_pandas.to_csv(lc_filepath, index=False)
+
+        # Act
+        loaded = patched_qm.load_single_lightcurve(target_id="T00")
+
+        # Assert
+        assert isinstance(loaded, pd.DataFrame)
+
+    def test__missing_no_fail(
+        self, patched_qm: FinkBaseQueryManager, lc_pandas: pd.DataFrame
+    ):
+        # Act
+        lc = patched_qm.load_single_lightcurve(target_id="T01")
+
+        # Assert
+        assert lc is None
+
+    def test__no_relevant_id(
+        self, patched_qm: FinkBaseQueryManager, lc_pandas: pd.DataFrame
+    ):
+        # Arrange
+        T01 = patched_qm.target_lookup["T01"]
+        T01.alt_ids.pop("cool_survey")
+        assert patched_qm.get_relevant_id_from_target(T01) is None
+
+        # Act
+        lc = patched_qm.load_single_lightcurve("T01")
+
+        # Assert
+        assert lc is None
+
+    def test__bad_target_no_error(
+        self, patched_qm: FinkBaseQueryManager, lc_pandas: pd.DataFrame
+    ):
+        # Arrange
+        assert "T02" not in patched_qm.target_lookup
+
+        # Act
+        lc = patched_qm.load_single_lightcurve("T02")
+
+        # Assert
+        assert lc is None
 
 
 class Test__IntegrateAlerts:
@@ -1007,11 +1059,11 @@ class Test__LoadCutouts:
         T00_fink_data.add_lightcurve(lc_pandas)
 
         # Act
-        loaded, missing, skipped = patched_qm.load_cutouts()
+        loaded, empty, skipped = patched_qm.load_cutouts()
 
         # Assert
         assert set(loaded) == set(["T00"])
-        assert set(missing) == set()  # T01 does not have a fink_id, so ignore
+        assert set(empty) == set()  # T01 does not have a fink_id, so ignore
         assert set(skipped) == set()
 
         assert T00_fink_data.meta["cutouts_alert_id"] == 1000_2000_3000_4002
@@ -1027,11 +1079,11 @@ class Test__LoadCutouts:
             pickle.dump(dict(science=1.0), f)
 
         # Act
-        loaded, missing, skipped = patched_qm.load_cutouts()
+        loaded, empty, skipped = patched_qm.load_cutouts()
 
         # Assert
         assert set(loaded) == set()
-        assert set(missing) == set()
+        assert set(empty) == set()
         assert set(skipped) == set()
 
     def test__skip_if_latest_loaded(
@@ -1050,11 +1102,11 @@ class Test__LoadCutouts:
         patched_qm.load_cutouts()
 
         # Act
-        loaded, missing, skipped = patched_qm.load_cutouts()
+        loaded, empty, skipped = patched_qm.load_cutouts()
 
         # Assert
         assert set(loaded) == set()
-        assert set(missing) == set()
+        assert set(empty) == set()
         assert set(skipped) == set(["T00"])
 
 
@@ -1078,3 +1130,26 @@ class Test__PerformAllTasks:
         # Assert
         exp_targets = "T00 T01 T101 T201 T202 T203".split()
         assert set(patched_qm.target_lookup.keys()) == set(exp_targets)
+
+
+class Test__Readstamp:
+    def test__readstamp(self, fink_stamp_bytes: bytes):
+        # Act
+        recovered = readstamp(fink_stamp_bytes, gzipped=True)
+        # gzipped is True BY DEFAULT - but explict is helpful reminder here...
+
+        # Assert
+        assert isinstance(recovered, np.ndarray)
+
+        assert recovered.shape == (10, 10)
+
+    def test__readstamp_gzipped(self, fink_stamp_bytes: bytes):
+        # Arrange
+        decompressed_stamp = gzip.decompress(fink_stamp_bytes)
+
+        # Act
+        recovered = readstamp(decompressed_stamp, gzipped=False)
+
+        # Assert
+        assert isinstance(recovered, np.ndarray)
+        assert recovered.shape == (10, 10)

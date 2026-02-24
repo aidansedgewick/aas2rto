@@ -281,7 +281,7 @@ def lc_compiler():
 
 
 @pytest.fixture
-def lc_ztf(lc_pandas: pd.DataFrame):
+def ztf_lc(lc_pandas: pd.DataFrame):
     col_mapping = {
         "obs_id": "candid",
         "mag": "magpsf",
@@ -294,8 +294,8 @@ def lc_ztf(lc_pandas: pd.DataFrame):
 
 
 @pytest.fixture
-def ztf_td(lc_ztf: pd.DataFrame):
-    return TargetData(lightcurve=lc_ztf)
+def ztf_td(ztf_lc: pd.DataFrame):
+    return TargetData(lightcurve=ztf_lc)
 
 
 @pytest.fixture
@@ -310,6 +310,34 @@ def ztf_cutouts():
         "template": np.random.normal(0, 1.0, (20, 20)),
         "difference": np.random.normal(0, 1.0, (20, 20)),
     }
+
+
+@pytest.fixture
+def lsst_id0():
+    return 1234_5678_9000
+
+
+@pytest.fixture
+def lsst_rows(lsst_id0: int, t_fixed: Time):
+    return [
+        [lsst_id0 + 0, t_fixed.mjd + 0.0, 1000.0, 100.0, "g"],  # ~23.9+-0.1
+        [lsst_id0 + 1, t_fixed.mjd + 1.0, 2000.0, 200.0, "r"],  # ~23.1+-0.1
+        [lsst_id0 + 2, t_fixed.mjd + 2.0, 5000.0, 500.0, "i"],  # ~22.2+-0.1
+        [lsst_id0 + 3, t_fixed.mjd + 3.0, 10000.0, 100.0, "g"],  # ~21.4+-0.01
+        [lsst_id0 + 4, t_fixed.mjd + 4.0, 20000.0, 200.0, "r"],  # ~20.6+-0.01
+        [lsst_id0 + 5, t_fixed.mjd + 5.0, 50000.0, 500.0, "i"],  # ~19.7+-0.01
+    ]
+
+
+@pytest.fixture
+def lsst_lc(lsst_rows: list[list]):
+    col_names = "diaSourceId midpointMjdTai psfFlux psfFluxErr band".split()
+    return pd.DataFrame(lsst_rows, columns=col_names)
+
+
+@pytest.fixture
+def lsst_td(lsst_lc: pd.DataFrame):
+    return TargetData(lightcurve=lsst_lc)
 
 
 @pytest.fixture
@@ -331,14 +359,14 @@ def atlas_rows(t_fixed: Time):
 
 
 @pytest.fixture
-def lc_atlas(atlas_rows: List[List]):
-    colnames = "mjd m dm mag5sig F Obs".split()
-    return pd.DataFrame(atlas_rows, columns=colnames)
+def atlas_lc(atlas_rows: List[List]):
+    col_names = "mjd m dm mag5sig F Obs".split()
+    return pd.DataFrame(atlas_rows, columns=col_names)
 
 
 @pytest.fixture
-def atlas_td(lc_atlas: pd.DataFrame):
-    return TargetData(lightcurve=lc_atlas)
+def atlas_td(atlas_lc: pd.DataFrame):
+    return TargetData(lightcurve=atlas_lc)
 
 
 @pytest.fixture
@@ -647,6 +675,40 @@ def fink_config(fink_kafka_config: dict):
 
 
 @pytest.fixture
+def lasair_ztf_kafka_config():
+    topic_keys = {"lasair_id": "objectId", "ra": "ramean", "dec": "decmean"}
+    return {
+        "kafka_server": "lasair-blah.org",
+        "group_id": "test_group",
+        "topics": {
+            "cool_sne": topic_keys,
+        },
+    }
+
+
+@pytest.fixture
+def lasair_ztf_config(lasair_ztf_kafka_config: dict):
+    return {"kafka": lasair_ztf_kafka_config, "token": "example_token"}
+
+
+@pytest.fixture
+def lasair_lsst_kafka_config():
+    topic_keys = {"lasair_id": "diaObjectId", "ra": "ramean", "dec": "decmean"}
+    return {
+        "kafka_server": "lasair-blah.org",
+        "group_id": "test_group",
+        "topics": {
+            "cool_sne": topic_keys,
+        },
+    }
+
+
+@pytest.fixture
+def lasair_lsst_config(lasair_lsst_kafka_config: dict):
+    return {"kafka": lasair_lsst_kafka_config, "token": "example_token"}
+
+
+@pytest.fixture
 def atlas_credentials():
     return {"token": 1234}
 
@@ -694,11 +756,21 @@ def yse_config(yse_credentials: dict, yse_explorer_queries: dict):
 
 
 @pytest.fixture
-def global_qm_config(fink_config: dict, atlas_config: dict, tns_config: dict):
+def global_qm_config(
+    fink_config: dict,
+    lasair_ztf_config: dict,
+    lasair_lsst_config: dict,
+    atlas_config: dict,
+    yse_config: dict,
+    tns_config: dict,
+):
     # Deepcopy, else sub-dicts not modified correctly for tests of config-checkers.
     return {
         "fink_lsst": copy.deepcopy(fink_config),
         "fink_ztf": copy.deepcopy(fink_config),
+        # "lasair_ztf": copy.deepcopy(lasair_ztf_config),
+        # "lasair_lsst": copy.deepcopy(lasair_lsst_config),
         "atlas": copy.deepcopy(atlas_config),
+        "yse": copy.deepcopy(yse_config),
         "tns": copy.deepcopy(tns_config),
     }

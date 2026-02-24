@@ -3,7 +3,6 @@ import traceback
 import time
 import warnings
 from logging import getLogger
-from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -205,7 +204,7 @@ class SupernovaPeakScore:
         self.scoring_sources = scoring_sources
         # self.scoring_bands = scoring_bands
 
-    def __call__(self, target: Target, t_ref: Time) -> Tuple[float, List]:
+    def __call__(self, target: Target, t_ref: Time) -> tuple[float, list]:
         # t_ref = t_ref or Time.now()
 
         # to keep track

@@ -2,7 +2,6 @@ import time
 import warnings
 from logging import getLogger
 from pathlib import Path
-from typing import Dict
 
 from astropy.time import Time
 
@@ -15,10 +14,9 @@ from aas2rto.target_lookup import TargetLookup
 from aas2rto.query_managers.atlas import AtlasQueryManager
 from aas2rto.query_managers.fink import FinkLSSTQueryManager, FinkZTFQueryManager
 
-# from aas2rto.query_managers.lasair import LasairQueryManager
+# from aas2rto.query_managers.lasair import LasairLSSTQueryManager, LasairZTFQueryManager
 from aas2rto.query_managers.tns import TNSQueryManager
-
-# from aas2rto.query_managers.yse import YseQueryManager
+from aas2rto.query_managers.yse import YSEQueryManager
 
 # from aas2rto.query_managers.sdss import SdssQueryManager
 
@@ -30,9 +28,10 @@ EXPECTED_QUERY_MANAGERS = {
     "atlas": AtlasQueryManager,
     "fink_lsst": FinkLSSTQueryManager,
     "fink_ztf": FinkZTFQueryManager,
-    # "lasair": LasairQueryManager,
+    # "lasair_lsst": LasairLSSTQueryManager,
+    # "lasair_ztf": LasairZTFQueryManager,
     "tns": TNSQueryManager,
-    # "yse": YseQueryManager,
+    "yse": YSEQueryManager,
 }
 
 
@@ -40,7 +39,7 @@ class PrimaryQueryManager:
 
     def __init__(
         self,
-        config: Dict,
+        config: dict,
         target_lookup: TargetLookup,
         path_manager: PathManager,
     ):
@@ -68,7 +67,7 @@ class PrimaryQueryManager:
         self.query_managers = self._initialise_query_manager_lookup()
         self.initialize_query_managers()
 
-    def _initialise_query_manager_lookup(self) -> Dict[str, BaseQueryManager]:
+    def _initialise_query_manager_lookup(self) -> dict[str, BaseQueryManager]:
         """Only for type hinting..."""
         return {}
 

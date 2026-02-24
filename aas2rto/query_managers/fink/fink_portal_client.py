@@ -17,11 +17,11 @@ from astropy.time import Time
 logger = getLogger(__name__.split(".")[-1])
 
 
-class FinkQueryError(Exception):
+class FinkPortalClientError(Exception):
     pass
 
 
-class FinkBaseQuery(abc.ABC):
+class FinkBasePortalClient(abc.ABC):
 
     TIMEOUT_LIKELY = 58.0
 
@@ -41,7 +41,7 @@ class FinkBaseQuery(abc.ABC):
         pass
 
     def __init__(self):
-        pass
+        pass  # In case of credentials required, implement here
 
     @staticmethod
     def fix_dict_keys_inplace(data: dict):
@@ -51,11 +51,10 @@ class FinkBaseQuery(abc.ABC):
             data[new_key] = data.pop(old_key)
         # NO RETURN - dictionary is modified "in place"...
 
-    @classmethod
-    def process_data(cls, data, fix_keys=True, return_type="records", df_kwargs=None):
+    def process_data(self, data, fix_keys=True, return_type="records", df_kwargs=None):
         if fix_keys:
             for row in data:
-                cls.fix_dict_keys_inplace(row)
+                self.fix_dict_keys_inplace(row)
         if return_type == "records":
             return data
         elif return_type == "pandas":
@@ -78,49 +77,46 @@ class FinkBaseQuery(abc.ABC):
         """
         return {k.rstrip("_"): v for k, v in kwargs.items()}
 
-    @classmethod
     def process_response(
-        cls, response: requests.Response, fix_keys=True, return_type=None
+        self, response: requests.Response, fix_keys=True, return_type=None
     ):
         if response.status_code in [404, 500, 504]:
             logger.error("\033[31;1mFinkQuery: error rasied\033[0m")
-            if response.elapsed.total_seconds() > cls.TIMEOUT_LIKELY:
+            if response.elapsed.total_seconds() > self.TIMEOUT_LIKELY:
                 logger.error("likely a timeout error")
             if isinstance(response.content, bytes):
-                raise FinkQueryError(response.content.decode())
+                raise FinkPortalClientError(response.content.decode())
             else:
-                raise FinkQueryError(response.content)
+                raise FinkPortalClientError(response.content)
         data = json.loads(response.content)
-        return cls.process_data(data, fix_keys=fix_keys, return_type=return_type)
+        return self.process_data(data, fix_keys=fix_keys, return_type=return_type)
 
-    @classmethod
     def do_post(
-        cls, service: str, process=True, fix_keys=True, return_type=None, **kwargs
+        self, service: str, process=True, fix_keys=True, return_type=None, **kwargs
     ):
-        kwargs = cls.process_kwargs(**kwargs)
+        kwargs = self.process_kwargs(**kwargs)
         response: requests.Response = requests.post(
-            f"{cls.api_url}/{service}", json=kwargs
+            f"{self.api_url}/{service}", json=kwargs
         )
         if response.status_code != 200:
             time.sleep(0.1)
             msg = f"query for '{service}' returned status {response.status_code}"
             logger.warning(msg)
         if process:
-            return cls.process_response(
+            return self.process_response(
                 response, fix_keys=fix_keys, return_type=return_type
             )
         return response
 
-    @classmethod
-    def do_get(cls, service: str, process=True, **kwargs):
+    def do_get(self, service: str, process=True, **kwargs):
         response: requests.Response = requests.get(
-            f"{cls.api_url}/{service}", json=kwargs
+            f"{self.api_url}/{service}", json=kwargs
         )
         if response.status_code != 200:
             if isinstance(response.content, bytes):
-                raise FinkQueryError(response.content.decode())
+                raise FinkPortalClientError(response.content.decode())
             else:
-                raise FinkQueryError(response.content)
+                raise FinkPortalClientError(response.content)
         if process:
             try:
                 return json.loads(response.content)
@@ -128,27 +124,23 @@ class FinkBaseQuery(abc.ABC):
                 return response.content.decode()
         return response
 
-    @classmethod
-    def objects(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def objects(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "objects", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def cutouts(cls, **kwargs):
-        if kwargs.get("kind", None) not in cls.imtypes:
-            raise ValueError(f"provide `kind` as one of {cls.imtypes}")
-        return cls.do_post("cutouts", fix_keys=False, **kwargs)
+    def cutouts(self, **kwargs):
+        if kwargs.get("kind", None) not in self.imtypes:
+            raise ValueError(f"provide `kind` as one of {self.imtypes}")
+        return self.do_post("cutouts", fix_keys=False, **kwargs)
 
-    @classmethod
-    def latests(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def latests(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "latests", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
     def latests_query_and_collate(
-        cls,
+        self,
         t_start: Time,
         t_stop: Time = None,
         step=3 * u.h,
@@ -172,7 +164,7 @@ class FinkBaseQuery(abc.ABC):
             payload["startdate"] = t1.iso
             payload["stopdate"] = t2.iso
             logger.info(f"start query {t1_str} - {t2_str}")
-            result = cls.latests(fix_keys=fix_keys, return_type=return_type, **payload)
+            result = self.latests(fix_keys=fix_keys, return_type=return_type, **payload)
             if len(result) == n:
                 msg = f"{t1_str} - {t2_str} returned {n} rows. choose shorter timestep!"
                 logger.warning(msg)
@@ -183,91 +175,79 @@ class FinkBaseQuery(abc.ABC):
         elif return_type == "pandas":
             if len(results) > 0:
                 return pd.concat(results)
-            return pd.DataFrame(columns=[cls.id_key])
+            return pd.DataFrame(columns=[self.id_key])
         elif return_type == "astropy":
             if len(results) > 0:
                 return vstack(results)
-            return Table(names=[cls.id_key])
+            return Table(names=[self.id_key])
         else:
             msg = f"Unknown return_type='{return_type}': Use None, 'pandas', 'astropy'"
             raise ValueError(msg)
 
-    @classmethod
-    def classes(cls, fix_keys=True, process=True, return_type=None, **kwargs):
-        return cls.do_get("classes", process=process, **kwargs)
+    def classes(self, fix_keys=True, process=True, return_type=None, **kwargs):
+        return self.do_get("classes", process=process, **kwargs)
 
-    @classmethod
-    def explorer(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def explorer(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "explorer", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def conesearch(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def conesearch(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "conesearch", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def sso(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post("sso", fix_keys=fix_keys, return_type=return_type, **kwargs)
+    def sso(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post("sso", fix_keys=fix_keys, return_type=return_type, **kwargs)
 
-    @classmethod
-    def ssocand(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def ssocand(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "ssocand", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def resolver(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def resolver(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "resolver", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def tracklet(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def tracklet(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "tracklet", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def schema(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_get(
+    def schema(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_get(
             "schema", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def skymap(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def skymap(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "skymap", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def statistics(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def statistics(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "statistics", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def anomaly(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def anomaly(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "anomaly", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
-    @classmethod
-    def ssoft(cls, fix_keys=True, return_type=None, **kwargs):
-        return cls.do_post(
+    def ssoft(self, fix_keys=True, return_type=None, **kwargs):
+        return self.do_post(
             "ssoft", fix_keys=fix_keys, return_type=return_type, **kwargs
         )
 
 
-class FinkZTFQuery(FinkBaseQuery):
+class FinkZTFPortalClient(FinkBasePortalClient):
     api_url = "https://api.ztf.fink-portal.org/api/v1"
     id_key = "objectId"
-    imtypes = ("Difference", "Template", "Science")
+    imtypes = ("Difference", "Science", "Template")
 
 
-class FinkLSSTQuery(FinkBaseQuery):
+class FinkLSSTPortalClient(FinkBasePortalClient):
     api_url = "https://api.lsst.fink-portal.org/api/v1"
     id_key = "diaObjectId"
-    imtypes = ("Difference", "Template")
+    imtypes = ("Difference", "Science", "Template")
