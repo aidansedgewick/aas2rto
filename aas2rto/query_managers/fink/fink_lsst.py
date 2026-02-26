@@ -17,7 +17,6 @@ from aas2rto.query_managers.fink.fink_base import (
     FinkBaseQueryManager,
     FinkAlert,
     readstamp,
-    EXTRA_FINK_ALERT_KEYS,
 )
 from aas2rto.query_managers.fink.fink_portal_client import FinkLSSTPortalClient
 from aas2rto.target import Target
@@ -27,6 +26,8 @@ logger = getLogger(__name__.split(".")[-1])
 
 LSST_TARGET_ID_KEY = "diaObjectId"
 LSST_ALERT_ID_KEY = "diaSourceId"
+
+EXTRA_FINK_LSST_ALERT_KEYS = ()
 
 
 class FinkLSSTQueryManager(FinkBaseQueryManager):
@@ -98,9 +99,9 @@ def process_fink_lsst_alert(
     alert["tag"] = "valid"  # if it's arrived as an alert, it must be valid...
     alert["nDiaSources"] = object_data["nDiaSources"]
 
-    extra_data = {k: data[k] for k in EXTRA_FINK_ALERT_KEYS if k in data}
+    extra_data = {k: data[k] for k in EXTRA_FINK_LSST_ALERT_KEYS if k in data}
     utils.check_missing_config_keys(
-        data, EXTRA_FINK_ALERT_KEYS, name=f"fink_lsst.{topic}.{fink_id}.{alert_id}"
+        data, EXTRA_FINK_LSST_ALERT_KEYS, name=f"fink_lsst.{topic}.{fink_id}.{alert_id}"
     )
     alert.update(extra_data)
 

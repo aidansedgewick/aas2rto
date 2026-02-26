@@ -21,7 +21,14 @@ class FinkCoolPortalClient(FinkBasePortalClient):
     # DON'T use api.cool.fink-portal.org, so no chance of traffic to fink-portal.org
     api_url = "https://fink_cool.org/api/v1"
     imtypes = ("Difference", "Template")
-    id_key = "target_id"
+    target_id_key = "target_id"
+    alert_id_key = "alert_id"
+
+    def query_lightcurve(self, *args, **payload):
+        pass  # Doesn't matter, we don't call it for testing generic methods
+
+    def query_classifiers(self, *args, **payload):
+        pass
 
 
 # class FinkBadQuery(FinkPortalClientError):
@@ -40,8 +47,9 @@ class MockPostResponse:
     def __init__(self, *args, json=None):
         self.args = args
 
-        json = json or {}
+        # json = json or {}
         self.status_code = json.pop("status_code", 200)
+        self.reason = json.pop("reason", "OK")
         content = json.pop("content", {})
         self.content = json_tools.dumps(content)  # use renamed 'json' module...
         self.elapsed = MockElapsed(json.pop("elapsed", 1.0))
@@ -49,15 +57,15 @@ class MockPostResponse:
 
 
 class MockGetResponse:
-    def __init__(self, *args, status_code: int = 200, json=None):
+    def __init__(self, *args, status_code: int = 200, params=None):
         self.args = args
-
-        json = json or {}
-        self.status_code = json.pop("status_code", 200)
-        content = json.pop("content", {})
+        # json = json or {}
+        self.status_code = params.pop("status_code", 200)
+        self.reason = params.pop("reason", "OK")
+        content = params.pop("content", {})
         self.content = json_tools.dumps(content)  # use renamed 'json' module...
-        self.elapsed = MockElapsed(json.pop("elapsed", 1.0))
-        self.payload = json  # whatever remains...
+        self.elapsed = MockElapsed(params.pop("elapsed", 1.0))
+        self.payload = params  # whatever remains...
 
 
 ###===== Pytest fixtures here =====###
@@ -82,7 +90,9 @@ class Test__ExamplePortalClient:
 
     def test__post_is_patched(self):
         # Act
-        res = FinkCoolPortalClient().do_post("some_service", process=False)
+        res = FinkCoolPortalClient().do_request(
+            "some_service", method="post", process=False
+        )
 
         # Assert
         assert isinstance(res, MockPostResponse)
@@ -92,13 +102,15 @@ class Test__ExamplePortalClient:
     def test__post_bad_status_raises(self):
         # Act
         with pytest.raises(FinkPortalClientError):
-            res = FinkCoolPortalClient().do_post(
-                "service", status_code=404, content="some_msg"
+            res = FinkCoolPortalClient().do_request(
+                "service", method="post", status_code=404, content="some_msg"
             )
 
     def test__get_is_patched(self):
         # Act
-        res = FinkCoolPortalClient().do_get("some_service", process=False)
+        res = FinkCoolPortalClient().do_request(
+            "some_service", method="get", process=False
+        )
 
         # Assert
         assert isinstance(res, MockGetResponse)
@@ -108,8 +120,8 @@ class Test__ExamplePortalClient:
     def test__get_bad_status_code_raises(self):
         # Act
         with pytest.raises(FinkPortalClientError):
-            res = FinkCoolPortalClient().do_get(
-                "service", status_code=404, content="some_msg"
+            res = FinkCoolPortalClient().do_request(
+                "service", method="get", status_code=404, content="some_msg"
             )
 
 
@@ -207,14 +219,7 @@ class Test__HelperFunctions:
             processed = FinkCoolPortalClient().process_response(res, return_type="blah")
 
 
-class Test__BasicServices:
-    def test__objects(self):
-        # Act
-        res = FinkCoolPortalClient().objects(process=False)
-
-        # Assert
-        assert isinstance(res, MockPostResponse)
-        assert res.args[0].split("/")[-1] == "objects"
+class Test__CommonEndpoints:
 
     def test__cutouts(self):
         # Act
@@ -229,34 +234,10 @@ class Test__BasicServices:
         with pytest.raises(ValueError):
             res = FinkCoolPortalClient().cutouts(kind="Unknown", process=False)
 
-    def test__cutouts_missing_kind(self):
-        # Act
-        with pytest.raises(ValueError):
-            res = FinkCoolPortalClient().cutouts(process=False)
-
-    def test__latests(self):
-        # Act
-        res = FinkCoolPortalClient().latests(process=False)
-
-        # Assert
-        assert isinstance(res, MockPostResponse)
-        assert res.args[0].split("/")[-1] == "latests"
-
-    def test__classes(self):
-        # Act
-        res = FinkCoolPortalClient().classes(process=False)
-
-        # Assert
-        assert isinstance(res, MockGetResponse)
-        assert res.args[0].split("/")[-1] == "classes"
-
-    def test_explorer(self):
-        # Act
-        res = FinkCoolPortalClient().explorer(process=False)
-
-        # Assert
-        assert isinstance(res, MockPostResponse)
-        assert res.args[0].split("/")[-1] == "explorer"
+    # def test__cutouts_missing_kind(self):
+    #     # Act
+    #     with pytest.raises(ValueError):
+    #         res = FinkCoolPortalClient().cutouts(process=False)
 
     def test_conesearch(self):
         # Act
@@ -274,14 +255,6 @@ class Test__BasicServices:
         assert isinstance(res, MockPostResponse)
         assert res.args[0].split("/")[-1] == "sso"
 
-    def test__ssocand(self):
-        # Act
-        res = FinkCoolPortalClient().ssocand(process=False)
-
-        # Assert
-        assert isinstance(res, MockPostResponse)
-        assert res.args[0].split("/")[-1] == "ssocand"
-
     def test__resolver(self):
         # Act
         res = FinkCoolPortalClient().resolver(process=False)
@@ -289,14 +262,6 @@ class Test__BasicServices:
         # Assert
         assert isinstance(res, MockPostResponse)
         assert res.args[0].split("/")[-1] == "resolver"
-
-    def test__tracklet(self):
-        # Act
-        res = FinkCoolPortalClient().tracklet(process=False)
-
-        # Assert
-        assert isinstance(res, MockPostResponse)
-        assert res.args[0].split("/")[-1] == "tracklet"
 
     def test__schema(self):
         # Act
@@ -322,30 +287,142 @@ class Test__BasicServices:
         assert isinstance(res, MockPostResponse)
         assert res.args[0].split("/")[-1] == "statistics"
 
+
+class Test__ZTFEndpoints:
+
+    @pytest.fixture(autouse=True)
+    def _patch_api_url(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(FinkZTFPortalClient, "api_url", "fink-ztf-fake.org")
+
     def test__anomaly(self):
         # Act
-        res = FinkCoolPortalClient().anomaly(process=False)
+        res = FinkZTFPortalClient().anomaly(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
         assert res.args[0].split("/")[-1] == "anomaly"
 
+    def test__latests(self):
+        # Act
+        res = FinkZTFPortalClient().latests(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "latests"
+
+    def test__objects(self):
+        # Act
+        res = FinkZTFPortalClient().objects(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "objects"
+
+    # explorer is gone now???
+    # def test_explorer(self):
+    #     # Act
+    #     res = FinkZTFPortalClient().explorer(process=False)
+
+    #     # Assert
+    #     assert isinstance(res, MockPostResponse)
+    #     assert res.args[0].split("/")[-1] == "explorer"
+
+    def test__ssocand(self):
+        # Act
+        res = FinkZTFPortalClient().ssocand(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "ssocand"
+
     def test__ssoft(self):
         # Act
-        res = FinkCoolPortalClient().ssoft(process=False)
+        res = FinkZTFPortalClient().ssoft(process=False)
 
         # Assert
         assert isinstance(res, MockPostResponse)
         assert res.args[0].split("/")[-1] == "ssoft"
 
+    def test__tracklet(self):
+        # Act
+        res = FinkZTFPortalClient().tracklet(process=False)
 
-class Test__QueryAndCollate:
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "tracklet"
+
+    def test__query_lightcurve(self):
+        # Act
+        res = FinkZTFPortalClient().query_lightcurve(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "objects"  # OBJECTS enpoint for ZTF
+
+
+class Test__LSSTEndpoints:
+
+    @pytest.fixture(autouse=True)
+    def _patch_api_url(self, monkeypatch: pytest.MonkeyPatch):
+        # No chance of pinging servers...
+        monkeypatch.setattr(FinkLSSTPortalClient, "api_url", "fink-lsst-fake.org")
+
+    def test__blocks(self):
+        # Act
+        res = FinkLSSTPortalClient().blocks(process=False)
+
+        # Assert
+        assert isinstance(res, MockGetResponse)
+        assert res.args[0].split("/")[-1] == "blocks"
+
+    def test__fp(self):
+        # Act
+        res = FinkLSSTPortalClient().fp(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "fp"
+
+    def test__objects(self):
+        # Act
+        res = FinkLSSTPortalClient().objects(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "objects"
+
+    def test__sources(self):
+        # Act
+        res = FinkLSSTPortalClient().sources(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "sources"
+
+    def test__tags(self):
+        # Act
+        res = FinkLSSTPortalClient().tags(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "tags"
+
+    def test__query_lightcurve(self):
+        # Act
+        res = FinkLSSTPortalClient().query_lightcurve(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "sources"  # SOURCES enpoint for lsst
+
+
+class Test__QueryClassifiers:
     def test__query_and_collate_pandas(self, t_fixed: Time):
         # Arrange
         t_later = t_fixed + 1.0 * u.day
 
         # Act
-        FinkCoolPortalClient().latests_query_and_collate(
+        FinkZTFPortalClient().query_classifiers(
             t_fixed, t_stop=t_later, n=10, return_type="pandas"
         )
 
@@ -354,7 +431,7 @@ class Test__QueryAndCollate:
         t_later = t_fixed + 1.0 * u.day
 
         # Act
-        FinkCoolPortalClient().latests_query_and_collate(
+        FinkZTFPortalClient().query_classifiers(
             t_fixed, t_stop=t_later, n=10, return_type="astropy"
         )
 
@@ -363,6 +440,6 @@ class Test__QueryAndCollate:
         t_later = t_fixed + 1.0 * u.day
 
         # Act
-        FinkCoolPortalClient().latests_query_and_collate(
-            t_fixed, t_stop=t_later, n=10, return_type="astropy"
+        FinkZTFPortalClient().query_classifiers(
+            t_fixed, t_stop=t_later, n=10, return_type="records"
         )
