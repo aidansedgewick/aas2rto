@@ -155,6 +155,7 @@ class RecoveryManager:
             target_config = target_info.copy()
             ra = target_config.pop("ra")
             dec = target_config.pop("dec")
+            target_config["target_id"] = str(target_config["target_id"])  # FORCE str.
             target_config["coord"] = SkyCoord(ra=ra, dec=dec, unit="deg")
             target = Target(**target_config)
 

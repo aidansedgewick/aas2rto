@@ -38,7 +38,7 @@ class TargetData:
     def __init__(
         self,
         lightcurve: pd.DataFrame | Table = None,
-        include_badqual: bool = False,
+        # include_badqual: bool = False,
         # probabilities: pd.DataFrame | Table = None,
         parameters: dict = None,
         cutouts: dict = None,
@@ -92,7 +92,7 @@ class TargetData:
 
         if lightcurve is not None:
             self.add_lightcurve(
-                copy.deepcopy(lightcurve), include_badqual=include_badqual
+                copy.deepcopy(lightcurve),  # include_badqual=include_badqual
             )
         else:
             self.remove_lightcurve()  # set everything to None
@@ -153,12 +153,12 @@ class TargetData:
             # No need to be warn here - we are correctly setting the attributes!
             self.lightcurve = lightcurve
 
-        if include_badqual:
-            detection_tags = self.valid_tags + self.badqual_tags
-            badqual_tags = ()
-        else:
-            detection_tags = self.valid_tags
-            badqual_tags = self.badqual_tags
+        # if include_badqual:
+        #     detection_tags = self.valid_tags + self.badqual_tags
+        #     badqual_tags = ()
+        # else:
+        detection_tags = self.valid_tags
+        badqual_tags = self.badqual_tags
         nondet_tags = self.nondet_tags
         all_tags = detection_tags + badqual_tags + nondet_tags
         if tag_col in self.lightcurve.columns:

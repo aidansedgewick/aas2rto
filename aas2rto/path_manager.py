@@ -42,18 +42,18 @@ class PathManager:
         base_path = self.config["base_path"]
         self.base_path = Path(base_path)
 
-        project_path = self.config["project_path"] or "default"
-        project_name = self.config["project_name"] or "default"
+        projects_base = self.base_path / "projects"
+        projects_base.mkdir(exist_ok=True, parents=True)
+
+        project_path = self.config["project_path"]
+        project_name = self.config["project_name"]
         if project_path == "default":
             if project_name == "default":
-                msg = (
+                msg = ()
+                logger.info(
                     "You can set the name of the project_path by providing "
-                    "'project_name' in 'paths:'. set to 'default'"
+                    "'project_name' in 'paths:'. Set to 'default'"
                 )
-                logger.info(msg)
-                project_name = "default"
-            projects_base = self.base_path / "projects"
-            projects_base.mkdir(exist_ok=True, parents=True)
             project_path = projects_base / project_name
         self.project_path = Path(project_path)
 

@@ -17,7 +17,6 @@ from aas2rto.query_managers.fink.fink_base import (
     FinkBaseQueryManager,
     FinkAlert,
     readstamp,
-    EXTRA_FINK_ALERT_KEYS,
 )
 from aas2rto.query_managers.fink.fink_portal_client import FinkLSSTPortalClient
 from aas2rto.target import Target
@@ -28,6 +27,8 @@ logger = getLogger(__name__.split(".")[-1])
 LSST_TARGET_ID_KEY = "diaObjectId"
 LSST_ALERT_ID_KEY = "diaSourceId"
 
+EXTRA_FINK_LSST_ALERT_KEYS = ()
+
 
 class FinkLSSTQueryManager(FinkBaseQueryManager):
     name = "fink_lsst"
@@ -36,6 +37,8 @@ class FinkLSSTQueryManager(FinkBaseQueryManager):
     alert_id_key = LSST_ALERT_ID_KEY
     portal_client_class = FinkLSSTPortalClient
     # DO NOT init portal_client here: happens in QM init, in case credentials needed...
+
+    config_extras = {"reliability_cutoff": 0.5}
 
     def process_single_alert(self, alert_data: FinkAlert, t_ref: Time = None):
         topic, data, key = alert_data
@@ -88,7 +91,7 @@ def process_fink_lsst_alert(
     object_data: dict = data["diaObject"]
     alert: dict = data["diaSource"]
 
-    fink_id: int = object_data[LSST_TARGET_ID_KEY]
+    fink_id: int = str(object_data[LSST_TARGET_ID_KEY])
     alert_id: int = alert[LSST_ALERT_ID_KEY]
 
     # Now modify the alert dict - diaSourceId (alert_id) is already included
@@ -98,9 +101,9 @@ def process_fink_lsst_alert(
     alert["tag"] = "valid"  # if it's arrived as an alert, it must be valid...
     alert["nDiaSources"] = object_data["nDiaSources"]
 
-    extra_data = {k: data[k] for k in EXTRA_FINK_ALERT_KEYS if k in data}
+    extra_data = {k: data[k] for k in EXTRA_FINK_LSST_ALERT_KEYS if k in data}
     utils.check_missing_config_keys(
-        data, EXTRA_FINK_ALERT_KEYS, name=f"fink_lsst.{topic}.{fink_id}.{alert_id}"
+        data, EXTRA_FINK_LSST_ALERT_KEYS, name=f"fink_lsst.{topic}.{fink_id}.{alert_id}"
     )
     alert.update(extra_data)
 
@@ -128,7 +131,7 @@ def process_fink_lsst_alert(
 def target_from_fink_lsst_alert(processed_alert: dict, t_ref: Time = None):
     t_ref = t_ref or Time.now()
 
-    target_id = processed_alert[LSST_TARGET_ID_KEY]
+    target_id = str(processed_alert[LSST_TARGET_ID_KEY])
     ra = processed_alert.get("ra", None)
     dec = processed_alert.get("dec", None)
     if (ra is None) or (dec is None):
@@ -143,7 +146,7 @@ def apply_fink_lsst_updates_to_target(
 ) -> NoReturn:
     t_ref = t_ref or Time.now()
 
-    fink_id = processed_alert[LSST_TARGET_ID_KEY]
+    fink_id = str(processed_alert[LSST_TARGET_ID_KEY])
     topic = processed_alert["topic"]
     alert_id = processed_alert[LSST_ALERT_ID_KEY]
     flux = processed_alert["psfFlux"]  # flux is in nJy
@@ -170,3 +173,5 @@ def process_fink_lsst_lightcurve(unprocessed_lc: pd.DataFrame):
 
     if LSST_ALERT_ID_KEY not in lightcurve.columns:
         lightcurve.loc[:, LSST_ALERT_ID_KEY] = -1
+
+    return lightcurve

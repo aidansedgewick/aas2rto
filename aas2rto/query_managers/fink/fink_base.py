@@ -51,18 +51,6 @@ logger = getLogger(__name__.split(".")[-1])
 
 FinkAlert = NewType("FinkAlert", tuple[str, dict, str])
 
-EXTRA_FINK_ALERT_KEYS = (
-    # "timestamp", # doesn't exist anymore?!
-    "cdsxmatch",
-    "rf_snia_vs_nonia",
-    "snn_snia_vs_nonia",
-    "snn_sn_vs_all",
-    "mulens",
-    "roid",
-    "nalerthist",
-    "rf_kn_vs_nonkn",
-)
-
 
 def updates_from_classifier_queries(
     existing_results: pd.DataFrame,
@@ -182,7 +170,13 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
     ##===== Generic methods start here =====##
 
     DEFAULT_TASKS = ("alerts", "queries", "lightcurves", "cutouts", "stale_files")
-    REQUIRED_KAFKA_PARAMS = ("username", "group.id", "bootstrap.servers", "topics")
+    REQUIRED_KAFKA_PARAMS = (
+        "username",
+        "group.id",
+        "bootstrap.servers",
+        "topics",
+        "survey",
+    )
     REQUIRED_DIRECTORIES = ("alerts", "cutouts", "lightcurves", "query_results")
 
     default_config = {
@@ -398,7 +392,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
             ##== Perform the query
             t_start = t_ref - lookback * u.day
-            new_results = self.portal_client.latests_query_and_collate(
+            new_results = self.portal_client.query_classifiers(
                 t_start=t_start, class_=fink_class, return_type="pandas"
             )  # trailing "_"  from 'class_' is stripped...
             if len(new_results) == 0:
@@ -498,7 +492,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
                 logger.warning("Stop LC queries for now")
                 break
 
-            chunk_str = ",".join(fink_id_chunk)
+            chunk_str = ",".join([str(fink_id) for fink_id in fink_id_chunk])
             logger.info(f"start LC query chunk {ii+1} ({len(fink_id_chunk)} LCs)")
             payload = {
                 self.target_id_key: chunk_str,
@@ -510,7 +504,9 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
             t1 = time.perf_counter()
             try:
-                result = self.portal_client.objects(return_type="pandas", **payload)
+                result: pd.DataFrame = self.portal_client.query_lightcurve(
+                    return_type="pandas", **payload
+                )
                 chunk_results.append(result)
             except Exception as e:
                 msg = f"LC query chunk {ii+1} failed:\n    {type(e).__name__}: {e}"
@@ -529,8 +525,12 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
                 logger.warning(msg)
                 result[self.target_id_key] = "0"  # Still need to to split on target_id
 
+            result[self.target_id_key] = result[self.target_id_key].astype(str)
+
             for fink_id in fink_id_chunk:
-                unprocessed_lc = result[result[self.target_id_key] == fink_id]
+
+                id_mask = result[self.target_id_key] == fink_id
+                unprocessed_lc = result[id_mask]
                 processed_lc = self.process_fink_lightcurve(unprocessed_lc)
 
                 if processed_lc.empty:

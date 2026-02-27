@@ -52,8 +52,22 @@ def process_single_mock_alert(alert_data: FinkAlert, t_ref: Time = None):
 
 
 class MockFinkPortalClient:
-    objects = None
-    latests_query_and_collate = None
+    api_url = "fink-fake.org"
+    target_id_key = "target_id"
+    alert_id_key = "alert_id"
+
+    def lightcurve_endpoint(self, *args, **kwargs):
+        """Endpoint is different from survey to survey"""
+        pass
+
+    def query_lightcurve(self, *args, **kwargs):
+        return self.lightcurve_endpoint(*args, **kwargs)
+
+    def classifier_endpoint(self, *args, **kwargs):
+        pass
+
+    def query_classifiers(self, *args, **kwargs):
+        return self.classifier_endpoint(*args, **kwargs)
 
 
 class FinkExampleQM(FinkBaseQueryManager):
@@ -215,7 +229,7 @@ def patched_qm(
     monkeypatch.setattr("fink_client.consumer.AlertConsumer.__exit__", consumer_exit)
     monkeypatch.setattr("fink_client.consumer.AlertConsumer.poll", mock_poll)
 
-    def mock_objects(*args, **kwargs):
+    def mock_lightcurve_endpoint(*args, **kwargs):
         target_id = kwargs.get("target_id", None)
         if target_id is None:
             raise ValueError("No 'target_id' in 'objects' query payload!")
@@ -227,7 +241,7 @@ def patched_qm(
             time.sleep(0.4)
         return pd.DataFrame(columns="target_id mjd obs_id".split())
 
-    def mock_latests(*args, **kwargs):
+    def mock_classifier_endpoint(*args, **kwargs):
         # need to check class_ with "_", as patched FQ does not properly prepare kwargs
         fink_class = kwargs.get("class_", None)
         if fink_class is None:
@@ -240,8 +254,12 @@ def patched_qm(
     qm.target_lookup["T00"].alt_ids["cool_survey"] = "T00"
     qm.target_lookup["T01"].alt_ids["cool_survey"] = "T01"
 
-    monkeypatch.setattr(qm.portal_client, "objects", mock_objects)
-    monkeypatch.setattr(qm.portal_client, "latests_query_and_collate", mock_latests)
+    monkeypatch.setattr(
+        qm.portal_client, "lightcurve_endpoint", mock_lightcurve_endpoint
+    )
+    monkeypatch.setattr(
+        qm.portal_client, "classifier_endpoint", mock_classifier_endpoint
+    )
     return qm
 
 
@@ -317,14 +335,14 @@ class Test__HelperFunctions:
 
     def test__fq_objects_is_patched(self, patched_qm: FinkBaseQueryManager):
         # Act
-        lc = patched_qm.portal_client.objects(target_id="T00")
+        lc = patched_qm.portal_client.lightcurve_endpoint(target_id="T00")
 
         # Assert
         assert len(lc) == 14  # etc.
 
     def test__fq_objects_empty_for_bad_target(self, patched_qm: FinkBaseQueryManager):
         # Act
-        lc = patched_qm.portal_client.objects(target_id="T01")
+        lc = patched_qm.portal_client.lightcurve_endpoint(target_id="T01")
 
         # Assert
         assert len(lc) == 0
@@ -332,34 +350,32 @@ class Test__HelperFunctions:
     def test__fq_raise_on_request(self, patched_qm: FinkBaseQueryManager):
         # Act
         with pytest.raises(ValueError):
-            lc = patched_qm.portal_client.objects(target_id="T_fail")
+            lc = patched_qm.portal_client.lightcurve_endpoint(target_id="T_fail")
 
     def test__fq_objects_no_target_id_raises(self, patched_qm: FinkBaseQueryManager):
         # Act
         with pytest.raises(ValueError):
-            lc = patched_qm.portal_client.objects()
+            lc = patched_qm.portal_client.lightcurve_endpoint()
 
     def test__fq_latests_is_patched(self, patched_qm: FinkBaseQueryManager):
         # Act
-        results = patched_qm.portal_client.latests_query_and_collate(class_="cool_sne")
+        results = patched_qm.portal_client.query_classifiers(class_="cool_sne")
 
         # Assert
         assert len(results) == 3
 
     def test__fq_latests_empty_for_bad_class(self, patched_qm: FinkBaseQueryManager):
         # Act
-        results = patched_qm.portal_client.latests_query_and_collate(
-            class_="boring_sne"
-        )
+        results = patched_qm.portal_client.query_classifiers(class_="boring_sne")
 
         # Assert
         assert len(results) == 0
         assert set(results.columns) == set("target_id lastdate fink_class".split())
 
-    def test__fq_latests_empty_class_raises(self, patched_qm: FinkBaseQueryManager):
+    def test__fq_classifiers_empty_class_raises(self, patched_qm: FinkBaseQueryManager):
         # Act
         with pytest.raises(ValueError):
-            lc = patched_qm.portal_client.latests_query_and_collate()
+            lc = patched_qm.portal_client.query_classifiers()
 
 
 class Test__ExampleQMFunctions:

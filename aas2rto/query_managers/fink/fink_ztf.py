@@ -23,7 +23,6 @@ from aas2rto.query_managers.fink.fink_base import (
     FinkBaseQueryManager,
     FinkAlert,
     readstamp,
-    EXTRA_FINK_ALERT_KEYS,
 )
 from aas2rto.query_managers.fink.fink_portal_client import FinkZTFPortalClient
 from aas2rto.target import Target
@@ -32,6 +31,18 @@ logger = getLogger(__name__.split(".")[-1])
 
 ZTF_TARGET_ID_KEY = "objectId"
 ZTF_ALERT_ID_KEY = "candid"
+
+EXTRA_FINK_ZTF_ALERT_KEYS = (
+    # "timestamp", # doesn't exist anymore?!
+    "cdsxmatch",
+    "rf_snia_vs_nonia",
+    "snn_snia_vs_nonia",
+    "snn_sn_vs_all",
+    "mulens",
+    "roid",
+    "nalerthist",
+    "rf_kn_vs_nonkn",
+)
 
 
 class FinkZTFQueryManager(FinkBaseQueryManager):
@@ -157,9 +168,9 @@ def process_fink_ztf_alert(
     alert["tag"] = "valid"  # must be valid if it's arrived as an alert
     alert[ZTF_ALERT_ID_KEY] = alert_id  # the long ~20 digit ID number.
 
-    extra_data = {k: data[k] for k in EXTRA_FINK_ALERT_KEYS if k in data}
+    extra_data = {k: data[k] for k in EXTRA_FINK_ZTF_ALERT_KEYS if k in data}
     utils.check_missing_config_keys(
-        data, EXTRA_FINK_ALERT_KEYS, name=f"fink_ztf.{topic}.{fink_id}.{alert_id}"
+        data, EXTRA_FINK_ZTF_ALERT_KEYS, name=f"fink_ztf.{topic}.{fink_id}.{alert_id}"
     )
     alert.update(extra_data)
 

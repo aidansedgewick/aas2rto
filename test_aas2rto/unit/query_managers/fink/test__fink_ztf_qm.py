@@ -11,17 +11,14 @@ import pandas as pd
 from astropy import units as u
 from astropy.time import Time
 
-from aas2rto.query_managers.fink.fink_base import (
-    FinkBaseQueryManager,
-    FinkAlert,
-    EXTRA_FINK_ALERT_KEYS,
-)
+from aas2rto.query_managers.fink.fink_base import FinkBaseQueryManager, FinkAlert
 from aas2rto.query_managers.fink.fink_ztf import (
     FinkZTFQueryManager,
     process_fink_ztf_alert,
     target_from_fink_ztf_alert,
     process_fink_ztf_lightcurve,
     apply_fink_ztf_updates_to_target,
+    EXTRA_FINK_ZTF_ALERT_KEYS,
 )
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
@@ -110,7 +107,7 @@ class Test__ProcessZTFAlert:
         cutout_keys = [f"cutout{x}" for x in "Science Difference Template".split()]
 
         assert all([k in proc_alert.keys() for k in candidate_keys])
-        assert all([k in proc_alert.keys() for k in EXTRA_FINK_ALERT_KEYS])  # copied!
+        assert all([k in proc_alert.keys() for k in EXTRA_FINK_ZTF_ALERT_KEYS])  # OK!
         # cutout removed before JSON!
         assert all([k not in proc_alert.keys() for k in cutout_keys])
 

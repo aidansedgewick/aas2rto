@@ -666,6 +666,7 @@ def fink_kafka_config():
         "group.id": 1234,
         "bootstrap.servers": "http://fink.blah.org",
         "topics": ["cool_sne"],
+        "survey": "cool_survey",
     }
 
 
@@ -683,6 +684,7 @@ def lasair_ztf_kafka_config():
         "topics": {
             "cool_sne": topic_keys,
         },
+        "survey": "ztf",
     }
 
 
@@ -700,6 +702,7 @@ def lasair_lsst_kafka_config():
         "topics": {
             "cool_sne": topic_keys,
         },
+        "survey": "lsst",
     }
 
 
