@@ -62,7 +62,7 @@ class TargetLookup:
 
     def __setitem__(self, key: str, target: Target) -> None:
         if not isinstance(key, str):
-            logger.warning(f"type of key '{key}' should be 'str', not type={type(key)}")
+            logger.warning(f"key '{key}' should be 'str', not type={type(key)}")
         if not isinstance(target, Target):
             msg = f"new target {key} is type `{type(target)}`, not `aas2rto.target.Target`"
             raise NotATargetError(msg)
@@ -76,6 +76,8 @@ class TargetLookup:
         self.update_id_mapping_single_target(target)
 
     def __getitem__(self, key: str) -> Target:
+        if not isinstance(key, str):
+            logger.warning(f"key '{key}' should be 'str', not type='{type(key)}'")
         base_id = self.id_mapping.get(key, None)
         if base_id is None:
             raise KeyError(f"No target with name {key}")
@@ -88,6 +90,9 @@ class TargetLookup:
         else return the default value, which default=None.
 
         """
+        if not isinstance(target_id, str):
+            msg = f"key '{target_id}' should be 'str', not type='{type(target_id)}'"
+            logger.warning(msg)
         base_id = self.id_mapping.get(target_id, None)
         if base_id is None:
             return default

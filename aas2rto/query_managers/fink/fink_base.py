@@ -504,7 +504,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
             t1 = time.perf_counter()
             try:
-                result = self.portal_client.query_lightcurve(
+                result: pd.DataFrame = self.portal_client.query_lightcurve(
                     return_type="pandas", **payload
                 )
                 chunk_results.append(result)
@@ -525,10 +525,12 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
                 logger.warning(msg)
                 result[self.target_id_key] = "0"  # Still need to to split on target_id
 
+            result[self.target_id_key] = result[self.target_id_key].astype(str)
+
             for fink_id in fink_id_chunk:
 
-                id_mask = result[self.target_id_key].str == fink_id
-                unprocessed_lc = result[]
+                id_mask = result[self.target_id_key] == fink_id
+                unprocessed_lc = result[id_mask]
                 processed_lc = self.process_fink_lightcurve(unprocessed_lc)
 
                 if processed_lc.empty:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import abc
 import copy
 import itertools
@@ -66,7 +68,7 @@ class FinkBasePortalClient(abc.ABC):
         """"""
 
     @abc.abstractmethod
-    def query_lightcurve(self, *args, **payload):
+    def query_lightcurve(self, *args, **payload) -> pd.DataFrame | Table | list[dict]:
         """Define which endpoint should be used for querying a lightcurve.
         eg. they are different for LSST and ZTF!"""
 

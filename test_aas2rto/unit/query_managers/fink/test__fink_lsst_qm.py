@@ -10,13 +10,14 @@ import pandas as pd
 from astropy import units as u
 from astropy.time import Time
 
-from aas2rto.query_managers.fink.fink_base import FinkAlert, EXTRA_FINK_ALERT_KEYS
+from aas2rto.query_managers.fink.fink_base import FinkAlert
 from aas2rto.query_managers.fink.fink_lsst import (
     FinkLSSTQueryManager,
     process_fink_lsst_alert,
     target_from_fink_lsst_alert,
     apply_fink_lsst_updates_to_target,
     process_fink_lsst_lightcurve,
+    EXTRA_FINK_LSST_ALERT_KEYS,
 )
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
@@ -129,7 +130,7 @@ class Test__ProcessLSSTAlert:
         cutout_keys = [f"cutout{x}" for x in "Science Difference Template".split()]
 
         assert all([k in proc_alert.keys() for k in candidate_keys])
-        assert all([k in proc_alert.keys() for k in EXTRA_FINK_ALERT_KEYS])  # copied
+        assert all([k in proc_alert.keys() for k in EXTRA_FINK_LSST_ALERT_KEYS])  # OK!
         # cutout removed before JSON!
         assert all([k not in proc_alert.keys() for k in cutout_keys])
 

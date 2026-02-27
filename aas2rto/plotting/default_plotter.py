@@ -101,11 +101,18 @@ class DefaultLightcurvePlotter:
             "no_band": "k",
         }
 
-        ztf_shapes = {x: "o" for x in "ztfg ztfr ztfi".split()}
-        atlas_shapes = {x: "o" for x in "atlasc atlaso".split()}
-        yse_shapes = {f"ps1::{x}": "s" for x in "g r i z y w".split()}
+        ztf_shapes = {x: "o" for x in self.ztf_colors.keys()}
+        atlas_shapes = {x: "o" for x in self.atlas_colors.keys()}
+        lsst_shapes = {x: "s" for x in self.lsst_colors.keys()}
+        yse_shapes = {x: "^" for x in self.yse_colors.keys()}
         swift_shapes = {f"uvot::{x}": "v" for x in "u b v uvw1 uvw2 uvm1 uvm2".split()}
-        self.plot_shapes = {**ztf_shapes, **atlas_shapes, **yse_shapes, **swift_shapes}
+        self.plot_shapes = {
+            **ztf_shapes,
+            **atlas_shapes,
+            **lsst_shapes,
+            **yse_shapes,
+            **swift_shapes,
+        }
 
         self.valid_kwargs = dict(ls="none")  # , marker="o")
         self.ulimit_kwargs = dict(ls="none")  # , marker="v", mfc="none")
@@ -222,7 +229,7 @@ class DefaultLightcurvePlotter:
             if len(detections) > 0:
                 xdat = detections["mjd"] - self.t_ref.mjd
                 ydat = detections[self.mag_col]
-                yerr = detections[self.magerr_col]
+                yerr = np.maximum(detections[self.magerr_col], 0.0)
                 self.ax.errorbar(
                     xdat, ydat, yerr=yerr, **det_kwargs, **self.valid_kwargs
                 )
@@ -288,7 +295,11 @@ class DefaultLightcurvePlotter:
         self.fig.subplots_adjust(top=0.85)
 
         names = list(set(target.alt_ids.values()))
-        title = " -- ".join(sorted(names))
+
+        if names:
+            title = " -- ".join(sorted(names))
+        else:
+            title = str(target.target_id)
 
         transform_kwargs = dict(ha="center", va="top", transform=self.fig.transFigure)
         self.ax.text(0.5, 0.98, title, fontsize=14, **transform_kwargs)
@@ -305,7 +316,7 @@ class DefaultLightcurvePlotter:
 
         self.ax.text(0.5, 0.93, subtitle, fontsize=11, **transform_kwargs)
 
-        self.peakmag_vals.append(17.0)
+        self.peakmag_vals.append(21.0)
         y_bright = np.nanmin(self.peakmag_vals) - 0.2
         self.faintmag_vals.append(22.0)
         y_faint = np.nanmax(self.faintmag_vals) + 0.2

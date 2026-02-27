@@ -49,7 +49,7 @@ if __name__ == "__main__":
     lc_plotting_function = plot_default_lightcurve
     if "supernovae" in config_file.stem or "sne" in config_file.stem:
         scoring_function = SupernovaPeakScore(
-            use_compiled_lightcurve=True
+            use_compiled_lightcurve=True, faint_limit=23.0
         )  # This is a class - initialise it!
 
         models_path = None  # selector.path_manager.project_path / "sncosmo_salt_models"
