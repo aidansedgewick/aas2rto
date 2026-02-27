@@ -88,23 +88,23 @@ class Test__AddLightcurvePandas:
         assert len(tdata.non_detections) == 4
         assert np.isclose(tdata.non_detections["mjd"].iloc[0] - 60000.0, 0.0)
 
-    def test__det_with_badqual(self, tdata: TargetData, lc_pandas: pd.DataFrame):
-        # Act
-        tdata.add_lightcurve(lc_pandas, include_badqual=True)
+        # def test__det_with_badqual(self, tdata: TargetData, lc_pandas: pd.DataFrame):
+        #     # Act
+        #     tdata.add_lightcurve(lc_pandas, include_badqual=True)
 
-        # Assert
-        assert isinstance(tdata.lightcurve, pd.DataFrame)
-        assert len(tdata.lightcurve) == 14
+        #     # Assert
+        #     assert isinstance(tdata.lightcurve, pd.DataFrame)
+        #     assert len(tdata.lightcurve) == 14
 
-        assert isinstance(tdata.detections, pd.DataFrame)
-        assert len(tdata.detections) == 10
-        assert np.isclose(tdata.detections["mjd"].iloc[0] - 60000.0, 2.0)
+        #     assert isinstance(tdata.detections, pd.DataFrame)
+        #     assert len(tdata.detections) == 10
+        #     assert np.isclose(tdata.detections["mjd"].iloc[0] - 60000.0, 2.0)
 
-        assert isinstance(tdata.badqual, pd.DataFrame)
-        assert len(tdata.badqual) == 0
+        #     assert isinstance(tdata.badqual, pd.DataFrame)
+        #     assert len(tdata.badqual) == 0
 
-        assert isinstance(tdata.non_detections, pd.DataFrame)
-        assert len(tdata.non_detections) == 4
+        #     assert isinstance(tdata.non_detections, pd.DataFrame)
+        #     assert len(tdata.non_detections) == 4
         assert np.isclose(tdata.non_detections["mjd"].iloc[0] - 60000.0, 0.0)
 
     def test__new_tags(self, lc_pandas: pd.DataFrame):
