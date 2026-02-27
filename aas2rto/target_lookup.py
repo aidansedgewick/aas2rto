@@ -163,7 +163,7 @@ class TargetLookup:
                 to_modify[target_id] = target.target_id
 
         if len(to_modify) > 0:
-            logger.info("update target_id for {len(to_modify)} targets")
+            logger.info(f"update target_id for {len(to_modify)} targets")
         for old_id, new_id in to_modify.items():
             self.lookup[new_id] = self.lookup.pop(old_id)
 

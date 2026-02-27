@@ -70,6 +70,17 @@ class MockFinkPortalClient:
         return self.classifier_endpoint(*args, **kwargs)
 
 
+class MockConfluentConsumer:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def subscribe(self, *args, **kwargs):
+        pass
+
+    def close(self):
+        pass
+
+
 class FinkExampleQM(FinkBaseQueryManager):
     name = "fink_cool"
     id_resolving_order = ("cool_survey", "fink_cool")
@@ -210,14 +221,9 @@ def patched_qm(
     mock_new_classifier_results: dict,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    def consumer_init(self, topics, *args, **kwargs):
-        self.topics = topics  # Stop consumer trying to ping real FINK KAFKA servers.
-
-    def consumer_exit(self, *args, **kwargs):
-        pass  # AlertConsumer._conusumer() is set in __init__, and closed in __exit__
 
     def mock_poll(self, *args, **kwargs):
-        if self.topics[0] == "cool_sne":
+        if self._topics[0] == "cool_sne":
             try:
                 return next(mock_alert_stream)
             except StopIteration as e:
@@ -225,8 +231,8 @@ def patched_qm(
         else:
             return (None, None, None)
 
-    monkeypatch.setattr("fink_client.consumer.AlertConsumer.__init__", consumer_init)
-    monkeypatch.setattr("fink_client.consumer.AlertConsumer.__exit__", consumer_exit)
+    # Mock CONFLUENT consumer, so that FINK consumer __init__ is called...
+    monkeypatch.setattr("confluent_kafka.Consumer", MockConfluentConsumer)
     monkeypatch.setattr("fink_client.consumer.AlertConsumer.poll", mock_poll)
 
     def mock_lightcurve_endpoint(*args, **kwargs):
@@ -326,7 +332,9 @@ class Test__HelperFunctions:
 
     def test__consumer_is_patched(self, patched_qm: FinkBaseQueryManager):
         # Act
-        with AlertConsumer(["cool_sne"], {}) as consumer:
+        with AlertConsumer(
+            ["cool_sne"], patched_qm.kafka_config, "cool_survey"
+        ) as consumer:
             alert_data = consumer.poll()
 
         # Assert

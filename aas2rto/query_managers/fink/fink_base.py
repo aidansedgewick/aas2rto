@@ -311,11 +311,12 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
         n_alerts = self.config["n_alerts"]
         timeout = self.config["alert_timeout"]
+        survey = self.kafka_config["survey"]
 
         alerts = []
         for topic in self.kafka_config["topics"]:
             topic_alerts = []
-            with AlertConsumer([topic], self.kafka_config) as consumer:
+            with AlertConsumer([topic], self.kafka_config, survey) as consumer:
                 logger.info(f"listen for up to {n_alerts} from {topic}")
                 for ii in range(n_alerts):
                     try:
