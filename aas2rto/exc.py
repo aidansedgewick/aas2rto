@@ -1,6 +1,10 @@
 # Exceptions
 
 
+class AlreadyRegisteredError(Exception):
+    pass
+
+
 class BadKafkaConfigError(Exception):
     pass
 
@@ -30,6 +34,10 @@ class NotATargetError(Exception):
 
 
 class UnexpectedKeysError(Exception):
+    pass
+
+
+class UnknownQueryManagerError(Exception):
     pass
 
 

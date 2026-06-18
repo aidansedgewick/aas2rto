@@ -6,33 +6,14 @@ from pathlib import Path
 from astropy.time import Time
 
 from aas2rto import utils
+from aas2rto.exc import UnknownQueryManagerError
 from aas2rto.path_manager import PathManager
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.target_lookup import TargetLookup
 
-# from aas2rto.query_managers.alerce import AlerceQueryManager
-from aas2rto.query_managers.atlas import AtlasQueryManager
-from aas2rto.query_managers.fink import FinkLSSTQueryManager, FinkZTFQueryManager
-
-# from aas2rto.query_managers.lasair import LasairLSSTQueryManager, LasairZTFQueryManager
-from aas2rto.query_managers.tns import TNSQueryManager
-from aas2rto.query_managers.yse import YSEQueryManager
-
-# from aas2rto.query_managers.sdss import SdssQueryManager
-
+from aas2rto.query_managers.registry import qm_registry  # qm_reg. is a SINGLETON
 
 logger = getLogger(__name__.split(".")[-1])
-
-EXPECTED_QUERY_MANAGERS = {
-    # "alerce": AlerceQueryManager,
-    "atlas": AtlasQueryManager,
-    "fink_lsst": FinkLSSTQueryManager,
-    "fink_ztf": FinkZTFQueryManager,
-    # "lasair_lsst": LasairLSSTQueryManager,
-    # "lasair_ztf": LasairZTFQueryManager,
-    "tns": TNSQueryManager,
-    "yse": YSEQueryManager,
-}
 
 
 class PrimaryQueryManager:
@@ -47,33 +28,29 @@ class PrimaryQueryManager:
         self.config = config
         unknown_qm_configs = utils.check_unexpected_config_keys(
             self.config.keys(),
-            EXPECTED_QUERY_MANAGERS.keys(),
+            qm_registry.all(),
             warn=False,
             name="query_managers",
         )
         if len(unknown_qm_configs):
             unk_qms_str = ", ".join(f"'{x}'" for x in unknown_qm_configs)
-            exp_qms_str = ", ".join(f"'{x}'" for x in EXPECTED_QUERY_MANAGERS.keys())
+            exp_qms_str = ", ".join(f"'{x}'" for x in qm_registry.all()) or "--empty--"
             msg = (
                 f"\033[31;1mUnknown QueryManager config(s)\033[0m:\n    {unk_qms_str}\n"
-                f"Currently known:\n    {exp_qms_str}"
+                f"Currently in registry:\n    {exp_qms_str}\n"
+                f"Did you remember to register your QM?"
             )
             logger.error(msg)
-            raise ValueError(msg)
+            raise UnknownQueryManagerError(msg)
 
         self.target_lookup = target_lookup
         self.path_manager = path_manager
 
-        self.query_managers = self._initialise_query_manager_lookup()
+        self.query_managers: dict[str, BaseQueryManager] = {}
         self.initialize_query_managers()
 
-    def _initialise_query_manager_lookup(self) -> dict[str, BaseQueryManager]:
-        """Only for type hinting..."""
-        return {}
-
     def initialize_query_managers(self):
-        self.query_managers = self._initialise_query_manager_lookup()
-        self.qm_order = []
+        self.qm_order: list = []
         for qm_name, qm_config in self.config.items():
 
             if qm_config is None:
@@ -85,7 +62,7 @@ class PrimaryQueryManager:
                 continue
             self.qm_order.append(qm_name)  # In case the config order is very important.
 
-            QMClass = EXPECTED_QUERY_MANAGERS[qm_name]
+            QMClass = qm_registry.get(qm_name)
             qm = QMClass(
                 qm_config, self.target_lookup, parent_path=self.path_manager.data_path
             )

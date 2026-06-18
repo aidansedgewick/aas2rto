@@ -87,24 +87,25 @@ class MessagingManager:
             logger.debug(f"messaging for {target_id}")
 
             if not target.updated:
-                logger.debug(f"not updated; skip")
+                logger.debug(f"{target.target_id} not updated; skip")
                 skipped.append(target_id)
                 continue
 
             if len(target.info_messages) == 0:
-                logger.debug(f"no messages")
+                logger.debug(f"{target.target_id} no messages")
                 no_updates.append(target_id)
                 continue
 
             last_score = target.get_latest_science_score()
             if last_score is None:
                 skipped.append(target_id)
-                logger.debug(f"last score is None; skip")
+                logger.debug(f"{target.target_id} last score is None; skip")
                 continue
 
             if last_score < minimum_score:
                 skipped.append(target_id)
-                logger.debug(f"last score: {last_score} < {minimum_score}; skip")
+                dbg = f"{target.target_id} last score: {last_score} < {minimum_score}; skip"
+                logger.debug(dbg)
                 continue
 
             messages = [target.get_info_string()] + target.info_messages

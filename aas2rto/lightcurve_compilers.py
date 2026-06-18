@@ -109,12 +109,20 @@ def prepare_lsst_data(
 
     lsst_lc.loc[:, "source"] = "lsst"
 
+    lsst_lc = lsst_lc[lsst_lc["psfFlux"] > 0.0]  # TODO: deal with -ve flux better...
+
     # Convert fluxes into mags and get the upperlims
     psfFlux_snr = lsst_lc["psfFlux"] / lsst_lc["psfFluxErr"]
-    lsst_lc.loc[:, "mag"] = -2.5 * np.log10(lsst_lc["psfFlux"]) + 31.4  # flux in nJy
-    lsst_lc.loc[:, "magerr"] = 1.09 / psfFlux_snr  # 2.5 / ln(10) ~ 1.09
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # catch log10 warn
+        lsst_lc.loc[:, "mag"] = (
+            -2.5 * np.log10(lsst_lc["psfFlux"]) + 31.4
+        )  # flux in nJy
+        lsst_lc.loc[:, "magerr"] = 1.09 / psfFlux_snr  # 2.5 / ln(10) ~ 1.09
     if "sky" in lsst_lc:
-        lsst_lc.loc[:, "diffmaglim"] = -2.5 * np.log10(lsst_lc["sky"]) + 31.4
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # catch log10 warn
+            lsst_lc.loc[:, "diffmaglim"] = -2.5 * np.log10(lsst_lc["sky"]) + 31.4
     else:
         lsst_lc.loc[:, "diffmaglim"] = 0.0
 
@@ -182,14 +190,16 @@ def prepare_atlas_data(
                 fluxerr = 1.0 / np.sqrt(np.sum(weights))
                 row["flux"] = flux
                 row["fluxerr"] = fluxerr
-                row["mag5sig"] = (-2.5 * np.log10(row["flux5sig"])) + 23.9
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)  # catch log10 warn
+                    row["mag5sig"] = (-2.5 * np.log10(row["flux5sig"])) + 23.9
             row_list.append(row)
 
         atlas_lc = pd.DataFrame(row_list)
         atlas_lc["snr"] = atlas_lc["flux"] / atlas_lc["fluxerr"]
         flux_sign = np.sign(atlas_lc["flux"])
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
+            warnings.simplefilter("ignore", RuntimeWarning)  # catch log10 warnings
             atlas_lc["m"] = (-2.5 * np.log10(abs(atlas_lc["flux"])) + 23.9) * flux_sign
         atlas_lc["dm"] = dm_snr / abs(atlas_lc["snr"])
     else:

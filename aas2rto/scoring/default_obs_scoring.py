@@ -17,6 +17,16 @@ from aas2rto.target import Target
 
 logger = getLogger("default_obs_scoring")
 
+SCORING_METHOD_REGISTRY = {}
+
+
+def register_scoring_method(key: str):
+    def decorator(method: Callable):
+        SCORING_METHOD_REGISTRY[key] = method
+        return method
+
+    return decorator
+
 
 def compute_visibility_integral(
     t_grid: np.ndarray,
@@ -35,6 +45,7 @@ def compute_visibility_integral(
     return integral / norm  # invert later!
 
 
+@register_scoring_method("visibility")
 def calc_visibility_factor(
     ephem_info: EphemInfo, t_ref: Time, min_alt: float = 30.0, ref_alt: float = 90.0
 ):
@@ -85,6 +96,7 @@ def compute_inv_airmass(alt: float):
     return np.sin(alt * np.pi / 180.0)
 
 
+@register_scoring_method("altitude")
 def calc_altitude_factor(ephem_info: EphemInfo, t_ref: Time, min_alt: float = 30.0):
     # If it's actually already past sunset, pick NOW.
     t_start = max(t_ref, ephem_info.sunset)
@@ -103,11 +115,42 @@ def calc_altitude_factor(ephem_info: EphemInfo, t_ref: Time, min_alt: float = 30
     comments = []
     if curr_alt > min_alt:
         factor = compute_inv_airmass(curr_alt)
-        alt_comm = f"alt_factor={factor:.3f} alt={curr_alt:.1f}"
+        alt_comm = f"alt_factor={factor:.3f} (curr alt={curr_alt:.1f}d)"
         comments.append(alt_comm)
     else:
         factor = -1.0
         comm = f"alt_factor=-1.0: curr_alt {curr_alt:.1f} < {min_alt:1f} (min)"
+        comments.append(comm)
+    return factor, comments
+
+
+@register_scoring_method("transit")
+def calc_transit_factor(ephem_info: EphemInfo, t_ref: Time, min_alt: float = 30.0):
+    t_start = max(t_ref, ephem_info.sunset)
+
+    t_remain_mask = ephem_info.t_grid > t_start
+    altaz_grid = ephem_info.target_altaz[t_remain_mask]
+
+    t_start = ephem_info.sunset
+    t_grid = ephem_info.t_grid
+    t_stop = ephem_info.sunrise
+
+    night_mask = (t_start < t_grid) & (t_grid < t_stop)
+
+    night_alt = ephem_info.target_altaz.alt.deg[night_mask]  # alt during NIGHT.
+    night_t_grid = t_grid[night_mask]
+
+    comments = []
+    idx = np.argmax(night_alt)
+    transit_alt = night_alt[idx]
+    transit_tstr = night_t_grid[idx].strftime("%H:%M UT")
+    if transit_alt > min_alt:
+        factor = compute_inv_airmass(transit_alt)
+        comm = f"f_transit={factor:.3f} (trab={transit_alt:.1f}d at {transit_tstr})"
+        comments.append(comm)
+    else:
+        factor = -1.0
+        comm = f"f_transit=-1.0: transit {transit_alt:.1f} < {min_alt:.1f} (min)"
         comments.append(comm)
     return factor, comments
 
@@ -125,16 +168,16 @@ class DefaultObservatoryScoring:
         min_altitude: float = 30.0,
         ref_altitude: float = 90.0,
         moon_sep: str = 30.0,
-        method: str = "visibility",
+        method: str = "transit",
     ):
         self.min_altitude = min_altitude
         self.ref_altitude = ref_altitude
         self.moon_sep = moon_sep
         self.method = method
 
-        exp_methods = ["visibility", "altitude"]
-        if self.method not in exp_methods:
-            msg = f"'method' should be one of {exp_methods},\n    not {method}"
+        if self.method not in SCORING_METHOD_REGISTRY.keys():
+            exp_str = ",".join(f"'{m}'" for m in SCORING_METHOD_REGISTRY.keys())
+            msg = f"'method' should be one of {exp_str},\n    not {method}"
             raise ValueError(msg)
 
     def __call__(self, target: Target, observatory: Observer, t_ref: Time = None):
@@ -163,26 +206,19 @@ class DefaultObservatoryScoring:
         if ephem_info.sunset is None or ephem_info.sunrise is None:
             scoring_comments.append(f"sun never sets at this observatory")
 
-        if self.method == "altitude":
-            scoring_comments.append("use method='altitude'")
-            alt_factor, comms = calc_altitude_factor(
+        if isinstance(self.method, str):
+            scoring_comments.append(f"use registered method='{self.method}'")
+
+            scoring_method = SCORING_METHOD_REGISTRY[self.method]
+            obs_factor, comms = scoring_method(
                 ephem_info, t_ref, min_alt=self.min_altitude
             )
-            if alt_factor < 0.0:
+            if obs_factor < 0.0:
                 exclude = True
             else:
-                factors["alt_factor"] = alt_factor
+                factors["obs_factor"] = obs_factor
             scoring_comments.extend(comms)
-        elif self.method == "visibility":
-            scoring_comments.append("use method='visibility'")
-            vis_factor, comms = calc_visibility_factor(
-                ephem_info, t_ref, min_alt=self.min_altitude, ref_alt=self.ref_altitude
-            )
-            if vis_factor < 0.0:
-                exclude = True
-            else:
-                factors["vis_factor"] = vis_factor
-            scoring_comments.extend(comms)
+
         else:
             comm = f"unexpected method {self.method}: vis_factor = 1.0"
             scoring_comments.append(comm)

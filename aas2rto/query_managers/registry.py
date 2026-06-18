@@ -1,0 +1,55 @@
+from __future__ import annotations  # must be first import
+
+from typing import Callable, Type
+
+from aas2rto.exc import AlreadyRegisteredError
+from aas2rto.query_managers.base import BaseQueryManager
+
+
+class QueryManagerRegistry:
+
+    ### Choose not to have mutable _registry = {} class attr and classmethod.
+    ### Cannot have isolated registries
+
+    def __init__(self) -> None:
+        self._registry: dict[str, Type[BaseQueryManager]] = {}
+
+    # NOT a class method - used as the decorator
+    def register(self):
+        def decorator(qm_class: Type[BaseQueryManager]):
+            return self._register_class(qm_class)  # Still return the class def.
+
+        return decorator
+
+    def _register_class(self, qm_class: Type[BaseQueryManager]):
+        # Normal method "inline" syntax useful for tests
+        qm_name = qm_class.name
+        existing = self._registry.get(qm_name)
+        if existing is not None and existing is not qm_class:
+            msg = (
+                f"QM '{qm_name}' ({qm_class}) is already registered"
+                f" as {existing.__class__}"
+            )
+            raise AlreadyRegisteredError(msg)
+
+        self._registry[qm_name] = qm_class
+        return qm_class
+
+    def get(self, qm_name: str) -> Type[BaseQueryManager] | None:
+        return self._registry.get(qm_name)
+
+    def all(self) -> dict[str, Type[BaseQueryManager]]:
+        return self._registry
+
+    def __contains__(self, qm_name: str) -> bool:
+        return qm_name in self._registry
+
+    def __len__(self) -> int:
+        return len(self._registry)
+
+
+qm_registry = QueryManagerRegistry()  # inistantiate HERE
+
+# def _autoregister():
+#    import importlib, pkgutil
+#    for

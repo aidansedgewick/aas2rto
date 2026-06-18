@@ -5,10 +5,8 @@ from astropy.time import Time
 from aas2rto.path_manager import PathManager
 
 from aas2rto.query_managers.base import BaseQueryManager
-from aas2rto.query_managers.primary import (
-    EXPECTED_QUERY_MANAGERS,
-    PrimaryQueryManager,
-)
+from aas2rto.query_managers.primary import PrimaryQueryManager
+from aas2rto.query_managers.registry import qm_registry  # qm_reg. a SINGLETON
 
 from aas2rto.target_lookup import TargetLookup
 
@@ -60,9 +58,7 @@ class Test__InitPrimaryQM:
 
         assert set(pqm.query_managers.keys()) == set(exp_qms)
 
-        untested_qms = set(EXPECTED_QUERY_MANAGERS.keys()) - set(
-            pqm.query_managers.keys()
-        )
+        untested_qms = set(qm_registry.all()) - set(pqm.query_managers.keys())
         if untested_qms:
             msg = (
                 f"you should include example configs for the QMs {untested_qms} "

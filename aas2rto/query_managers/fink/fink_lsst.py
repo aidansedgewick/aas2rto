@@ -13,6 +13,7 @@ from astropy.time import Time
 
 from aas2rto import utils
 from aas2rto.exc import MissingCoordinatesError
+from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.fink.fink_base import (
     FinkBaseQueryManager,
     FinkAlert,
@@ -20,7 +21,6 @@ from aas2rto.query_managers.fink.fink_base import (
 )
 from aas2rto.query_managers.fink.fink_portal_client import FinkLSSTPortalClient
 from aas2rto.target import Target
-
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -30,6 +30,7 @@ LSST_ALERT_ID_KEY = "diaSourceId"
 EXTRA_FINK_LSST_ALERT_KEYS = ()
 
 
+@qm_registry.register()  # Remember to register query manager!
 class FinkLSSTQueryManager(FinkBaseQueryManager):
     name = "fink_lsst"
     id_resolving_order = ("lsst", "fink_lsst", "tns")

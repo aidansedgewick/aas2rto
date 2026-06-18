@@ -19,6 +19,7 @@ from astropy.time import Time
 
 from aas2rto import utils
 from aas2rto.exc import MissingCoordinatesError
+from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.fink.fink_base import (
     FinkBaseQueryManager,
     FinkAlert,
@@ -45,6 +46,7 @@ EXTRA_FINK_ZTF_ALERT_KEYS = (
 )
 
 
+@qm_registry.register()  # Remember to register QM!
 class FinkZTFQueryManager(FinkBaseQueryManager):
     name = "fink_ztf"
     id_resolving_order = ("ztf", "ztf_fink", "tns")

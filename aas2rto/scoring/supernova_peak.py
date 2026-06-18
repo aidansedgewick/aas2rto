@@ -147,7 +147,7 @@ def calc_color_factor(gmag, rmag):
     return color_factor
 
 
-DEFAULT_SCORING_SOURCES = ["ztf", "yse", "atlas"]
+DEFAULT_SCORING_SOURCES = ["ztf", "lsst", "yse", "atlas"]
 DEFAULT_SCORING_BANDS = "ztfg ztfr ztfi".split() + "ps1::g ps1::r ps1::i ps1::z".split()
 gal_center = SkyCoord(frame="galactic", l=0.0, b=0.0, unit="deg")
 
@@ -342,12 +342,16 @@ class SupernovaPeakScore:
             exclude = True
 
         ###===== Apply flag if confirmed =====###
-        target.flags["confirmed_ia"] = False
+        tns_type_str = ""
+        tns_redshift_str = ""
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
-            tns_type = tns_data.parameters.get("type", "")
-            if tns_type.startswith("SN Ia"):
-                target.flags["confirmed_ia"] = True
+            tns_type_str = tns_data.parameters.get("type", "")
+            known_redshift = float(tns_data.parameters.get("redshift", "nan"))
+            if np.isfinite(known_redshift):
+                tns_redshift_str = f"{known_redshift:.4f}"
+        target.flags["TNS_type"] = tns_type_str
+        target.flags["TNS_redshift"] = tns_redshift_str
 
         ###===== Factors dependent on Model =====###
 
@@ -407,6 +411,7 @@ class SupernovaPeakScore:
             ###===== Time from peak?
             t0 = sncosmo_model["t0"]
             peak_dt = t_ref.mjd - sncosmo_model["t0"]
+            peak_dt_flag = ""
             if not np.isfinite(peak_dt):
                 f_interest = 1.0
                 msg = (
@@ -418,6 +423,8 @@ class SupernovaPeakScore:
                 scoring_comments.append(msg)
             else:
                 f_interest = peak_only_interest_function(peak_dt)
+                peak_dt_flag = f"{peak_dt:+.1f}"
+            target.flags["peak_dt"] = peak_dt_flag
 
             if isinstance(chisq_nu, float) or samples:
                 good_chisq = (0.0 < chisq_nu) and chisq_nu < self.max_chisq_nu
@@ -448,9 +455,9 @@ class SupernovaPeakScore:
             ###===== Penalty for likely CVs?
             cv_penalty, cv_comms = calc_cv_prob_penalty(detections, upperlimits, model)
 
-            target.flags["likely_cv"] = False
+            target.flags["likely_cv"] = ""
             if cv_penalty < 0.99:
-                target.flags["likely_cv"] = True
+                target.flags["likely_cv"] = "!!"
             factors["cv_penalty"] = cv_penalty
             scoring_comments.extend(cv_comms)
 

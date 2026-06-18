@@ -11,11 +11,13 @@ from astroplan import Observer
 from aas2rto.exc import InvalidEphemWarning
 from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.scoring.default_obs_scoring import (
+    SCORING_METHOD_REGISTRY,
     DefaultObservatoryScoring,
     compute_visibility_integral,
     calc_visibility_factor,
     compute_inv_airmass,
     calc_altitude_factor,
+    calc_transit_factor,
 )
 from aas2rto.target import Target
 
@@ -40,21 +42,30 @@ def sunset(lasilla: Observer, midnight: Time):
     return lasilla.sun_set_time(midnight, which="previous")
 
 
+# Quick reminder about ephem:
+# RA:
+#   A target is at zenith/transit when RA == Local Sidereal Time (LST)
+# Dec:
+#   Transit altitude is:
+#      North: a = 90 - obs_lat + dec
+#      South: a = 90 + obs_lat - dec
+
+
 @pytest.fixture
 def ephem_early(lasilla: Observer, t_fixed: Time, t_early: Time):
-    lst = lasilla.local_sidereal_time(t_early)
-    o_lat = lasilla.location.lat  # dec = lat +/- ZD, ZD = (90-transit_alt)
-    coord = SkyCoord(ra=lst, dec=o_lat + (90.0 - 60.0) * u.deg)
-    print(coord)
+    lst = lasilla.local_sidereal_time(t_early)  # transit at LaSilla LST 21:00
+    o_lat = lasilla.location.lat  # dec = lat +/- ZD: ZD = (90-transit_alt)
+    target_alt = 60.0  # This mock target transits at 60deg alt.
+    coord = SkyCoord(ra=lst, dec=o_lat + (90.0 - target_alt) * u.deg)
     return EphemInfo(lasilla, t_ref=t_fixed, target_coord=coord)
 
 
 @pytest.fixture
 def ephem_late(lasilla: Observer, t_fixed: Time, t_late: Time):
-    lst = lasilla.local_sidereal_time(t_late)
-    o_lat = lasilla.location.lat  # dec = lat +/- ZD, ZD = (90-transit_alt)
-    coord = SkyCoord(ra=lst, dec=o_lat + (90.0 - 60.0) * u.deg)
-    print(coord)
+    lst = lasilla.local_sidereal_time(t_late)  # transit at LaSilla LST 03:00
+    o_lat = lasilla.location.lat  # dec = lat +/- ZD: ZD = (90-transit_alt)
+    target_alt = 60.0  # This mock target transits at 60deg alt
+    coord = SkyCoord(ra=lst, dec=o_lat + (90.0 - target_alt) * u.deg)
     return EphemInfo(lasilla, t_ref=t_fixed, target_coord=coord)
 
 
@@ -70,8 +81,20 @@ def ephem_low(lasilla: Observer, t_fixed: Time, t_late: Time):
     lst = lasilla.local_sidereal_time(t_late)
     o_lat = lasilla.location.lat  # dec = lat +/- ZD, ZD = (90-transit_alt)
     coord = SkyCoord(ra=lst, dec=o_lat + (90.0 - 45.0) * u.deg)
-    print(coord)
     return EphemInfo(lasilla, t_ref=t_fixed, target_coord=coord)
+
+
+class Test__ScoringRegistry:
+    def test__scoring_method_registry(self):
+        exp_methods = ["visibility", "altitude", "transit"]
+        unexp_methods = set(SCORING_METHOD_REGISTRY) - set(exp_methods)
+        if unexp_methods:
+            m_str = ", ".join(f"'{m}'" for m in unexp_methods)
+            msg = (
+                f"Unexpected/untested methods {m_str} registered in "
+                "obs scoring methods registry"
+            )
+            raise ValueError(msg)
 
 
 class Test__VisIntegral:
@@ -253,7 +276,31 @@ class Test__CalcAltFactor:
         assert np.isclose(alt_factor, -1.0)
 
         comm_str = " ".join(comms)
-        assert "t_ref is AFTER latest ephem_info"
+        assert "t_ref is AFTER latest ephem_info"  # No fail BUT there is a comment...
+
+
+class Test__CalcTransitFactor:
+    def test__transit_factor(
+        self, ephem_early: EphemInfo, ephem_late: EphemInfo, t_fixed: Time
+    ):
+        # Act
+        # should be sin60 for both - this factor does not depend!
+        f_early, comms_early = calc_transit_factor(ephem_early, t_fixed)
+        f_late, comms_late = calc_transit_factor(ephem_late, t_fixed)
+
+        # Assert
+        assert np.isclose(f_early, 0.86603, rtol=1e-2)  # sin(60)
+        assert np.isclose(f_late, 0.86603, rtol=1e-2)
+
+    def test__transit_factor_exclud_low(self, ephem_low: EphemInfo, t_fixed: Time):
+        # Act
+        f_low, comms = calc_transit_factor(ephem_low, t_fixed, min_alt=70.0)
+
+        # Assert
+        assert np.isclose(f_low, -1.0)  # exlude!
+
+        comm_str = " ".join(comms)
+        assert "f_transit=-1.0: transit" in comm_str
 
 
 class Test__ObsScoringInit:
@@ -262,7 +309,11 @@ class Test__ObsScoringInit:
         scoring_func = DefaultObservatoryScoring()
 
         # Assert
-        assert scoring_func.method in ["visibility", "altitude"]  # don't care which
+        assert scoring_func.method in (
+            "visibility",
+            "altitude",
+            "transit",
+        )  # don't care which is default, really
         assert isinstance(scoring_func.min_altitude, float)
         assert isinstance(scoring_func.ref_altitude, float)
 
@@ -287,7 +338,7 @@ class Test__ObsVisMethod:
         assert isinstance(comms, list)
 
         comm_str = " ".join(comms)
-        assert "use method='visibility'" in comm_str
+        assert "use registered method='visibility'" in comm_str
         assert "vis_factor=" in comm_str
 
     def test__obs_vis_excludes(
@@ -304,7 +355,7 @@ class Test__ObsVisMethod:
         assert isinstance(comms, list)
 
         comm_str = " ".join(comms)
-        assert "use method='visibility'" in comm_str
+        assert "use registered method='visibility'" in comm_str
         assert "vis_factor=" in comm_str
 
     def test__obs_alt_method(
@@ -321,7 +372,7 @@ class Test__ObsVisMethod:
         assert isinstance(comms, list)
 
         comm_str = " ".join(comms)
-        assert "use method='altitude'" in comm_str
+        assert "use registered method='altitude'" in comm_str
         assert "alt_factor=" in comm_str
 
     def test__obs_alt_exclude(
@@ -338,7 +389,7 @@ class Test__ObsVisMethod:
         assert isinstance(comms, list)
 
         comm_str = " ".join(comms)
-        assert "use method='altitude'" in comm_str
+        assert "use registered method='altitude'" in comm_str
         assert "alt_factor=-1.0: curr_alt" in comm_str
 
     def test__no_ephem_no_fail(

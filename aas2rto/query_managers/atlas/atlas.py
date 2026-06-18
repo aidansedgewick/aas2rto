@@ -11,6 +11,7 @@ from astropy.time import Time
 
 from aas2rto import utils
 from aas2rto.exc import UnknownTargetWarning
+from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.atlas.atlas_client import AtlasClient
 from aas2rto.query_managers.base import LightcurveQueryManager
 from aas2rto.target import Target
@@ -35,6 +36,7 @@ class AtlasCredentialError(Exception):
     pass
 
 
+@qm_registry.register()  # Remember to register QN!
 class AtlasQueryManager(LightcurveQueryManager):
     name = "atlas"
 

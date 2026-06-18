@@ -571,7 +571,7 @@ class Test__InfoLines:
         info_str = " ".join(id_lines)
 
         # Assert
-        assert "FINK: fink-portal.org/ZTF25abc" in info_str
+        assert "FINK: ztf.fink-portal.org/ZTF25abc" in info_str
         assert "Lasair: lasair-ztf.lsst.ac.uk/objects/ZTF25abc" in info_str
         assert "ALeRCE: alerce.online/object/ZTF25abc" in info_str
         assert "TNS: wis-tns.org/object/2025xyz" in info_str
