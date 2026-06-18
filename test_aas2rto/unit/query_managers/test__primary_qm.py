@@ -4,6 +4,7 @@ from astropy.time import Time
 
 from aas2rto.path_manager import PathManager
 
+from aas2rto.exc import UnknownQueryManagerError
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.query_managers.primary import PrimaryQueryManager
 from aas2rto.query_managers.registry import qm_registry  # qm_reg. a SINGLETON
@@ -84,7 +85,7 @@ class Test__InitPrimaryQM:
         config = {"unknown_qm": {}}
 
         # Act
-        with pytest.raises(ValueError):
+        with pytest.raises(UnknownQueryManagerError):
             pqm = PrimaryQueryManager(config, tlookup, path_mgr)
 
 
