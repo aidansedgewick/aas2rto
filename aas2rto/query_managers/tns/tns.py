@@ -191,6 +191,8 @@ class TNSQueryManager(BaseQueryManager):
                 continue
             logger.info(f"query for {delta_filepath}")
             df = self.tns_client.get_tns_hourly_delta(hour)
+            if df is None:
+                continue
             df.to_csv(delta_filepath, index=False)
             new_deltas.append(df)
 

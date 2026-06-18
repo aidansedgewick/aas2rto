@@ -132,7 +132,11 @@ class TNSClient:
         self.tns_headers = self.build_tns_headers(self.tns_user, self.tns_uid)
 
     def do_post(self, url) -> requests.Response:
-        return requests.post(url, headers=self.tns_headers)
+        try:
+            return requests.post(url, headers=self.tns_headers)
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"ConnectionError raised in do_post: return None\n{e}")
+            return None
 
     def wait_after_request(self, response: requests.Response):
         req_limit = response.headers.get("x-rate-limit-limit")
@@ -159,9 +163,11 @@ class TNSClient:
         retries: int = 0,
         max_retries: int = 3,
     ):
-        response = self.do_post(url)
 
         self.check_return_type(return_type)
+        response = self.do_post(url)
+        if response is None:
+            return None
 
         filename = url.split("/")[-1]
 
