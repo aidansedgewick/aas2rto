@@ -12,13 +12,15 @@ def init_sfd_dustmaps(reset_config: bool = False):
         )
         raise ModuleNotFoundError(msg)
 
-    print("import sfd")
-    from dustmaps import sfd
     from dustmaps.config import config
 
     if reset_config:
         print("reset config")
         config.reset()  # Stop dustmaps config warning in CI
+
+    print("import sfd")
+    from dustmaps import sfd
+
     print("calling dustmaps.sfd.fetch()")
     sfd.fetch()
 

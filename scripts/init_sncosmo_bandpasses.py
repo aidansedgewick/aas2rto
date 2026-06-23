@@ -12,7 +12,7 @@ def init_sncosmo_bandpasses():
         sncosmo.bandpasses.get_bandpass(f"ztf::{b}")
     for b in "u g r i z y".split():
         sncosmo.bandpasses.get_bandpass(f"lsst{b}")
-    for b in "open g r i z y w".split():
+    for b in "g r i z y w".split():
         sncosmo.bandpasses.get_bandpass(f"ps1::{b}")
     for b in "c o".split():
         sncosmo.bandpasses.get_bandpass(f"atlas{b}")
