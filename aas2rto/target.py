@@ -421,17 +421,23 @@ class Target:
 
     def get_target_id_info_lines(self, link_open: str = "", link_close: str = ""):
         info_lines = []
-        broker_name = self.alt_ids.get("ztf", None)
-        if broker_name is not None:
-            fink_url = f"fink-portal.org/{broker_name}"
-            lasair_url = f"lasair-ztf.lsst.ac.uk/objects/{broker_name}"
-            alerce_url = f"alerce.online/object/{broker_name}"
-            broker_lines = [
-                f"    FINK: {link_open}{fink_url}{link_close}",
-                f"    Lasair: {link_open}{lasair_url}{link_close}",
-                f"    ALeRCE: {link_open}{alerce_url}{link_close}",
-            ]
-            info_lines.extend(broker_lines)
+
+        for source in ("lsst", "ztf"):
+            source_id = self.alt_ids.get(source, None)
+            if source_id is not None:
+                fink_url = f"{source}.fink-portal.org/{source_id}"
+                lasair_url = f"lasair-{source}.lsst.ac.uk/objects/{source_id}"
+                if source == "lsst":
+                    # special case for alerce...
+                    alerce_url = f"lsst.alerce.online/object/{source_id}?survey=lsst"
+                else:
+                    alerce_url = f"alerce.online/object/{source_id}"
+                broker_lines = [
+                    f"    {source}-FINK: {link_open}{fink_url}{link_close}",
+                    f"    {source}-Lasair: {link_open}{lasair_url}{link_close}",
+                    f"    {source}-ALeRCE: {link_open}{alerce_url}{link_close}",
+                ]
+                info_lines.extend(broker_lines)
 
         tns_name = self.alt_ids.get("tns", None)
         if tns_name is not None:
@@ -461,7 +467,7 @@ class Target:
         formatted_flags = []
         for name, flag in self.flags.items():
             if flag:
-                flag_str = f"    {name.replace('_', ' ')}"
+                flag_str = f"    {name.replace('_', ' ')}: {flag}"
                 formatted_flags.append(flag_str)
         return formatted_flags
 

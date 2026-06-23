@@ -2,6 +2,7 @@ import copy
 import time
 import warnings
 from logging import getLogger
+from typing import Any
 
 import numpy as np
 
@@ -21,8 +22,13 @@ DEFAULT_ULIMIT_TAG = "upperlim"
 
 
 def _check_is_target_data(
-    data, source_name="<unknown data source>", target_id="<unknown target_id>"
+    data: Any,
+    source_name: str = "<unknown data source>",
+    target_id: str = "<unknown target_id>",
 ):
+    """
+    Basically just an `isinstance` check but emits some extra warnings.
+    """
     if isinstance(data, TargetData):
         return True
     data_type = type(data)
@@ -37,9 +43,9 @@ def _check_is_target_data(
 
 def prepare_ztf_data(
     ztf_data: TargetData,
-    valid_tag=DEFAULT_VALID_TAG,
-    badqual_tag=DEFAULT_BADQUAL_TAG,
-    ulimit_tag=DEFAULT_ULIMIT_TAG,
+    valid_tag: str = DEFAULT_VALID_TAG,
+    badqual_tag: str = DEFAULT_BADQUAL_TAG,
+    ulimit_tag: str = DEFAULT_ULIMIT_TAG,
 ):
 
     data_list = []
@@ -80,9 +86,9 @@ def prepare_ztf_data(
 
 def prepare_lsst_data(
     lsst_data: TargetData,
-    valid_tag=DEFAULT_VALID_TAG,
-    badqual_tag=DEFAULT_BADQUAL_TAG,
-    ulimit_tag=DEFAULT_ULIMIT_TAG,
+    valid_tag: str = DEFAULT_VALID_TAG,
+    badqual_tag: str = DEFAULT_BADQUAL_TAG,
+    ulimit_tag: str = DEFAULT_ULIMIT_TAG,
 ):
 
     data_list = []
@@ -109,12 +115,20 @@ def prepare_lsst_data(
 
     lsst_lc.loc[:, "source"] = "lsst"
 
+    lsst_lc = lsst_lc[lsst_lc["psfFlux"] > 0.0]  # TODO: deal with -ve flux better...
+
     # Convert fluxes into mags and get the upperlims
     psfFlux_snr = lsst_lc["psfFlux"] / lsst_lc["psfFluxErr"]
-    lsst_lc.loc[:, "mag"] = -2.5 * np.log10(lsst_lc["psfFlux"]) + 31.4  # flux in nJy
-    lsst_lc.loc[:, "magerr"] = 1.09 / psfFlux_snr  # 2.5 / ln(10) ~ 1.09
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # catch log10 warn
+        lsst_lc.loc[:, "mag"] = (
+            -2.5 * np.log10(lsst_lc["psfFlux"]) + 31.4
+        )  # flux in nJy
+        lsst_lc.loc[:, "magerr"] = 1.09 / psfFlux_snr  # 2.5 / ln(10) ~ 1.09
     if "sky" in lsst_lc:
-        lsst_lc.loc[:, "diffmaglim"] = -2.5 * np.log10(lsst_lc["sky"]) + 31.4
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # catch log10 warn
+            lsst_lc.loc[:, "diffmaglim"] = -2.5 * np.log10(lsst_lc["sky"]) + 31.4
     else:
         lsst_lc.loc[:, "diffmaglim"] = 0.0
 
@@ -122,7 +136,7 @@ def prepare_lsst_data(
     lsst_colmap = {"midpointMjdTai": "mjd", "diaSourceId": "alert_id"}
     lsst_lc.rename(lsst_colmap, axis=1, inplace=True)
 
-    # Rename the bands
+    # Rename the bands - use sncosmo names.
     lsst_band_lookup = {b: f"lsst{b}" for b in "u g r i z y".split()}
     lsst_lc.loc[:, "band"] = lsst_lc["band"].map(lsst_band_lookup)
 
@@ -135,9 +149,9 @@ def prepare_atlas_data(
     atlas_data: TargetData,
     average_epochs: bool = True,
     rolling_window: float = 0.1,
-    valid_tag=DEFAULT_VALID_TAG,
-    badqual_tag=DEFAULT_BADQUAL_TAG,
-    ulimit_tag=DEFAULT_ULIMIT_TAG,
+    valid_tag: str = DEFAULT_VALID_TAG,
+    badqual_tag: str = DEFAULT_BADQUAL_TAG,
+    ulimit_tag: str = DEFAULT_ULIMIT_TAG,
 ):
     atlas_lc = atlas_data.lightcurve.copy()
 
@@ -182,14 +196,16 @@ def prepare_atlas_data(
                 fluxerr = 1.0 / np.sqrt(np.sum(weights))
                 row["flux"] = flux
                 row["fluxerr"] = fluxerr
-                row["mag5sig"] = (-2.5 * np.log10(row["flux5sig"])) + 23.9
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)  # catch log10 warn
+                    row["mag5sig"] = (-2.5 * np.log10(row["flux5sig"])) + 23.9
             row_list.append(row)
 
         atlas_lc = pd.DataFrame(row_list)
         atlas_lc["snr"] = atlas_lc["flux"] / atlas_lc["fluxerr"]
         flux_sign = np.sign(atlas_lc["flux"])
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
+            warnings.simplefilter("ignore", RuntimeWarning)  # catch log10 warnings
             atlas_lc["m"] = (-2.5 * np.log10(abs(atlas_lc["flux"])) + 23.9) * flux_sign
         atlas_lc["dm"] = dm_snr / abs(atlas_lc["snr"])
     else:

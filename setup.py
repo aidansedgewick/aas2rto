@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="aas2rto",
-    version="0.8.0",
+    version="0.8.1",
     description="aas2rto",
     author="Aidan S",
     author_email="aidan.sedgewick@gmail.com",

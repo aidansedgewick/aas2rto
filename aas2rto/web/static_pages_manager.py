@@ -184,7 +184,10 @@ class StaticPagesManager:
         for target_id, target in self.outputs_manager.target_lookup.items():
             target_page_path = self._get_target_page_path(target_id)
 
-            if not target_page_path.exists() or target.updated:
+            page_age = utils.calc_file_age(target_page_path, t_ref=t_ref)  # in DAYS
+            page_old = page_age > 1.0
+
+            if not target_page_path.exists() or target.updated or page_old:
                 self.build_webpage_for_target(target, t_ref=t_ref)
                 self.build_redirect_pages_for_target(target)
                 target_pages_built = target_pages_built + 1

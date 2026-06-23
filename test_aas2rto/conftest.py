@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from astropy import units as u
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.table import Table
 from astropy.time import Time
 
@@ -105,7 +105,14 @@ def target_config_example():
 
 @pytest.fixture
 def lasilla():
-    return Observer.at_site("lasilla")
+    # return Observer.at_site("lasilla")
+    el = EarthLocation(
+        lat=-29.257 * u.deg,
+        lon=-70.73 * u.deg,
+        height=2347.0 * u.m,
+    )
+    # Can check yourself that this is __eq__ to Observer.at_site("lasilla")
+    return Observer(el, name="lasilla")
 
 
 @pytest.fixture

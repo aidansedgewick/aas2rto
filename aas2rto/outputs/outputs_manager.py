@@ -22,7 +22,6 @@ from aas2rto.target_lookup import TargetLookup
 
 import matplotlib.pyplot as plt
 
-
 logger = getLogger(__name__.split(".")[-1])
 
 
@@ -54,7 +53,7 @@ def get_target_summary_data(target):
         mag_last=mag_last,
         stamp_last=tstamp_last,
     )
-    data.update(target.flags)
+    data.update(target.flags)  # ALL flags should be set in scoring...
     return data
 
 

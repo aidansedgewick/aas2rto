@@ -1,6 +1,10 @@
 # Exceptions
 
 
+class AlreadyRegisteredError(Exception):
+    pass
+
+
 class BadKafkaConfigError(Exception):
     pass
 
@@ -33,6 +37,10 @@ class UnexpectedKeysError(Exception):
     pass
 
 
+class UnknownQueryManagerError(Exception):
+    pass
+
+
 # Warnings
 
 
@@ -61,6 +69,10 @@ class MissingKeysWarning(UserWarning):
 
 
 class MissingMediaWarning(UserWarning):
+    pass
+
+
+class MissingCompiledLightcurveWarning(UserWarning):
     pass
 
 

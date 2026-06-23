@@ -8,11 +8,11 @@ from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from aas2rto import utils
+from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.base import LightcurveQueryManager
 from aas2rto.query_managers.yse.yse_client import YSEClient, YSEClientError
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
-
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -68,6 +68,7 @@ def updates_from_explorer_queries(
     return pd.DataFrame(updated_rows)
 
 
+@qm_registry.register()  # Remember to register QM!
 class YSEQueryManager(LightcurveQueryManager):
     name = "yse"
 

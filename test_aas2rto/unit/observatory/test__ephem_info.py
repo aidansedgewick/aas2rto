@@ -20,7 +20,11 @@ from aas2rto.target import Target
 @pytest.fixture(scope="module")
 def greenwich():
     # use greenwich as local time lines up with UTC...
-    return Observer.at_site("greenwich")
+    # return Observer.at_site("greenwich")
+    location = EarthLocation(
+        lat=51.477811 * u.deg, lon=-0.001475 * u.deg, height=46 * u.m
+    )
+    return Observer(location, name="greenwich")
 
 
 @pytest.fixture(scope="module")

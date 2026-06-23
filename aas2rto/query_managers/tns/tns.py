@@ -2,6 +2,8 @@ import copy
 from logging import getLogger
 from pathlib import Path
 
+import numpy as np
+
 import pandas as pd
 
 from astropy import units as u
@@ -9,6 +11,7 @@ from astropy.coordinates import SkyCoord, search_around_sky
 from astropy.time import Time, TimeDelta
 
 from aas2rto import utils
+from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.query_managers.tns.tns_client import TNSClient, TNSClientError
 from aas2rto.target import Target
@@ -21,6 +24,7 @@ class TNSCredentialError(Exception):
     pass
 
 
+@qm_registry.register()  # Remember to register QM!
 class TNSQueryManager(BaseQueryManager):
     name = "tns"
 
@@ -61,6 +65,7 @@ class TNSQueryManager(BaseQueryManager):
             return_type="pandas"
         )
 
+        # Create paths_lookup
         self.process_paths(parent_path=parent_path, directories=self.required_paths)
 
     def apply_units_to_config(self):
@@ -97,6 +102,9 @@ class TNSQueryManager(BaseQueryManager):
     def get_hourly_delta_filepath(self, t_ref: Time, fmt: str = "csv") -> Path:
         datestr = t_ref.strftime("%Y-%m-%d_%Hh")
         return self.paths_lookup["query_results"] / f"tns_delta_{datestr}.{fmt}"
+
+    def get_combined_results_filepath(self, fmt: str = "csv") -> Path:
+        return self.data_path / f"combined_results_latest.{fmt}"
 
     def load_existing_tns_results(self):
         existing_results = sorted(
@@ -183,6 +191,8 @@ class TNSQueryManager(BaseQueryManager):
                 continue
             logger.info(f"query for {delta_filepath}")
             df = self.tns_client.get_tns_hourly_delta(hour)
+            if df is None:
+                continue
             df.to_csv(delta_filepath, index=False)
             new_deltas.append(df)
 
@@ -197,17 +207,30 @@ class TNSQueryManager(BaseQueryManager):
         self.collect_missing_daily_deltas(t_ref=t_ref)
         self.collect_missing_hourly_deltas(t_ref=t_ref)
 
-    def combine_delta_results(self):
+    def combine_delta_results(self) -> None:
+        """
+        Concatenate the existing results, any daily_delta which has just been
+        dowloaded, and any hourly_delta which has just been downloaded.
 
+        Sort by name and lastmodified, and keep only the last modified.
+        """
         to_combine = [
             self.tns_results,
             self.daily_delta_results,
             self.hourly_delta_results,
         ]
+        to_combine = [df for df in to_combine if not df.empty]
+        if len(to_combine) == 0:
+            # Nothing to combine!
+            logger.info("no results to combine!")
+            self.tns_results = TNSClient.get_empty_delta_results(return_type="pandas")
+            return
 
         combined = pd.concat(to_combine, ignore_index=True)
         combined.sort_values(["name", "lastmodified"], inplace=True)
         combined.drop_duplicates("name", keep="last")
+        combined_results_filepath = self.get_combined_results_filepath()
+        combined.to_csv(combined_results_filepath)
         self.tns_results = combined
 
     def match_on_coordinates(
@@ -217,11 +240,13 @@ class TNSQueryManager(BaseQueryManager):
         ra_col: str = "ra",
         dec_col: str = "declination",
         t_ref: Time = None,
-    ):
+    ) -> None:
+
         t_ref = t_ref or Time.now()
         results = results or self.tns_results
+
         if seplimit is None:
-            # Can't use oneliner here - u.Quantity does not like bool comparison??
+            # Can't use one-liner here - u.Quantity does not like bool comparison??
             seplimit = self.config["sep_limit"]
 
         if results is None or results.empty:
@@ -240,6 +265,12 @@ class TNSQueryManager(BaseQueryManager):
         if len(target_candidate_coords) == 0:
             logger.info("no targets in target_lookup to match!")
             return
+        msg = (
+            f"Match {len(results)} TNS rows "
+            f"against {len(target_candidate_coords)} targets "
+            f"(limit <{seplimit})"
+        )
+        logger.info(msg)
 
         target_candidate_coords = SkyCoord(target_candidate_coords)
 
@@ -254,6 +285,7 @@ class TNSQueryManager(BaseQueryManager):
             target_id = target_candidate_target_ids[idx1]
             tns_parameters = self.tns_results.iloc[idx2].to_dict()
             self.update_tns_target_data(target_id, tns_parameters, skysep=skysep)
+        return
 
     def update_tns_target_data(
         self, target_id: str, tns_parameters: dict, skysep: u.Quantity = None
@@ -317,6 +349,7 @@ class TNSQueryManager(BaseQueryManager):
         if iteration == 0:
             # Just load and match in startup - no new queries yet...
             self.load_existing_tns_results()
+            self.combine_delta_results()  # Should really do nothing except write here.
             self.match_on_coordinates()
             return
 

@@ -31,10 +31,13 @@ jobs:
         python3 -m pip install setuptools # for py3.12
         python3 -m pip install flake8 pytest pytest-cov numpy
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Cache astronomy downloads
+      run: |
+        python3 scripts/init_sfd_maps.py --reset-config
+        python3 scripts/init_sncosmo_bandpasses.py
     - name: Install package
       run: |
         python3 setup.py install
-        python3 scripts/init_sfd_maps.py
         # python3 -m pip install -e .
     #- name: Lint with flake8
     #  run: |
