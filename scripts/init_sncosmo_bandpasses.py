@@ -1,7 +1,13 @@
-import sncosmo
-
-
 def init_sncosmo_bandpasses():
+    try:
+        import sncosmo
+    except ModuleNotFoundError as e:
+        msg = (
+            "`sncosmo` not imported properly. try:"
+            "\n    \033[33;1mpython3 -m pip install sncosmo\033[0m"
+        )
+        raise ModuleNotFoundError(msg)
+
     for b in "g r i".split():
         sncosmo.bandpasses.get_bandpass(f"ztf::{b}")
     for b in "u g r i z y".split():
