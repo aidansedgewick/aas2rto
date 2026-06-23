@@ -7,7 +7,7 @@ from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.query_managers.primary import PrimaryQueryManager
 
 # QMRegistry happens here!
-# TODO: consider defining _autoregister() with importlib.
+# TODO: consider defining _autoregister() with importlib/pkgutils
 
 # from aas2rto.query_managers.alerce import AlerceQueryManager
 from aas2rto.query_managers.atlas import AtlasQueryManager

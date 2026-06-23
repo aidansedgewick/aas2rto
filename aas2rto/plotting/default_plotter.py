@@ -25,6 +25,7 @@ from astroplan.plots import plot_altitude
 from aas2rto import utils
 from aas2rto.exc import (
     MissingColumnWarning,
+    MissingCompiledLightcurveWarning,
     MissingDateError,
     UnknownPhotometryTagWarning,
 )
@@ -85,14 +86,18 @@ class DefaultLightcurvePlotter:
 
         self.default_figsize = (6.5, 5)
 
+        # What colour should everything be plotted in?
+        # ZTF
         self.ztf_colors = {"ztfg": "C2", "ztfr": "C3", "ztfi": "C4"}
+        # Atlas
         self.atlas_colors = {"atlasc": "C9", "atlaso": "C1"}  # cyan, orange
-        self.yse_colors = {
-            f"ps1::{b}": f"C{ii}" for ii, b in enumerate("g r i z y w".split(), 2)
-        }
-        self.lsst_colors = {
-            f"lsst{b}": f"C{ii}" for ii, b in enumerate("g r i z y w".split())
-        }
+        # YSE
+        ps1_colors = dict(g="C2", r="C3", i="C4", z="C5", y="C6", w="C7")
+        self.yse_colors = {f"ps1::{b}": color for b, color in ps1_colors.items()}
+        # LSST
+        lsst_lookup = dict(u="C0", g="C2", r="C3", i="C4", z="C5", y="C6")
+        self.lsst_colors = {f"lsst{b}": color for b, color in lsst_lookup.items()}
+        # Merge
         self.plot_colors = {
             **self.ztf_colors,
             **self.atlas_colors,
@@ -151,7 +156,7 @@ class DefaultLightcurvePlotter:
         if target.compiled_lightcurve is None:
             msg = f"{target_id} has no compiled lightcurve for plotting."
             logger.warning(msg)
-            warnings.warn(UserWarning(msg))
+            warnings.warn(MissingCompiledLightcurveWarning(msg))
             return None
         lightcurve = target.compiled_lightcurve.copy()
 

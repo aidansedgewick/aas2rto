@@ -72,6 +72,10 @@ class MissingMediaWarning(UserWarning):
     pass
 
 
+class MissingCompiledLightcurveWarning(UserWarning):
+    pass
+
+
 class SettingLightcurveDirectlyWarning(UserWarning):
     pass
 

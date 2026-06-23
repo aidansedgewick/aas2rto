@@ -11,7 +11,6 @@ import pandas as pd
 
 from astropy.table import Table
 
-
 logger = getLogger(__name__.split(".")[-1])
 
 
@@ -134,13 +133,12 @@ class AtlasClient:
         self, data: dict, timeout: float = atlas_default_timeout
     ) -> requests.Response:
         self.check_forcedphot_keys(data)
-        response = requests.post(
+        return requests.post(
             url=self.atlas_default_queue_url,
             headers=self.headers,
             data=data,
             timeout=timeout,
         )
-        return response
 
     def get_existing_queries(self, url=None, timeout=atlas_default_timeout) -> dict:
         if url is None:

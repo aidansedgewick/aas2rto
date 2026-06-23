@@ -26,7 +26,6 @@ from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.target_selector import TargetSelector
 
-
 ###===== Some mock objects for tests =====###
 
 
@@ -47,6 +46,10 @@ def basic_model(target: Target, t_ref: Time):
     return None
 
 
+def basic_plotter(target: Target, t_ref: Time = None):
+    return plt.figure()
+
+
 class ExampleQueryManager:
     name = "example"
 
@@ -57,7 +60,6 @@ class ExampleQueryManager:
         coord = SkyCoord(ra=15.0, dec=0.0, unit="deg")
         new_target = Target("T300", coord, source="other_source", t_ref=t_ref)
         self.target_lookup.add_target(new_target)
-        print(self.target_lookup.keys())
 
 
 ###===== Some fixtures =====###
@@ -238,7 +240,11 @@ class Test__CompileLightcurves:
 class Test__PerformIteration:
     def test__basic_iter(self, iter_tselector: TargetSelector, t_fixed: Time):
         # Act
-        iter_tselector.perform_iteration(scoring_func)
+        iter_tselector.perform_iteration(
+            scoring_func,
+            modeling_function=basic_model,
+            lc_plotting_function=basic_plotter,
+        )
         # Effectively checking for typos here...
 
     def test__complex_iter(self, iter_tselector: TargetSelector, t_fixed: Time):
@@ -254,6 +260,7 @@ class Test__PerformIteration:
         iter_tselector.perform_iteration(
             scoring_func,
             modeling_function=basic_model,
+            lc_plotting_function=basic_plotter,
             t_ref=t_fixed,
         )
 
@@ -274,7 +281,9 @@ class Test__PerformIteration:
 
     def test__skip_qms(self, iter_tselector: TargetSelector):
         # Act
-        iter_tselector.perform_iteration(scoring_func, skip_tasks=["qm_tasks"])
+        iter_tselector.perform_iteration(
+            scoring_func, lc_plotting_function=basic_plotter, skip_tasks=["qm_tasks"]
+        )
 
         # Assert
         assert set(iter_tselector.target_lookup.keys()) == set(["T00"])
@@ -283,15 +292,22 @@ class Test__PerformIteration:
 
     def test__skip_precheck(self, iter_tselector: TargetSelector):
         # Act
-        iter_tselector.perform_iteration(scoring_func, skip_tasks=["pre_check"])
+        iter_tselector.perform_iteration(
+            scoring_func, lc_plotting_function=basic_plotter, skip_tasks=["pre_check"]
+        )
         T00 = iter_tselector.target_lookup["T00"]
 
         # Assert
-        assert len(T00.science_score_history) == 1  # No pre-check
+        assert len(T00.science_score_history) == 1  # No pre-check, only "real" score
 
 
 class Test__StartCommand:
     def test__start_command(self, iter_tselector: TargetSelector):
         # Act
-        iter_tselector.start(scoring_func, iterations=0)
+        iter_tselector.start(
+            scoring_func,
+            modeling_function=basic_model,
+            lc_plotting_function=basic_plotter,
+            iterations=0,
+        )
         # Basically a typo check - not a good test...

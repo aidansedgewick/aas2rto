@@ -2,6 +2,7 @@ import copy
 import time
 import warnings
 from logging import getLogger
+from typing import Any
 
 import numpy as np
 
@@ -21,8 +22,13 @@ DEFAULT_ULIMIT_TAG = "upperlim"
 
 
 def _check_is_target_data(
-    data, source_name="<unknown data source>", target_id="<unknown target_id>"
+    data: Any,
+    source_name: str = "<unknown data source>",
+    target_id: str = "<unknown target_id>",
 ):
+    """
+    Basically just an `isinstance` check but emits some extra warnings.
+    """
     if isinstance(data, TargetData):
         return True
     data_type = type(data)
@@ -37,9 +43,9 @@ def _check_is_target_data(
 
 def prepare_ztf_data(
     ztf_data: TargetData,
-    valid_tag=DEFAULT_VALID_TAG,
-    badqual_tag=DEFAULT_BADQUAL_TAG,
-    ulimit_tag=DEFAULT_ULIMIT_TAG,
+    valid_tag: str = DEFAULT_VALID_TAG,
+    badqual_tag: str = DEFAULT_BADQUAL_TAG,
+    ulimit_tag: str = DEFAULT_ULIMIT_TAG,
 ):
 
     data_list = []
@@ -80,9 +86,9 @@ def prepare_ztf_data(
 
 def prepare_lsst_data(
     lsst_data: TargetData,
-    valid_tag=DEFAULT_VALID_TAG,
-    badqual_tag=DEFAULT_BADQUAL_TAG,
-    ulimit_tag=DEFAULT_ULIMIT_TAG,
+    valid_tag: str = DEFAULT_VALID_TAG,
+    badqual_tag: str = DEFAULT_BADQUAL_TAG,
+    ulimit_tag: str = DEFAULT_ULIMIT_TAG,
 ):
 
     data_list = []
@@ -130,7 +136,7 @@ def prepare_lsst_data(
     lsst_colmap = {"midpointMjdTai": "mjd", "diaSourceId": "alert_id"}
     lsst_lc.rename(lsst_colmap, axis=1, inplace=True)
 
-    # Rename the bands
+    # Rename the bands - use sncosmo names.
     lsst_band_lookup = {b: f"lsst{b}" for b in "u g r i z y".split()}
     lsst_lc.loc[:, "band"] = lsst_lc["band"].map(lsst_band_lookup)
 
@@ -143,9 +149,9 @@ def prepare_atlas_data(
     atlas_data: TargetData,
     average_epochs: bool = True,
     rolling_window: float = 0.1,
-    valid_tag=DEFAULT_VALID_TAG,
-    badqual_tag=DEFAULT_BADQUAL_TAG,
-    ulimit_tag=DEFAULT_ULIMIT_TAG,
+    valid_tag: str = DEFAULT_VALID_TAG,
+    badqual_tag: str = DEFAULT_BADQUAL_TAG,
+    ulimit_tag: str = DEFAULT_ULIMIT_TAG,
 ):
     atlas_lc = atlas_data.lightcurve.copy()
 

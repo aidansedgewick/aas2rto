@@ -207,13 +207,24 @@ class TNSQueryManager(BaseQueryManager):
         self.collect_missing_daily_deltas(t_ref=t_ref)
         self.collect_missing_hourly_deltas(t_ref=t_ref)
 
-    def combine_delta_results(self):
+    def combine_delta_results(self) -> None:
+        """
+        Concatenate the existing results, any daily_delta which has just been
+        dowloaded, and any hourly_delta which has just been downloaded.
 
+        Sort by name and lastmodified, and keep only the last modified.
+        """
         to_combine = [
             self.tns_results,
             self.daily_delta_results,
             self.hourly_delta_results,
         ]
+        to_combine = [df for df in to_combine if not df.empty]
+        if len(to_combine) == 0:
+            # Nothing to combine!
+            logger.info("no results to combine!")
+            self.tns_results = TNSClient.get_empty_delta_results(return_type="pandas")
+            return
 
         combined = pd.concat(to_combine, ignore_index=True)
         combined.sort_values(["name", "lastmodified"], inplace=True)
@@ -229,7 +240,8 @@ class TNSQueryManager(BaseQueryManager):
         ra_col: str = "ra",
         dec_col: str = "declination",
         t_ref: Time = None,
-    ):
+    ) -> None:
+
         t_ref = t_ref or Time.now()
         results = results or self.tns_results
 
@@ -273,6 +285,7 @@ class TNSQueryManager(BaseQueryManager):
             target_id = target_candidate_target_ids[idx1]
             tns_parameters = self.tns_results.iloc[idx2].to_dict()
             self.update_tns_target_data(target_id, tns_parameters, skysep=skysep)
+        return
 
     def update_tns_target_data(
         self, target_id: str, tns_parameters: dict, skysep: u.Quantity = None

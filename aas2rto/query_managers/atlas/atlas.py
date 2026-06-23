@@ -36,7 +36,7 @@ class AtlasCredentialError(Exception):
     pass
 
 
-@qm_registry.register()  # Remember to register QN!
+@qm_registry.register()  # Remember to register QM!
 class AtlasQueryManager(LightcurveQueryManager):
     name = "atlas"
 
@@ -283,6 +283,7 @@ class AtlasQueryManager(LightcurveQueryManager):
         msg = (
             f"Targets not considered:\n"
             f"    {no_score} with no valid score\n"
+            f"    {low_score} with low score (<{minimum_score:.1f})\n"
             f"    {recently_updated} updated <{update_interval:.1f}d ago\n"
             f"    {too_faint} with no detections <{faint_limit:.1f}mag\n"
             f"    {too_stale} with no detections <{stale_time:.1f}d ago"
@@ -307,6 +308,7 @@ class AtlasQueryManager(LightcurveQueryManager):
             return None
 
         res = self.atlas_client.submit_forced_photom_query(query_data, timeout=timeout)
+
         if res.status_code == AtlasClient.QUERY_SUBMITTED:
             self.submitted_queries[target.target_id] = res.json()["url"]
         elif res.status_code == AtlasClient.QUERY_THROTTLED:
@@ -385,6 +387,9 @@ class AtlasQueryManager(LightcurveQueryManager):
                 query_status = query_response.status_code
             except requests.exceptions.ReadTimeout as e:
                 logger.info(f"break after {target.target_id} query submit ReadTimeout")
+                break
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"break after {type(e)} for {target.target_id}")
                 break
             if query_status == AtlasClient.QUERY_SUBMITTED:
                 submitted.append(target_id)
