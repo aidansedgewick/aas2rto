@@ -135,10 +135,12 @@ class DefaultLightcurvePlotter:
         self.band_col = "band"
 
         self.cutouts_priority = (
-            "ztf_lsst",
-            "ztf_fink",
-            "ztf_alerce",
-            "ztf_lasair",
+            "fink_lsst",
+            "lasair_lsst",
+            "alerce_lsst",
+            "lsst" "fink_ztf",
+            "lasair_ztf",
+            "alerce_ztf",
             "ztf",
             "yse",
             "atlas",

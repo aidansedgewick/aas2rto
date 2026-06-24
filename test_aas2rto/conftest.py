@@ -541,7 +541,7 @@ def target_to_plot(
 ):
     ztf_td.cutouts = ztf_cutouts
     basic_target.target_data["ztf"] = ztf_td
-    basic_target.target_data["atlas"] = atlas_td
+    # basic_target.target_data["atlas"] = atlas_td # snscosmo ATLAS dl err in GH actions
     basic_target.target_data["tns"] = tns_td
     basic_target.compiled_lightcurve = lc_compiler(basic_target, t_ref=t_plot)
     basic_target.science_comments = ["a comment here", "another comment"]

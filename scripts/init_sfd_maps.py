@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 
 def init_sfd_dustmaps(reset_config: bool = False):
     try:
-        import dustmaps
+        from dustmaps.config import config
 
     except ModuleNotFoundError as e:
         msg = (
@@ -11,8 +11,6 @@ def init_sfd_dustmaps(reset_config: bool = False):
             "\n    \033[33;1mpython3 -m pip install dustmaps\033[0m"
         )
         raise ModuleNotFoundError(msg)
-
-    from dustmaps.config import config
 
     if reset_config:
         print("reset config")
