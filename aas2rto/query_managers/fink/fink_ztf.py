@@ -33,6 +33,8 @@ logger = getLogger(__name__.split(".")[-1])
 ZTF_TARGET_ID_KEY = "objectId"
 ZTF_ALERT_ID_KEY = "candid"
 
+ZTF_BAND_LOOKUP = {0: "ZTF-g", 1: "ZTF-r", 2: "ZTF-i"}
+
 EXTRA_FINK_ZTF_ALERT_KEYS = (
     # "timestamp", # doesn't exist anymore?!
     "cdsxmatch",
@@ -49,7 +51,7 @@ EXTRA_FINK_ZTF_ALERT_KEYS = (
 @qm_registry.register()  # Remember to register QM!
 class FinkZTFQueryManager(FinkBaseQueryManager):
     name = "fink_ztf"
-    id_resolving_order = ("ztf", "ztf_fink", "tns")
+    id_resolving_order = ("ztf_fink", "ztf")
     target_id_key = ZTF_TARGET_ID_KEY
     alert_id_key = ZTF_ALERT_ID_KEY
     portal_client_class = FinkZTFPortalClient
@@ -188,7 +190,12 @@ def process_fink_ztf_alert(
                 continue
             cutout = readstamp(cutout_data, return_type="array")
             cutouts[imtype.lower()] = cutout
+
+        fid = alert["fid"]
+        band = ZTF_BAND_LOOKUP.get(fid, "")
+        cutouts_meta = {"mjd": alert["mjd"], "band": band}
         if len(cutouts) > 0:
+            cutouts["meta"] = cutouts_meta
             with open(cutouts_filepath, "wb+") as f:
                 pickle.dump(cutouts, f)
     return alert

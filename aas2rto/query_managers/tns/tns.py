@@ -113,13 +113,14 @@ class TNSQueryManager(BaseQueryManager):
 
         df_list = []
         for filepath in existing_results:
+            logger.info(f"load {filepath.stem}")
             try:
                 df = pd.read_csv(filepath)
-                logger.info(f"load {filepath.stem}")
-                df_list.append(df)
             except pd.errors.EmptyDataError:
                 logger.info(f"cannot read {filepath.stem}")
                 continue
+            if not df.empty:
+                df_list.append(df)
 
         if len(df_list) > 0:
             tns_results = pd.concat(df_list, ignore_index=True)

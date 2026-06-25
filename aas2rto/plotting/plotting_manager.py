@@ -17,7 +17,6 @@ from aas2rto.plotting.visibility_plotter import plot_visibility
 from aas2rto.target_lookup import TargetLookup
 from aas2rto import utils
 
-
 logger = getLogger(__name__.split(".")[-1])
 
 
@@ -56,12 +55,14 @@ class PlottingManager:
         plotting_interval: float = None,
         t_ref: Time = None,
     ):
-        logger.info(f"plot lightcurves")
 
         t_ref = t_ref or Time.now()
 
         if plotting_function is None:
             plotting_function = plot_default_lightcurve
+
+        logger.info(f"plot lightcurves")
+        logger.info(f"use '{plotting_function.__name__}'")
 
         interval = plotting_interval or self.config["plotting_interval"]
         lazy_plotting = lazy_plotting or self.config["lazy_plotting"]
@@ -71,22 +72,31 @@ class PlottingManager:
 
         plotted = []
         skipped = []
+        failed = []
         for target_id, target in self.target_lookup.items():
             fig_path = self.path_manager.get_lightcurve_plot_path(target_id)
             target.lc_fig_path = fig_path  # useful to attach fig path to target
             fig_age = utils.calc_file_age(fig_path, t_ref, allow_missing=True)
-            if lazy_plotting and (fig_age < interval) and not target.updated:
+            if lazy_plotting and (fig_age < interval) and (not target.updated):
                 skipped.append(target_id)
                 msg = f"skip {target_id} lc: age {fig_age:.2f} < {interval:.2f}"
                 logger.debug(msg)
                 continue
             fig = plotting_function(target, t_ref=t_ref)
-            fig.savefig(fig_path)
-            plt.close(fig=fig)
-            plotted.append(target_id)
+            try:
+                fig.savefig(fig_path)
+                plotted.append(target_id)
+            except ValueError as e:
+                logger.error(f"{target.target_id} plotting FAILED")
+                failed.append(target_id)
+            finally:
+                plt.close(fig=fig)
         if len(plotted) > 0 or len(skipped) > 0:
             msg = f"plotted {len(plotted)}, re-use {len(skipped)}"
             logger.info(msg)
+        if len(failed) > 0:
+            msg = f"{len(failed)} failed to save!"
+            logger.error(msg)
         return plotted, skipped
 
     def plot_all_target_visibilities(
@@ -106,8 +116,8 @@ class PlottingManager:
     def plot_all_target_visibilities_for_observatory(
         self,
         observatory: Observer,
-        lazy_plotting=None,
-        plotting_interval=None,
+        lazy_plotting: bool = None,
+        plotting_interval: float = None,
         t_ref: Time = None,
     ):
         t_ref = t_ref or Time.now()

@@ -9,8 +9,8 @@ from aas2rto.path_manager import PathManager
 
 from aas2rto.web.static_pages_manager import StaticPagesManager
 
-
 # dummy_subprocess defined in unit/conftest.py
+# to prevent any subprocesses (git) from running.
 
 
 @pytest.fixture

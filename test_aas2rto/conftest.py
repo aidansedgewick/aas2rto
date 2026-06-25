@@ -1,6 +1,7 @@
 import copy
 import pytest
 import subprocess
+from logging import getLogger
 from pathlib import Path
 from typing import Dict, List
 
@@ -32,6 +33,8 @@ from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
 
+logger = getLogger("unit/conftest")
+
 
 def remove_empty_filetree(dirpath: Path, depth=0, max_depth=6):
     if depth > max_depth:
@@ -60,6 +63,7 @@ def remove_tmp_dirs(tmp_path: Path):
 def no_subprocess(monkeypatch: pytest.MonkeyPatch):
     # define HERE (main conftest.py), so that no subprocess commands ever run.
     def dummy_check_output(*args, **kwargs):
+        logger.info("subprocesses prevented in tests")
         return "".encode()
 
     monkeypatch.setattr(subprocess, "check_output", dummy_check_output)
@@ -296,7 +300,7 @@ def ztf_lc(lc_pandas: pd.DataFrame):
         "band": "fid",
     }
     lc_pandas.rename(col_mapping, inplace=True, axis=1)
-    lc_pandas.loc[:, "blah"] = 100.0
+    lc_pandas.loc[:, "blah"] = 100.0  # To test removed in LC compiler?
     return lc_pandas
 
 
@@ -311,11 +315,12 @@ def compiled_ztf_lc(ztf_td: TargetData) -> pd.DataFrame:
 
 
 @pytest.fixture
-def ztf_cutouts():
+def ztf_cutouts(t_fixed: Time):
     return {
         "science": np.random.normal(0, 1.0, (20, 20)),
         "template": np.random.normal(0, 1.0, (20, 20)),
         "difference": np.random.normal(0, 1.0, (20, 20)),
+        "meta": {"mjd": t_fixed.mjd, "band": "ZTF-g"},
     }
 
 
@@ -533,7 +538,7 @@ def om_vis_targets(
 def target_to_plot(
     basic_target: Target,
     ztf_td: TargetData,
-    atlas_td: TargetData,
+    # atlas_td: TargetData,
     tns_td: TargetData,
     ztf_cutouts: Dict[str, np.ndarray],
     lc_compiler: DefaultLightcurveCompiler,

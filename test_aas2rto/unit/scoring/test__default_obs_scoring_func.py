@@ -158,7 +158,7 @@ class Test__CalcVisibilityFactor:
         # Arrange
         curr_alt = lasilla.altaz(t_early, ephem_late.target_coord).alt.deg
         assert curr_alt < 30.0
-        assert ephem_late.target_transit > t_early
+        assert ephem_late.target_transit_time > t_early
 
         # Act
         vis_factor, _ = calc_visibility_factor(ephem_late, t_ref=t_early)
@@ -172,7 +172,7 @@ class Test__CalcVisibilityFactor:
         # Arrange
         curr_alt = lasilla.altaz(t_late, ephem_early.target_coord).alt.deg
         assert curr_alt < 30.0
-        assert ephem_early.target_transit < t_late
+        assert ephem_early.target_transit_time < t_late
 
         # Act
         vis_factor, comms = calc_visibility_factor(ephem_early, t_ref=t_late)
