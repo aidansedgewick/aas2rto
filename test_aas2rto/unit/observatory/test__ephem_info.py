@@ -227,5 +227,5 @@ class Test__CopyMethods:
         ephem_2 = copy.copy(basic_ephem_info)
 
         # Assert
-        assert isinstance(ephem_1.target_altaz, SkyCoord)
+        assert isinstance(ephem_1.target_altaz, SkyCoord)  # It's not a shallow copy...
         assert ephem_2.target_altaz is None

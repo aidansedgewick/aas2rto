@@ -262,7 +262,7 @@ class TargetSelector:
             lc_compiler_name = type(lightcurve_compiler).__name__
 
         lazy = self.selector_config["lazy_compile"]
-        logger.info(f"compile photometric data (lazy={lazy}):")
+        logger.info(f"compile photom. data (lazy={lazy})")
         logger.info(f"use {lc_compiler_name}")
 
         compiled = []

@@ -42,7 +42,7 @@ class ObservatoryManager:
         self.target_lookup = target_lookup
         self.path_manager = path_manager
 
-        self.current_ephem_info = {}
+        self.current_ephem_info = {}  # The "base" ephem info, copy for each target.
         self.ephem_updated = {}
 
         self.init_observing_sites()
@@ -110,8 +110,6 @@ class ObservatoryManager:
             if observatory is None:
                 continue
 
-            logger.info(f"check {obs_name} ephem_info valid...")
-
             prev_noon = observatory.noon(t_ref, which="previous")
             next_noon = observatory.noon(t_ref, which="next")
 
@@ -119,19 +117,21 @@ class ObservatoryManager:
             if curr_ephem_info is None:
                 logger.info(f"no {obs_name} ephem_info")
                 curr_ephem_info = self.update_ephem_info(
-                    observatory, prev_noon, human_time="local noon"
+                    observatory, prev_noon, human_time="prev. local noon"
                 )
 
             # Check if any ephem data later than t_ref are still at night...
-            future_ephem = t_ref.mjd < curr_ephem_info.t_grid.mjd
+            logger.info(f"check {obs_name} ephem_info")
+            future_ephem = t_ref.mjd < curr_ephem_info.t_grid.mjd  # After now
             night = curr_ephem_info.sun_altaz.alt < horizon
 
             remaining_night = night & future_ephem
             if sum(remaining_night) > 0:
                 continue
 
-            # If not, update the ephem_info to the next night!
-            self.update_ephem_info(observatory, next_noon, human_time="local noon")
+            logger.info(f"{obs_name} ephem_info invalid")
+            # If not valid, update the ephem_info to the next night!
+            self.update_ephem_info(observatory, next_noon, human_time="next local noon")
 
     def apply_ephem_info(
         self,
@@ -148,7 +148,7 @@ class ObservatoryManager:
 
             update_all_targets = self.ephem_updated[obs_name]
             if update_all_targets:
-                logger.info(f"Add new {obs_name} ephem_info to all targets")
+                logger.info(f"\n    Add new {obs_name} ephem_info to all targets")
 
             current_ephem_info = self.current_ephem_info.get(obs_name, None)
             if current_ephem_info is None:
@@ -163,13 +163,12 @@ class ObservatoryManager:
 
                 if target_ephem_info is not None and not update_all_targets:
                     continue  # No need to re-apply!
-
-                target_ephem_info = copy.copy(current_ephem_info)
-                target_ephem_info.set_target_altaz(target.coord)
+                target_ephem_info = copy.copy(current_ephem_info)  # Copy takes ~1e-5s
+                target_ephem_info.set_target_altaz(target.coord)  # Takes ~0.01 sec.
                 target.ephem_info[obs_name] = target_ephem_info
                 counter = counter + 1
                 logger.debug(f"Add {obs_name} ephem to {target_id}")
 
-            self.ephem_updated[obs_name] = False
+            self.ephem_updated[obs_name] = False  # Don't need to re-apply next loop...
             if counter > 0:
-                logger.info(f"Add {obs_name} ephem to {counter} targets")
+                logger.info(f"Update {obs_name} ephem for {counter}")

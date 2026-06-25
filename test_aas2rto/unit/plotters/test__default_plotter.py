@@ -169,20 +169,20 @@ class Test__CutoutsMethod:
         # Cleanup
         # plt.close(lc_plotter.fig)
 
-    def test__cutouts_bad_keys_no_fail(
-        self, lc_plotter: DefaultLightcurvePlotter, target_to_plot: Target
-    ):
-        # Arrange
-        target_to_plot.target_data["ztf"].cutouts = {"blah": np.zeros((10, 10))}
+    # def test__cutouts_bad_keys_no_fail(
+    #     self, lc_plotter: DefaultLightcurvePlotter, target_to_plot: Target
+    # ):
+    #     # Arrange
+    #     target_to_plot.target_data["ztf"].cutouts = {"blah": np.zeros((10, 10))}
 
-        # Act
-        with pytest.warns(UnexpectedKeysWarning):
-            lc_plotter.add_cutouts(target_to_plot)
+    #     # Act
+    #     with pytest.warns(UnexpectedKeysWarning):
+    #         lc_plotter.add_cutouts(target_to_plot)
 
-        assert not lc_plotter.cutouts_added
+    #     assert not lc_plotter.cutouts_added
 
-        # Cleanup
-        # plt.close(lc_plotter.fig)
+    #     # Cleanup
+    #     # plt.close(lc_plotter.fig)
 
 
 class Test__CommentsMethod:

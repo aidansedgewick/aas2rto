@@ -33,7 +33,7 @@ EXTRA_FINK_LSST_ALERT_KEYS = ()
 @qm_registry.register()  # Remember to register query manager!
 class FinkLSSTQueryManager(FinkBaseQueryManager):
     name = "fink_lsst"
-    id_resolving_order = ("lsst", "fink_lsst", "tns")
+    id_resolving_order = ("fink_lsst", "lsst")
     target_id_key = LSST_TARGET_ID_KEY
     alert_id_key = LSST_ALERT_ID_KEY
     portal_client_class = FinkLSSTPortalClient
@@ -121,6 +121,9 @@ def process_fink_lsst_alert(
         with open(alert_filepath, "w+") as f:
             json.dump(alert, f)
 
+    print(alert.keys())
+
+    cutouts_meta = {"mjd": alert["mjd"], "band": alert["band"]}
     if cutouts_filepath is not None:
         if len(cutouts) > 0:
             with open(cutouts_filepath, "wb+") as f:

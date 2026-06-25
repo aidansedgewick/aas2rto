@@ -56,6 +56,7 @@ def lsst_alert_base(mock_lsst_cutouts: dict, t_fixed: Time):
             "psfFlux": 5000.0,  # approx mag 22.15
             "psfFluxErr": 500.0,
             "midpointMjdTai": t_fixed.mjd,
+            "band": "r",
             **mock_lsst_cutouts,
         },
     }

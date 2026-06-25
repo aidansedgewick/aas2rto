@@ -38,7 +38,11 @@ matplotlib.use("Agg")
 
 
 def plot_default_lightcurve(
-    target: Target, t_ref: Time = None, return_plotter=False, **kwargs
+    target: Target,
+    t_ref: Time = None,
+    return_plotter=False,
+    no_cutouts: bool = False,
+    **kwargs,
 ) -> plt.Figure:
     t_ref = t_ref or Time.now()
     plotter = DefaultLightcurvePlotter.plot(target, t_ref=t_ref, **kwargs)
@@ -84,32 +88,38 @@ class DefaultLightcurvePlotter:
         self.lc_gs = plt.GridSpec(3, 4)
         self.zscaler = ZScaleInterval()
 
-        self.default_figsize = (6.5, 5)
+        self.default_figsize = (7, 7)
 
         # What colour should everything be plotted in?
         # ZTF
-        self.ztf_colors = {"ztfg": "C2", "ztfr": "C3", "ztfi": "C4"}
+        ztf_colors = {"ztfg": "C2", "ztfr": "C3", "ztfi": "C4"}
+        ztf_labels = {"ztfg": "ZTF-$g$", "ztfr": "ZTF-$r$", "ztfi": "ZTF-$i$"}
         # Atlas
-        self.atlas_colors = {"atlasc": "C9", "atlaso": "C1"}  # cyan, orange
+        atlas_colors = {"atlasc": "C9", "atlaso": "C1"}  # cyan, orange
+        atlas_labels = {"atlasc": "ATLAS-$c$", "atlaso": "ATLAS-$o$"}
         # YSE
-        ps1_colors = dict(g="C2", r="C3", i="C4", z="C5", y="C6", w="C7")
-        self.yse_colors = {f"ps1::{b}": color for b, color in ps1_colors.items()}
+        ps1_colors = {"g": "C2", "r": "C3", "i": "C4", "z": "C5", "y": "C6", "w": "C7"}
+        yse_colors = {f"ps1::{b}": color for b, color in ps1_colors.items()}
+        yse_labels = {f"ps1::{b}": f"PS1-${b}$" for b in ps1_colors.keys()}
         # LSST
-        lsst_lookup = dict(u="C0", g="C2", r="C3", i="C4", z="C5", y="C6")
-        self.lsst_colors = {f"lsst{b}": color for b, color in lsst_lookup.items()}
+        lsst_colors = dict(u="C0", g="C2", r="C3", i="C4", z="C5", y="C6")
+        lsst_colors = {f"lsst{b}": color for b, color in lsst_colors.items()}
+        lsst_labels = {f"lsst{b}": f"LSST-${b}$" for b in lsst_colors.keys()}
+
         # Merge
         self.plot_colors = {
-            **self.ztf_colors,
-            **self.atlas_colors,
-            **self.lsst_colors,
-            **self.yse_colors,
+            **ztf_colors,
+            **atlas_colors,
+            **lsst_colors,
+            **yse_colors,
             "no_band": "k",
         }
+        self.plot_labels = {**ztf_labels, **atlas_labels, **yse_labels, **lsst_labels}
 
-        ztf_shapes = {x: "o" for x in self.ztf_colors.keys()}
-        atlas_shapes = {x: "o" for x in self.atlas_colors.keys()}
-        lsst_shapes = {x: "s" for x in self.lsst_colors.keys()}
-        yse_shapes = {x: "^" for x in self.yse_colors.keys()}
+        ztf_shapes = {x: "o" for x in ztf_colors.keys()}
+        atlas_shapes = {x: "o" for x in atlas_colors.keys()}
+        lsst_shapes = {x: "s" for x in lsst_colors.keys()}
+        yse_shapes = {x: "^" for x in yse_colors.keys()}
         swift_shapes = {f"uvot::{x}": "v" for x in "u b v uvw1 uvw2 uvm1 uvm2".split()}
         self.plot_shapes = {
             **ztf_shapes,
@@ -138,7 +148,8 @@ class DefaultLightcurvePlotter:
             "fink_lsst",
             "lasair_lsst",
             "alerce_lsst",
-            "lsst" "fink_ztf",
+            "lsst",
+            "fink_ztf",
             "lasair_ztf",
             "alerce_ztf",
             "ztf",
@@ -188,8 +199,9 @@ class DefaultLightcurvePlotter:
             det_kwargs = dict(color=band_color, marker=shape)
             lim_kwargs = dict(color=band_color, marker="$\u2193$")
 
+            label = self.plot_labels.get(band, band)
             scatter_handle = self.ax.errorbar(
-                0, 0, yerr=0.1, label=band, **det_kwargs, **self.valid_kwargs
+                0, 0, yerr=0.1, label=label, **det_kwargs, **self.valid_kwargs
             )
             self.legend_handles.append(scatter_handle)
 
@@ -250,20 +262,19 @@ class DefaultLightcurvePlotter:
             source_data = target.target_data.get(source, None)
             if source_data is None:
                 continue
+            cutouts = source_data.cutouts
             if len(source_data.cutouts) == 0:
                 continue
-            cutouts = source_data.cutouts
             break
         if len(cutouts) == 0:
             return
 
         target_id = target.target_id
-        if not self.no_warnings:
-            name = f"{target_id}.target_data['{source}'].cutouts"
-            utils.check_unexpected_config_keys(cutouts, self.cutout_keys, name=name)
 
+        cutout_axes = []
         for ii, imtype in enumerate(self.cutout_keys):
             im_ax = self.fig.add_subplot(self.lc_gs[ii : ii + 1, -1:])
+            cutout_axes.append(im_ax)
 
             im_ax.set_xticks([])
             im_ax.set_yticks([])
@@ -295,33 +306,43 @@ class DefaultLightcurvePlotter:
                 [0.2 * yl_im, 0.4 * yl_im], [0.5 * yl_im, 0.5 * yl_im], color="r"
             )
 
-            self.cutouts_added = True
+            self.cutouts_added = True  # Do it INSIDE the loop, so marked true after.
+
+        cutouts_mjd = cutouts.get("meta", {}).get("mjd", None)
+        cutouts_band = cutouts.get("meta", {}).get("band", "")
+
+        imtext_kwargs = dict(
+            transform=cutout_axes[-1].transAxes,
+            ha="center",
+            va="top",
+            fontsize=10,
+        )
+        if self.cutouts_added and cutouts_mjd is not None:
+            t_str = Time(cutouts_mjd, format="mjd").strftime("%Y-%m-%d %H:%M")
+            msg = f"Cutouts\n{t_str}\n{cutouts_band}"
+            cutout_axes[-1].text(0.5, -0.05, msg, **imtext_kwargs)
 
     def format_axes(self, target: Target):
 
-        self.fig.subplots_adjust(top=0.85)
-
-        names = list(set(target.alt_ids.values()))
-
-        if names:
-            title = " -- ".join(sorted(names))
-        else:
-            title = str(target.target_id)
+        self.fig.subplots_adjust(top=0.82)
 
         transform_kwargs = dict(ha="center", va="top", transform=self.fig.transFigure)
-        self.ax.text(0.5, 0.98, title, fontsize=14, **transform_kwargs)
+        self.ax.text(0.5, 0.98, f"{target.target_id}", fontsize=14, **transform_kwargs)
 
-        t_ra = target.coord.ra
-        t_dec = target.coord.dec
-        subtitle = f"ra,dec=({t_ra.deg:.4f},{t_dec.deg:+.6f})"
-
+        ra_str = target.coord.ra.to_string(
+            unit="hourangle", decimal=False, sep=":", pad=True, precision=1
+        )
+        dec_str = target.coord.dec.to_string(
+            unit="deg", sep=":", alwayssign=True, pad=True, precision=2
+        )
+        subtitle = f"{ra_str} {dec_str}"
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
             known_redshift = float(tns_data.parameters.get("redshift", "nan"))
             if np.isfinite(known_redshift):
-                subtitle = subtitle + r" ($z_{\rm TNS}=" + f"{known_redshift}" + "$)"
+                subtitle = subtitle + r" $z_{\rm TNS}=" + f"{known_redshift}" + "$"
 
-        self.ax.text(0.5, 0.93, subtitle, fontsize=11, **transform_kwargs)
+        self.ax.text(0.5, 0.95, subtitle, fontsize=11, **transform_kwargs)
 
         self.peakmag_vals.append(21.0)
         y_bright = np.nanmin(self.peakmag_vals) - 0.2
@@ -330,7 +351,15 @@ class DefaultLightcurvePlotter:
         self.ax.set_ylim(y_faint, y_bright)
         self.ax.axvline(0, color="k")
 
-        legend = self.ax.legend(handles=self.legend_handles, loc=2)
+        legend = self.ax.legend(
+            handles=self.legend_handles,
+            bbox_to_anchor=(0.0, 1.08, 1.0, 1.08),
+            loc="lower center",
+            ncols=6,
+            borderaxespad=0.0,
+            handletextpad=0.1,
+            frameon=False,
+        )
         self.ax.add_artist(legend)
         date_str = self.t_ref.strftime("%d-%b-%y %H:%M")
         xlabel = f"Days before {date_str}"
@@ -355,15 +384,22 @@ class DefaultLightcurvePlotter:
         twiny.set_xticks(xticks - self.t_ref.mjd)
         twiny.set_xticklabels(xticklabels)
 
-    def add_comments(self, target):
+    def add_comments(self, target: Target):
+
+        self.fig.subplots_adjust(bottom=0.35)
+
+        transform_kwargs = dict(ha="left", va="top", transform=self.fig.transFigure)
+
+        names = list(set(target.alt_ids.values()))
+        alt_names_str = "alt names:\n    " + " - ".join(n for n in names)
+        self.fig.text(0.03, 0.25, alt_names_str, fontsize=8, **transform_kwargs)
+
         comments = target.science_comments
-        self.fig.subplots_adjust(bottom=0.3)
         if len(comments) > 0:
             N = len(comments) // 2
             text_col1 = "score comments:\n" + "\n".join(
                 f"    {comm}" for comm in comments[:N]
             )
-            transform_kwargs = dict(ha="left", va="top", transform=self.fig.transFigure)
             self.fig.text(0.03, 0.2, text_col1, fontsize=8, **transform_kwargs)
             text_col2 = "\n" + "\n".join(f"    {comm}" for comm in comments[N:])
             self.fig.text(0.53, 0.2, text_col2, fontsize=8, **transform_kwargs)

@@ -52,13 +52,13 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
         t_ref: Time = None,
         figsize: tuple = None,
         forecast_days: float = 15.0,
-        backcast_days: float = None,
+        hindcast_days: float = None,
         grid_dt: float = 0.5,
         model_name: str = "sncosmo_salt",
     ):
         super().__init__(t_ref=t_ref, figsize=figsize)
         self.forecast_days = forecast_days
-        self.backcast_days = backcast_days
+        self.hindcast_days = hindcast_days
         self.grid_dt = grid_dt
 
         self.target_has_models = False
@@ -69,10 +69,6 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
     def plot_target(self, target: Target):
         self.plot_sncosmo_models(target)
         super().plot_target(target)
-        # self.plot_photometry(target)
-        # self.add_cutouts(target)
-        # self.format_axes(target)
-        # self.add_comments(target)
 
     def plot_sncosmo_models(self, target: Target):
         model = target.models.get(self.model_name, None)
@@ -83,8 +79,8 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
         self.target_has_models = True
         lightcurve = target.compiled_lightcurve
         t_start = target.compiled_lightcurve["mjd"].min()
-        if self.backcast_days is not None:
-            t_start = self.t_ref.mjd - self.backcast_days
+        if self.hindcast_days is not None:
+            t_start = self.t_ref.mjd - self.hindcast_days
         t_end = self.t_ref.mjd + self.forecast_days
         tgrid_main = np.arange(t_start, t_end + self.grid_dt, self.grid_dt)
 

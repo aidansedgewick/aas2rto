@@ -130,7 +130,7 @@ class OutputsManager:
         self.science_ranked_list = ranked_list
 
         if ranked_list.empty:
-            logger.info("Empty science_ranked_list. Skip obs ranked lists...")
+            logger.info("Empty science_ranked_list.\n    Skip obs ranked lists...")
             return
 
         for obs_name, observatory in self.observatory_manager.sites.items():
@@ -276,7 +276,7 @@ class OutputsManager:
 
         t_ref = t_ref or Time.now()
         obs_name = utils.get_observatory_name(observatory)
-        logger.info(f"write visible targets list at {obs_name}")
+        logger.info(f"write visible targets at {obs_name}")
 
         minimum_score = self.config["minimum_score"]
         minimum_alt = self.config["minimum_altitude"]
@@ -309,10 +309,10 @@ class OutputsManager:
                 continue
 
             data = get_target_summary_data(target)
-            transit_time = ephem_info.target_transit
             data["score"] = last_score
-            data["transit_mjd"] = transit_time.mjd
-            data["transit_time"] = transit_time.strftime("%H:%M")
+            data["transit_mjd"] = ephem_info.target_transit_time.mjd
+            data["transit_time"] = ephem_info.target_transit_time.strftime("%H:%M")
+            data["transit_alt"] = f"{ephem_info.target_transit_altaz.alt.deg:+.1f}"
             data_list.append(data)
 
         if missing_ephem > 0:
