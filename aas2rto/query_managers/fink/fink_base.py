@@ -167,8 +167,6 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
         If the cutouts for this id exist, return a dict.
         If they don't exist, return None."""
 
-    ##===== Generic methods start here =====##
-
     DEFAULT_TASKS = ("alerts", "queries", "lightcurves", "cutouts", "stale_files")
     REQUIRED_KAFKA_PARAMS = (
         "username",
@@ -233,7 +231,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             parent_path=parent_path, directories=self.REQUIRED_DIRECTORIES
         )
 
-        # Are there any ZTF tasks we want to skip?
+        # Are there any FINK tasks we want to skip?
         self.tasks = self.config.get("tasks")
         check_unexpected_config_keys(
             self.tasks,
@@ -247,14 +245,14 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
         if self.kafka_config is None:
             logger.info(f"No 'kafka' in {self.name} config: will not listen for alerts")
             return
-        else:
-            missing_keys = check_missing_config_keys(
-                self.kafka_config,
-                self.REQUIRED_KAFKA_PARAMS,
-                name=f"{self.name}.kafka",
-                raise_exc=True,
-                exc_class=BadKafkaConfigError,
-            )
+
+        missing_keys = check_missing_config_keys(
+            self.kafka_config,
+            self.REQUIRED_KAFKA_PARAMS,
+            name=f"{self.name}.kafka",
+            raise_exc=True,
+            exc_class=BadKafkaConfigError,
+        )
 
         topics = self.kafka_config["topics"]
         if isinstance(topics, str):

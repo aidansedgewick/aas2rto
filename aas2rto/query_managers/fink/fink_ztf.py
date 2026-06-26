@@ -33,7 +33,7 @@ logger = getLogger(__name__.split(".")[-1])
 ZTF_TARGET_ID_KEY = "objectId"
 ZTF_ALERT_ID_KEY = "candid"
 
-ZTF_BAND_LOOKUP = {0: "ZTF-g", 1: "ZTF-r", 2: "ZTF-i"}
+ZTF_BAND_LOOKUP = {1: "ZTF-g", 2: "ZTF-r", 3: "ZTF-i"}
 
 EXTRA_FINK_ZTF_ALERT_KEYS = (
     # "timestamp", # doesn't exist anymore?!

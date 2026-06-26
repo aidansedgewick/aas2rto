@@ -45,7 +45,7 @@ class BaseQueryManager(abc.ABC):
 
     @property
     @abc.abstractmethod
-    def name(self):
+    def name(self) -> str:
         """Class attribute - the NAME of the query manager eg. 'atlas', 'fink_ztf', ..."""
 
     @abc.abstractmethod

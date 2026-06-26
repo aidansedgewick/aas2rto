@@ -30,7 +30,6 @@ from aas2rto.query_managers.fink.fink_portal_client import FinkBasePortalClient
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
-
 ##===== Some classes to help testing here =====##
 
 AlertStream = NewType("AlertStream", Iterator[FinkAlert])
@@ -171,7 +170,7 @@ def mock_alert_stream(mock_alert_list: list[FinkAlert]) -> AlertStream:
         for alert in mock_alert_list:
             yield alert
 
-    return alert_stream()
+    return alert_stream()  # () - ie. return already primed generator.
 
 
 @pytest.fixture
@@ -212,14 +211,8 @@ def mock_new_classifier_results() -> pd.DataFrame:
 
 
 @pytest.fixture
-def patched_qm(
-    fink_config: dict,
-    tlookup: TargetLookup,
-    tmp_path: Path,
-    mock_alert_stream: AlertStream,
-    lc_fink: pd.DataFrame,
-    mock_new_classifier_results: dict,
-    monkeypatch: pytest.MonkeyPatch,
+def patch_consumer_and_poll_method(
+    mock_alert_stream: AlertStream, monkeypatch: pytest.MonkeyPatch
 ):
 
     def mock_poll(self, *args, **kwargs):
@@ -231,9 +224,17 @@ def patched_qm(
         else:
             return (None, None, None)
 
-    # Mock CONFLUENT consumer, so that FINK consumer __init__ is called...
+    # Mock CONFLUENT consumer, so that real FINK consumer __init__ is called...
     monkeypatch.setattr("confluent_kafka.Consumer", MockConfluentConsumer)
     monkeypatch.setattr("fink_client.consumer.AlertConsumer.poll", mock_poll)
+
+
+@pytest.fixture
+def patch_client_endpoints(
+    mock_new_classifier_results: dict,
+    lc_fink: pd.DataFrame,
+    monkeypatch: pytest.MonkeyPatch,
+):
 
     def mock_lightcurve_endpoint(*args, **kwargs):
         target_id = kwargs.get("target_id", None)
@@ -256,16 +257,26 @@ def patched_qm(
             return mock_new_classifier_results
         return pd.DataFrame(columns="target_id lastdate fink_class".split())
 
+    monkeypatch.setattr(
+        MockFinkPortalClient, "lightcurve_endpoint", mock_lightcurve_endpoint
+    )
+    monkeypatch.setattr(
+        MockFinkPortalClient, "classifier_endpoint", mock_classifier_endpoint
+    )
+
+
+@pytest.fixture
+def patched_qm(
+    fink_config: dict,
+    tlookup: TargetLookup,
+    tmp_path: Path,
+    patch_consumer_and_poll_method: None,
+    patch_client_endpoints: None,
+):
+
     qm = FinkExampleQM(fink_config, tlookup, parent_path=tmp_path)
     qm.target_lookup["T00"].alt_ids["cool_survey"] = "T00"
     qm.target_lookup["T01"].alt_ids["cool_survey"] = "T01"
-
-    monkeypatch.setattr(
-        qm.portal_client, "lightcurve_endpoint", mock_lightcurve_endpoint
-    )
-    monkeypatch.setattr(
-        qm.portal_client, "classifier_endpoint", mock_classifier_endpoint
-    )
     return qm
 
 
@@ -330,16 +341,28 @@ class Test__HelperFunctions:
         assert len(alert) == 3
         assert alert[1]["target_id"] == "T101"  # etc.
 
-    def test__consumer_is_patched(self, patched_qm: FinkBaseQueryManager):
+    def test__patched_consumer_polls(
+        self, patch_consumer_and_poll_method: None, fink_kafka_base_config: dict
+    ):
         # Act
         with AlertConsumer(
-            ["cool_sne"], patched_qm.kafka_config, "cool_survey"
+            ["cool_sne"], fink_kafka_base_config, "cool_survey"
         ) as consumer:
             alert_data = consumer.poll()
 
         # Assert
         assert isinstance(alert_data, tuple)
         assert alert_data[0] == "cool_sne"
+
+    def test__mock_client_is_patched(self, patch_client_endpoints: None):
+        # Arrange
+        client = MockFinkPortalClient()
+
+        # Act
+        lc = client.lightcurve_endpoint(target_id="T00")
+
+        # Assert
+        assert len(lc) == 14  # etc.
 
     def test__fq_objects_is_patched(self, patched_qm: FinkBaseQueryManager):
         # Act

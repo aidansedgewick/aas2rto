@@ -672,14 +672,22 @@ def msg_mgr(
 
 
 @pytest.fixture
-def fink_kafka_config():
+def fink_kafka_base_config():
     return {
         "username": "user",
         "group.id": 1234,
         "bootstrap.servers": "http://fink.blah.org",
+    }
+
+
+@pytest.fixture
+def fink_kafka_config(fink_kafka_base_config: dict):
+    extra_config = {
         "topics": ["cool_sne"],
         "survey": "cool_survey",
     }
+    fink_kafka_base_config.update(**extra_config)
+    return fink_kafka_base_config
 
 
 @pytest.fixture
@@ -691,7 +699,7 @@ def fink_config(fink_kafka_config: dict):
 def lasair_ztf_kafka_config():
     topic_keys = {"lasair_id": "objectId", "ra": "ramean", "dec": "decmean"}
     return {
-        "kafka_server": "lasair-blah.org",
+        "server": "lasair-blah.org",
         "group_id": "test_group",
         "topics": {
             "cool_sne": topic_keys,
@@ -702,14 +710,14 @@ def lasair_ztf_kafka_config():
 
 @pytest.fixture
 def lasair_ztf_config(lasair_ztf_kafka_config: dict):
-    return {"kafka": lasair_ztf_kafka_config, "token": "example_token"}
+    return {"kafka": lasair_ztf_kafka_config, "client_token": "example_token"}
 
 
 @pytest.fixture
 def lasair_lsst_kafka_config():
     topic_keys = {"lasair_id": "diaObjectId", "ra": "ramean", "dec": "decmean"}
     return {
-        "kafka_server": "lasair-blah.org",
+        "server": "lasair-blah.org",
         "group_id": "test_group",
         "topics": {
             "cool_sne": topic_keys,
