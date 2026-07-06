@@ -32,7 +32,7 @@ from aas2rto.target_lookup import TargetLookup
 
 ##===== Some classes to help testing here =====##
 
-AlertStream = NewType("AlertStream", Iterator[FinkAlert])
+FinkAlertStream = NewType("FinkAlertStream", Iterator[FinkAlert])
 
 
 def target_from_mock_alert(processed_alert: dict, t_ref: Time = None):
@@ -116,13 +116,13 @@ class FinkExampleQM(FinkBaseQueryManager):
             return target
         return None
 
-    def load_cutouts_for_alert(self, fink_id: str, alert_id: int):
-        cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
-        if cutouts_filepath.exists():
-            with open(cutouts_filepath, "rb") as f:
-                cutouts = pickle.load(f)
-            return cutouts
-        return None
+    # def load_cutouts_for_alert(self, fink_id: str, alert_id: int):
+    #     cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
+    #     if cutouts_filepath.exists():
+    #         with open(cutouts_filepath, "rb") as f:
+    #             cutouts = pickle.load(f)
+    #         return cutouts
+    #     return None
 
 
 class BadPortalClient:
@@ -163,14 +163,33 @@ def mock_alert_list(alert_base: dict, t_fixed: Time) -> list[FinkAlert]:
 
 
 @pytest.fixture
-def mock_alert_stream(mock_alert_list: list[FinkAlert]) -> AlertStream:
+def mock_alert_stream(mock_alert_list: list[FinkAlert]) -> FinkAlertStream:
     """return a Generator, so that an item is returned every time next() is called"""
 
     def alert_stream():
         for alert in mock_alert_list:
             yield alert
 
-    return alert_stream()  # () - ie. return already primed generator.
+    return alert_stream()  # call with () ie. return already primed generator.
+
+
+@pytest.fixture
+def patch_consumer_and_poll_method(
+    mock_alert_stream: FinkAlertStream, monkeypatch: pytest.MonkeyPatch
+):
+
+    def mock_poll(self, *args, **kwargs):
+        if self._topics[0] == "cool_sne":
+            try:
+                return next(mock_alert_stream)
+            except StopIteration as e:
+                return (None, None, None)
+        else:
+            return (None, None, None)
+
+    # Mock CONFLUENT consumer, so that real FINK consumer __init__ is called...
+    monkeypatch.setattr("confluent_kafka.Consumer", MockConfluentConsumer)
+    monkeypatch.setattr("fink_client.consumer.AlertConsumer.poll", mock_poll)
 
 
 @pytest.fixture
@@ -208,25 +227,6 @@ def mock_new_classifier_results() -> pd.DataFrame:
         ("T202", 240.0, 0.0, 202_2, new_date),  # updated from before: date & obs_id
     ]
     return pd.DataFrame(rows, columns="target_id ra dec obs_id lastdate".split())
-
-
-@pytest.fixture
-def patch_consumer_and_poll_method(
-    mock_alert_stream: AlertStream, monkeypatch: pytest.MonkeyPatch
-):
-
-    def mock_poll(self, *args, **kwargs):
-        if self._topics[0] == "cool_sne":
-            try:
-                return next(mock_alert_stream)
-            except StopIteration as e:
-                return (None, None, None)
-        else:
-            return (None, None, None)
-
-    # Mock CONFLUENT consumer, so that real FINK consumer __init__ is called...
-    monkeypatch.setattr("confluent_kafka.Consumer", MockConfluentConsumer)
-    monkeypatch.setattr("fink_client.consumer.AlertConsumer.poll", mock_poll)
 
 
 @pytest.fixture
@@ -314,7 +314,7 @@ class Test__HelperFunctions:
         assert isinstance(target, Target)
         assert target.target_id == "T101"
 
-    def test__mock_alert_stream(self, mock_alert_stream: AlertStream):
+    def test__mock_alert_stream(self, mock_alert_stream: FinkAlertStream):
         # Act
         alert = next(mock_alert_stream)
 
@@ -326,7 +326,7 @@ class Test__HelperFunctions:
         assert alert[1]["target_id"] == "T101"  # etc.
         assert alert[1]["obs_id"] == 1000
 
-    def test__mock_poll(self, mock_alert_stream: AlertStream):
+    def test__mock_poll(self, mock_alert_stream: FinkAlertStream):
         """Do I understand how python closures work?"""
 
         # Arrange
@@ -703,7 +703,7 @@ class Test__ApplyUpdateMessages:
         assert set(patched_qm.target_lookup["T00"].info_messages) == set()
 
         # Act
-        patched_qm.update_info_messages([basic_alert])
+        patched_qm.add_messages_from_alerts([basic_alert])
 
         # Assert
         assert patched_qm.target_lookup["T00"].updated

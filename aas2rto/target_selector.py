@@ -363,7 +363,7 @@ class TargetSelector:
         # =========================== Get new data =========================== #
         t1 = time.perf_counter()
         self.load_targets_of_opportunity(t_ref=t_ref)
-        if not "qm_tasks" in skip_tasks:
+        if "qm_tasks" not in skip_tasks:
             self.primary_query_manager.perform_all_query_manager_tasks(
                 iteration=iteration, t_ref=t_ref
             )
@@ -378,7 +378,7 @@ class TargetSelector:
 
         # ================= Prep before modeling and scoring ================= #
         t1 = time.perf_counter()
-        if not "ephem_info" in skip_tasks:
+        if "ephem_info" not in skip_tasks:
             self.observatory_manager.apply_ephem_info(t_ref=t_ref)
         else:
             logger.info("skip compute new obs_info for each target")
@@ -392,7 +392,7 @@ class TargetSelector:
 
         # ============ Remove any targets that aren't interesting ============ #
         t1 = time.perf_counter()
-        if not "pre_check" in skip_tasks:
+        if "pre_check" not in skip_tasks:
             logger.info(f"{len(self.target_lookup)} targets before check")
             new_targets = self.scoring_manager.new_target_initial_check(
                 scoring_function, t_ref=t_ref
@@ -461,7 +461,7 @@ class TargetSelector:
 
         # ============================ Plotting ============================ #
         t1 = time.perf_counter()
-        if not "plotting" in skip_tasks:
+        if "plotting" not in skip_tasks:
             self.plotting_manager.plot_all_target_lightcurves(
                 plotting_function=lc_plotting_function, t_ref=t_ref
             )
@@ -516,10 +516,9 @@ class TargetSelector:
         # ======== Reset all targets to un-updated for the next loop ========= #
         self.target_lookup.reset_updated_targets()
 
-        logger.info(
-            f"time summary:\n    "
-            + f"\n    ".join(f"{k:10} = {v: 6.2f}s" for k, v in perf_times.items())
-        )  # space in f string formatter is for float padding!
+        # space in f-string formatter is for float pad with leading spaces!
+        timings = [f"{k:10} = {v: 6.2f}s" for k, v in perf_times.items()]  # noqa: W503
+        logger.info("time summary:\n    " + "\n    ".join(timings))
 
         return None
 
@@ -531,9 +530,9 @@ class TargetSelector:
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
         extra_plotting_functions: list[Callable] = None,
-        recovery_file=False,
-        skip_tasks=None,
-        iterations=None,
+        recovery_file: bool | str | Path = False,
+        skip_tasks: tuple[str] | None = None,
+        iterations: int | None = None,
     ):
         """
         The actual prioritisation loop.
@@ -617,6 +616,7 @@ class TargetSelector:
 
         # ===================== Get and set some parameters ================== #
         sleep_time = self.selector_config["sleep_time"]
+        logger.info(f"sleep for {sleep_time:.1f}s between loops")
 
         if scoring_function is None:
             msg = "You must provide scoring_function=<some-callable>."
@@ -668,6 +668,7 @@ class TargetSelector:
                 loop_skip_tasks.append("messaging")
                 loop_skip_tasks.append("write_targets")
                 loop_skip_tasks.append("web")
+                loop_skip_tasks.append("modeling")
                 # loop_skip_tasks.append("plotting")
 
             try:
@@ -698,7 +699,7 @@ class TargetSelector:
                 logger.info("no sleep after startup")
             else:
                 exc_time = time.perf_counter() - t_start
-                sleep_time_actual = max(sleep_time - exc_time, 60.0)
+                sleep_time_actual = max(sleep_time - exc_time, 30.0)
 
                 logger.info(f"loop execution time = {exc_time:.1f}sec")
                 logger.info(f"...so sleep for {sleep_time_actual:.1f}sec")

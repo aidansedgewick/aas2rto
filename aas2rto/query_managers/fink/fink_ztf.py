@@ -134,15 +134,6 @@ class FinkZTFQueryManager(FinkBaseQueryManager):
         fink_data.add_lightcurve(updated_lc)
         return True
 
-    def load_cutouts_for_alert(self, fink_id: int, alert_id: int):
-        cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
-        if not cutouts_filepath.exists():
-            return None
-
-        with open(cutouts_filepath, "rb") as f:
-            cutouts = pickle.load(f)
-        return cutouts
-
 
 def process_fink_ztf_alert(
     alert_data: tuple[str, dict, str],
@@ -227,9 +218,11 @@ def apply_fink_ztf_updates_to_target(
     topic = processed_alert["topic"]
     alert_id = processed_alert[ZTF_ALERT_ID_KEY]
     mag = processed_alert["magpsf"]
-    band = processed_alert["fid"]  # "filter-id"
+    fid = processed_alert["fid"]  # "filter-id"
     mjd = processed_alert["mjd"]
     t_str = Time(mjd, format="mjd").strftime("%y-%m-%d %H:%M")
+
+    band = ZTF_BAND_LOOKUP.get(fid, f"band-{fid}")
 
     msg = (
         f"New FINK-ZTF alert for {target.target_id} ({fink_id}) from {topic}!"

@@ -84,7 +84,7 @@ def calc_cv_prob_penalty(
     det_pre_t0 = detections[detections["mjd"] < t0]
 
     if len(ulim) == 0 or "diffmaglim" not in ulim.columns:
-        return 1.0, [f"no CV-penalty (no 'diffmaglim' data)"]
+        return 1.0, ["no CV-penalty (no 'diffmaglim' data)"]
 
     if len(det_pre_t0) > cv_cand_detections:
         return 1.0, [f"no CV penalty: pre-t0 N_det={len(det_pre_t0)}"]
@@ -346,9 +346,11 @@ class SupernovaPeakScore:
         tns_redshift_str = ""
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
-            tns_type_str = tns_data.parameters.get("type", "")
-            known_redshift = float(tns_data.parameters.get("redshift", "nan"))
-            if np.isfinite(known_redshift):
+            tns_type_str = str(tns_data.parameters.get("type", ""))
+            if tns_type_str == "nan":
+                tns_type_str = ""  # Catch strange 'nan'.
+            known_redshift = float(tns_data.parameters.get("redshift", -1.0))
+            if np.isfinite(known_redshift) and known_redshift > 0:
                 tns_redshift_str = f"{known_redshift:.4f}"
         target.flags["TNS_type"] = tns_type_str
         target.flags["TNS_redshift"] = tns_redshift_str

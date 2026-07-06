@@ -88,20 +88,18 @@ class CoolKafkaQM(KafkaQueryManager):
     name = "cool_kafka"
     target_id_key = "target_id"
 
-    # def __init__(
-    #     self, config: dict, target_lookup: TargetLookup, parent_path: Path = None
-    # ):
-    #     self.config = config
-    #     self.target_lookup = target_lookup
-    #     # do NOT process paths here
-
     def listen_for_alerts(self):
-        pass
+        pass  # Patched in fixture
 
     def new_target_from_alert(self, processed_alert, t_ref=None):
-        target_id = processed_alert["target_id"]
+        target_id = processed_alert[self.target_id_key]
         coord = SkyCoord(processed_alert["ra"], processed_alert["dec"], unit=u.deg)
         return Target(target_id, coord)
+
+    def apply_updates_from_alert(self, processed_alert, t_ref=None):
+        target_id = processed_alert[self.target_id_key]
+        target = self.target_lookup.get(target_id)
+        target.info_messages.append("New alert!")
 
     def perform_all_tasks(self, iteration: int, t_ref: Time = None):
         pass
@@ -431,3 +429,20 @@ class Test__KafkaQMMethods:
 
         # also check that the new targets are in the tlookup...
         assert set(tl.keys()) == set("T00 T01 T101 T102 T103 T104 T105".split())
+
+    def test__add_messages_from_alerts(
+        self, cool_kafka_qm: KafkaQueryManager, mock_alert_list: list[dict]
+    ):
+        # Arrange
+        cool_kafka_qm.add_targets_from_alerts(mock_alert_list)
+        tl = cool_kafka_qm.target_lookup
+
+        # Act
+        cool_kafka_qm.add_messages_from_alerts(mock_alert_list)
+
+        # Assert
+        assert len(tl["T00"].info_messages) == 0  # No alerts about this target...
+        assert len(tl["T01"].info_messages) == 0
+        assert len(tl["T101"].info_messages) == 1  # Has alerts!
+        assert len(tl["T102"].info_messages) == 1
+        assert len(tl["T103"].info_messages) == 1

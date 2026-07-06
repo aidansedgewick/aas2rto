@@ -80,7 +80,6 @@ class Test__StaticProcessRespone:
         assert isinstance(tab[0]["redshift"], float)  # Not broken by missing vals
         assert np.isclose(tab[0]["redshift"], 0.01)  # in other rows
 
-        print(tab[1]["redshift"])
         assert np.ma.is_masked(tab[1]["redshift"])  # Empty str is converted ok
 
         assert tab[2]["reporters"] == "A. Aa, B. Bb"  # str w/ commas parsed ok
@@ -348,8 +347,6 @@ class Test__GetAllTNS:
     def test__get_all_tns(self, tclient: TNSClient):
         # Act
         result = tclient.get_full_tns_archive(return_type="pandas")
-
-        print(result)
 
         # Assert
         assert isinstance(result, pd.DataFrame)  # Basically just checking for typos

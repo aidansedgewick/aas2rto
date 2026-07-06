@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 import logging.config
 
 import yaml
+
+from astropy.utils.iers import conf
 
 from aas2rto.target import Target, TargetData
 from aas2rto.target_selector import TargetSelector
@@ -14,5 +17,5 @@ if default_logging_config.exists():
         log_config = yaml.safe_load(f.read())
     logging.config.dictConfig(log_config)
 
-from astropy.utils.iers import conf
+
 conf.auto_max_age = None

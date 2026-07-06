@@ -1,10 +1,6 @@
 # Exceptions
 
 
-class AlreadyRegisteredError(Exception):
-    pass
-
-
 class BadKafkaConfigError(Exception):
     pass
 

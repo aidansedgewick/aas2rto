@@ -33,19 +33,58 @@ def mock_cutouts():
 
 
 @pytest.fixture
+def mock_lsst_cutouts():
+    return dict(
+        cutoutScience=np.random.normal(0.0, 1.0, (10, 10)),
+        cutoutDifference=np.random.normal(0.0, 1.0, (10, 10)),
+        cutoutTemplate=np.random.normal(0.0, 1.0, (10, 10)),
+    )
+
+
+@pytest.fixture
+def fink_lsst_alert_base(mock_lsst_cutouts: dict, t_fixed: Time):
+    return {
+        "diaObject": {
+            "diaObjectId": 1000,
+            "ra": 180.0,
+            "dec": -30.0,
+            "nDiaSources": 2,  # Number of prev. detections
+            **mock_lsst_cutouts,  # cutouts are TOP-LEVEL!
+        },
+        "diaSource": {
+            "diaSourceId": 1234,  # the alert_id
+            "ra": 180.0,
+            "dec": -30.0,
+            "psfFlux": 5000.0,  # approx mag 22.15
+            "psfFluxErr": 500.0,
+            "midpointMjdTai": t_fixed.mjd,
+            "band": "r",
+        },
+    }
+
+
+@pytest.fixture
+def fink_lsst_alert(fink_lsst_alert_base: dict, fink_alert_extras: dict) -> FinkAlert:
+    # Arrange
+    alert = copy.deepcopy(fink_lsst_alert_base)
+    alert.update(fink_alert_extras)
+    return ("some_topic", alert, "some_schema")
+
+
+@pytest.fixture
 def fink_lsst_alert_list(
-    lsst_alert_base: dict, t_fixed: Time, fink_alert_extras: dict
+    fink_lsst_alert_base: dict, t_fixed: Time, fink_alert_extras: dict
 ) -> list[FinkAlert]:
 
     lsst_filters = "g r i".split()
 
     alert_data_list = []
     for ii in range(5):
-        alert = copy.deepcopy(lsst_alert_base)
+        alert = copy.deepcopy(fink_lsst_alert_base)
 
         alert["diaSource"]["midpointMjdTai"] = t_fixed.mjd + ii
         alert["diaSource"]["psfFlux"] = 10 ** (-0.4 * ((22.0 - ii * 0.5) - 31.4))
-        alert["diaSource"]["psfFluxErr"] = alert["diaSource"]["psfFlux"] / 10.0
+        alert["diaSource"]["psfFluxErr"] = alert["diaSource"]["psfFlux"] / 10.0  # SNR10
         alert["diaSource"]["band"] = lsst_filters[ii % 3]
 
         alert.update(copy.deepcopy(fink_alert_extras))
@@ -68,7 +107,10 @@ def patch_readstamp(monkeypatch: pytest.MonkeyPatch) -> NoReturn:
 
 @pytest.fixture
 def patched_lsst_qm(
-    fink_config: dict, tlookup: TargetLookup, tmp_path: Path, patch_readstamp: NoReturn
+    fink_config: dict,
+    tlookup: TargetLookup,
+    tmp_path: Path,
+    patch_readstamp: NoReturn,
 ):
     qm = FinkLSSTQueryManager(fink_config, tlookup, parent_path=tmp_path)
     return qm
@@ -107,21 +149,12 @@ def unprocessed_lsst_lc(lsst_lc: pd.DataFrame):
 
 class Test__ProcessLSSTAlert:
 
-    @pytest.fixture
-    def lsst_alert_data(
-        self, lsst_alert_base: dict, fink_alert_extras: dict
-    ) -> FinkAlert:
-        # Arrange
-        alert = copy.deepcopy(lsst_alert_base)
-        alert.update(fink_alert_extras)
-        return ("some_topic", alert, "some_schema")
-
     def test__process_lsst_alert(
-        self, lsst_alert_data: FinkAlert, patch_readstamp: NoReturn
+        self, fink_lsst_alert: FinkAlert, patch_readstamp: NoReturn
     ):
 
         # Act
-        proc_alert = process_fink_lsst_alert(lsst_alert_data)
+        proc_alert = process_fink_lsst_alert(fink_lsst_alert)
 
         # Assert
         candidate_keys = (
@@ -139,7 +172,7 @@ class Test__ProcessLSSTAlert:
         assert "diaSource" not in proc_alert.keys()  # flattened.
 
     def test__write_alert_data(
-        self, lsst_alert_data: FinkAlert, patch_readstamp: NoReturn, tmp_path: Path
+        self, fink_lsst_alert: FinkAlert, patch_readstamp: NoReturn, tmp_path: Path
     ):
         # Arrange
         alert_path = tmp_path / "alert.json"
@@ -147,7 +180,7 @@ class Test__ProcessLSSTAlert:
 
         # Act
         proc_alert = process_fink_lsst_alert(
-            lsst_alert_data, alert_filepath=alert_path, cutouts_filepath=cutouts_path
+            fink_lsst_alert, alert_filepath=alert_path, cutouts_filepath=cutouts_path
         )
 
         # Assert
@@ -168,7 +201,7 @@ class Test__TargetFromAlert:
         assert isinstance(target.target_id, str)  # int diaObjectId converted!
         assert target.target_id == "1000"
 
-        assert set(target.alt_ids.keys()) == set(["lsst", "fink_lsst"])
+        assert set(target.alt_ids.keys()) == set(["broker_lsst", "fink_lsst"])
 
     def test__target_is_added(
         self,
@@ -216,7 +249,7 @@ class Test__ApplyUpdatesFromAlert:
         patched_lsst_qm.add_targets_from_alerts([processed_alert])
 
         # Act
-        patched_lsst_qm.update_info_messages([processed_alert])
+        patched_lsst_qm.add_messages_from_alerts([processed_alert])
 
 
 # class Test__ProcessLSSTLightcurve:

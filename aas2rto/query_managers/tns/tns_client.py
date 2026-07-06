@@ -7,14 +7,14 @@ import zipfile
 from logging import getLogger
 from itertools import chain
 
-logger = getLogger(__name__.split(".")[-1])
-
 import pandas as pd
 
 from astropy import units as u
 from astropy.io.ascii.core import InconsistentTableError
 from astropy.table import Table, vstack
 from astropy.time import Time, TimeDelta
+
+logger = getLogger(__name__.split(".")[-1])
 
 
 class TNSClientWarning(UserWarning):
@@ -26,7 +26,7 @@ class TNSClientError(Exception):
 
 
 class TNSClient:
-    tns_base_url = f"https://www.wis-tns.org"
+    tns_base_url = "https://www.wis-tns.org"
     tns_search_url = f"{tns_base_url}/search"  # NOTE: no trailing slash
     tns_public_objects_url = f"{tns_base_url}/system/files/tns_public_objects"
     max_num_page = 50

@@ -49,7 +49,6 @@ class Test__PrepLSST:
         processed_lsst = prepare_lsst_data(td)
 
         # Assert
-        print(processed_lsst[["tag", "alert_id", "mjd"]])
         assert processed_lsst["tag"].iloc[2] == "badqual"
         assert processed_lsst["tag"].iloc[3] == "valid"
 

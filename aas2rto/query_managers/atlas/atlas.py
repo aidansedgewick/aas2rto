@@ -13,7 +13,7 @@ from aas2rto import utils
 from aas2rto.exc import UnknownTargetWarning
 from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.atlas.atlas_client import AtlasClient
-from aas2rto.query_managers.base import LightcurveQueryManager
+from aas2rto.query_managers.base import BaseQueryManager, LightcurveQueryManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
@@ -68,22 +68,13 @@ class AtlasQueryManager(LightcurveQueryManager):
         "query_lightcurve_age": "If last query less x [DAYS] ago, don't requery",
         "query_minimum_score": "Skip targets if last science_score less than x",
     }
-    required_directories = ("lightcurves",)
+    required_directories = ("lightcurves",)  # Comma ensures tuple.
 
     def __init__(self, config: dict, target_lookup: TargetLookup, parent_path: Path):
-
-        self.config = self.default_config.copy()
-        self.config.update(config)
+        # Combine default_config and config, set target_lookup, populate paths_lookup
+        super().__init__(config, target_lookup, parent_path)
 
         self.process_credentials()  # BEFORE cfg_chk: credentials error raised first.
-        utils.check_unexpected_config_keys(
-            self.config,
-            self.default_config,
-            name="query_managers.atlas",
-            raise_exc=True,
-        )
-
-        self.target_lookup = target_lookup
 
         self.project_identifier = self.config.get("project_identifier", None)
         if self.project_identifier is None:
@@ -101,10 +92,6 @@ class AtlasQueryManager(LightcurveQueryManager):
         # Keep track of who stopped new queries...
         self.local_throttled = False  # ...us?
         self.server_throttled = False  # ...or the server?
-
-        self.process_paths(
-            parent_path=parent_path, directories=self.required_directories
-        )
 
     def get_lightcurve_filepath(self, target_id: str, fmt="csv"):
         return self.paths_lookup["lightcurves"] / f"{target_id}.{fmt}"
@@ -228,7 +215,7 @@ class AtlasQueryManager(LightcurveQueryManager):
         logger.info(f"{len(finished_queries)} finished, {len(ongoing_queries)} ongoing")
         return finished_queries, ongoing_queries, error_queries
 
-    def select_lightcurves_to_query(self, t_ref: Time = None):
+    def select_lightcurves_to_query(self, t_ref: Time = None) -> list[str]:
         """OVERRIDES superclass's method.
 
         Because ATLAS forced-phot server is more limited, there are more

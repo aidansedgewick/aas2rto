@@ -168,7 +168,7 @@ class FinkBasePortalClient(abc.ABC):
         return processor(data)
 
     ##===== Methods which look common among surveys =====##
-    # ...and do the same thing in each survey.
+    # ...and do the same thing in each survey!
 
     def cutouts(self, method: str = "post", **payload):
         cutouts_kind = payload.get("kind", None)
@@ -261,7 +261,7 @@ class FinkZTFPortalClient(FinkBasePortalClient):
         return self.do_request("objects", **client_kwargs, **payload)
 
     def schema(self, method="get", **payload):
-        """get method disallowed for ZTF schema endpoint"""
+        """post method disallowed for ZTF schema endpoint"""
         self.disallow_http_method(method, disallowed="post", endpoint="schema")
         return super().schema(method=method, **payload)
 

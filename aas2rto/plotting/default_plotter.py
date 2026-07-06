@@ -98,13 +98,13 @@ class DefaultLightcurvePlotter:
         atlas_colors = {"atlasc": "C9", "atlaso": "C1"}  # cyan, orange
         atlas_labels = {"atlasc": "ATLAS-$c$", "atlaso": "ATLAS-$o$"}
         # YSE
-        ps1_colors = {"g": "C2", "r": "C3", "i": "C4", "z": "C5", "y": "C6", "w": "C7"}
-        yse_colors = {f"ps1::{b}": color for b, color in ps1_colors.items()}
-        yse_labels = {f"ps1::{b}": f"PS1-${b}$" for b in ps1_colors.keys()}
+        yse_band_lookup = dict(g="C2", r="C3", i="C4", z="C5", y="C6", w="C7")
+        yse_colors = {f"ps1::{b}": color for b, color in yse_band_lookup.items()}
+        yse_labels = {f"ps1::{b}": f"PS1-${b}$" for b in yse_band_lookup.keys()}
         # LSST
-        lsst_colors = dict(u="C0", g="C2", r="C3", i="C4", z="C5", y="C6")
-        lsst_colors = {f"lsst{b}": color for b, color in lsst_colors.items()}
-        lsst_labels = {f"lsst{b}": f"LSST-${b}$" for b in lsst_colors.keys()}
+        lsst_band_lookup = dict(u="C0", g="C2", r="C3", i="C4", z="C5", y="C6")
+        lsst_colors = {f"lsst{b}": color for b, color in lsst_band_lookup.items()}
+        lsst_labels = {f"lsst{b}": f"LSST-${b}$" for b in lsst_band_lookup.keys()}
 
         # Merge
         self.plot_colors = {
@@ -268,8 +268,6 @@ class DefaultLightcurvePlotter:
             break
         if len(cutouts) == 0:
             return
-
-        target_id = target.target_id
 
         cutout_axes = []
         for ii, imtype in enumerate(self.cutout_keys):

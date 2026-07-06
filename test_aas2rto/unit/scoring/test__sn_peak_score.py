@@ -393,7 +393,6 @@ class Test__ScoreTargetWithModel:
         assert score > 0
         assert isinstance(comms, list)
         comm_str = " ".join(comms)
-        print(comm_str)
         assert "no f_chisq: non-float chisq_nu=" in comm_str
         assert "ignore f_interest" in comm_str and "non-float chisq_nu" in comm_str
 

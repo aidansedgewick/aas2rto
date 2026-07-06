@@ -6,7 +6,6 @@ import pandas as pd
 
 from astropy.table import Table
 
-
 logger = getLogger(__name__.split(".")[-1])
 
 
@@ -237,8 +236,6 @@ class YSEClient:
             if return_type == "pandas":
                 lc = pd.DataFrame(data=data_rows, columns=columns)
             elif return_type == "astropy":
-                print(data_rows)
-                print(columns)
                 lc = Table(rows=data_rows, names=columns)
             elif return_type == "records":
                 lc = [{k: v for k, v in zip(columns, row)} for row in data_rows]

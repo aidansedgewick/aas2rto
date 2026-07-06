@@ -33,7 +33,7 @@ EXTRA_FINK_LSST_ALERT_KEYS = ()
 @qm_registry.register()  # Remember to register query manager!
 class FinkLSSTQueryManager(FinkBaseQueryManager):
     name = "fink_lsst"
-    id_resolving_order = ("fink_lsst", "lsst")
+    id_resolving_order = ("fink_lsst", "broker_lsst")
     target_id_key = LSST_TARGET_ID_KEY
     alert_id_key = LSST_ALERT_ID_KEY
     portal_client_class = FinkLSSTPortalClient
@@ -66,7 +66,7 @@ class FinkLSSTQueryManager(FinkBaseQueryManager):
 
         target = self.target_lookup.get(fink_id, None)
         if target is None:
-            logger.warning(f"No target '{fink_id}' - can't apply updates!")
+            self.logger.warning(f"No target '{fink_id}' - can't apply updates!")
             return
         apply_fink_lsst_updates_to_target(target, processed_alert, t_ref)
 
@@ -76,9 +76,6 @@ class FinkLSSTQueryManager(FinkBaseQueryManager):
     def load_missing_alerts_for_target(self, fink_id: str):
         pass
         # There should be no missing alerts in the LC - fink ingests LSST immediately.
-
-    def load_cutouts_for_alert(self, fink_id: str, alert_id: int):
-        pass
 
 
 def process_fink_lsst_alert(
@@ -112,22 +109,21 @@ def process_fink_lsst_alert(
     cutouts = {}
     for imtype in FinkLSSTPortalClient.imtypes:
         cutout_key = f"cutout{imtype}"
-        alert_data = alert.pop(cutout_key, None)
-        if alert_data is not None:
-            cutout = readstamp(alert_data)
+        cutout_data = data.pop(cutout_key, None)
+        if cutout_data is not None:
+            cutout = readstamp(cutout_data)
             cutouts[imtype.lower()] = cutout
+
+        cutouts_meta = {"mjd": alert["mjd"], "band": alert["band"]}
+        cutouts["meta"] = cutouts_meta
+        if cutouts_filepath is not None:
+            if len(cutouts) > 0:
+                with open(cutouts_filepath, "wb+") as f:
+                    pickle.dump(cutouts, f)
 
     if alert_filepath is not None:
         with open(alert_filepath, "w+") as f:
             json.dump(alert, f)
-
-    print(alert.keys())
-
-    cutouts_meta = {"mjd": alert["mjd"], "band": alert["band"]}
-    if cutouts_filepath is not None:
-        if len(cutouts) > 0:
-            with open(cutouts_filepath, "wb+") as f:
-                pickle.dump(cutouts, f)
 
     return alert
 
@@ -141,7 +137,7 @@ def target_from_fink_lsst_alert(processed_alert: dict, t_ref: Time = None):
     if (ra is None) or (dec is None):
         raise MissingCoordinatesError(f"ra: {ra} or dec: {dec} is None!")
     coord = SkyCoord(ra=ra, dec=dec, unit=u.deg)
-    alt_ids = {"lsst": target_id, "fink_lsst": target_id}
+    alt_ids = {"broker_lsst": target_id, "fink_lsst": target_id}
     return Target(target_id, coord, source="fink_lsst", alt_ids=alt_ids, t_ref=t_ref)
 
 

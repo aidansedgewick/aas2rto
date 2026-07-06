@@ -265,7 +265,7 @@ class TelegramMessenger:
                 exceptions.append(msg)
 
         if len(exceptions) > 0:
-            execption_str = "\nand\n".join(e for e in exceptions)
+            execption_str = "\n    and\n".join(e for e in exceptions)
             err_msg = "During message_users:\n\n" + execption_str
             for sudoer, user_label in self.sudoers.items():
                 try:

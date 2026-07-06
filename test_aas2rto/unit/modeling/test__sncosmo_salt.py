@@ -81,7 +81,6 @@ def result_with_samples(salt_model: sncosmo.Model):
 
 @pytest.fixture
 def fittable_lc(salt_model: sncosmo.Model):
-    print(salt_model.parameters)
     ztfg_t_grid = np.arange(60000.0, 60020.0, 2.0)
     N_ztfg = len(ztfg_t_grid)
     ztfg_m_grid = salt_model.bandmag("ztfg", "ab", ztfg_t_grid)

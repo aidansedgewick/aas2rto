@@ -86,6 +86,7 @@ def prepare_ztf_data(
 
 def prepare_lsst_data(
     lsst_data: TargetData,
+    reliability_threshold: float = 0.0,
     valid_tag: str = DEFAULT_VALID_TAG,
     badqual_tag: str = DEFAULT_BADQUAL_TAG,
     ulimit_tag: str = DEFAULT_ULIMIT_TAG,
@@ -117,6 +118,10 @@ def prepare_lsst_data(
 
     lsst_lc = lsst_lc[lsst_lc["psfFlux"] > 0.0]  # TODO: deal with -ve flux better...
 
+    keep_cols = "mjd mag magerr diffmaglim tag band alert_id source".split()
+    if len(lsst_lc) == 0:
+        return pd.DataFrame(columns=keep_cols)
+
     # Convert fluxes into mags and get the upperlims
     psfFlux_snr = lsst_lc["psfFlux"] / lsst_lc["psfFluxErr"]
     with warnings.catch_warnings():
@@ -132,6 +137,10 @@ def prepare_lsst_data(
     else:
         lsst_lc.loc[:, "diffmaglim"] = 0.0
 
+    if "reliability" in lsst_lc:
+        badqual_mask = lsst_lc["reliability"] < reliability_threshold
+        lsst_lc.loc[badqual_mask, "tag"] = badqual_tag
+
     # Fix some column names
     lsst_colmap = {"midpointMjdTai": "mjd", "diaSourceId": "alert_id"}
     lsst_lc.rename(lsst_colmap, axis=1, inplace=True)
@@ -141,7 +150,6 @@ def prepare_lsst_data(
     lsst_lc.loc[:, "band"] = lsst_lc["band"].map(lsst_band_lookup)
 
     lsst_lc.sort_values("mjd", inplace=True)
-    keep_cols = "mjd mag magerr diffmaglim tag band alert_id source".split()
     return lsst_lc[keep_cols]
 
 
@@ -305,15 +313,17 @@ class DefaultLightcurveCompiler:
 
     def __init__(
         self,
+        broker_priority: list[str] = None,
         atlas_average_epochs: bool = True,
         atlas_rolling_window: float = 0.1,
-        broker_priority: list[str] = None,
+        lsst_reliability_threshold: float = 0.0,
         yse_use_all_sources: bool = True,
         yse_additional_sources: tuple[str] = (),
     ):
+        self.broker_priority = broker_priority or self.default_broker_priority
         self.atlas_average_epochs = atlas_average_epochs
         self.atlas_rolling_window = atlas_rolling_window
-        self.broker_priority = broker_priority or self.default_broker_priority
+        self.lsst_reliability_threshold = lsst_reliability_threshold
         self.yse_use_all_sources = yse_use_all_sources
         self.yse_additional_sources = yse_additional_sources
 
@@ -374,11 +384,17 @@ class DefaultLightcurveCompiler:
         # If it exists, format it nicely (to match everything else)
         if lsst_data is not None:
             try:
-                lsst_lc = prepare_lsst_data(lsst_data, **tags)
+                lsst_lc = prepare_lsst_data(
+                    lsst_data,
+                    reliability_threshold=self.lsst_reliability_threshold,
+                    **tags,
+                )
                 lightcurve_dfs.append(lsst_lc)
             except Exception as e:
                 logger.error(e)
                 msg = f"can't process lsst source {broker}"
+                logger.error(msg)
+                raise
 
         ##===== Prepare the ATLAS data =====##
         atlas_data = target.target_data.get("atlas", None)

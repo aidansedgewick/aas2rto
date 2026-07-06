@@ -13,7 +13,7 @@ from aas2rto.query_managers.primary import PrimaryQueryManager
 from aas2rto.query_managers.atlas import AtlasQueryManager
 from aas2rto.query_managers.fink import FinkLSSTQueryManager, FinkZTFQueryManager
 
-# from aas2rto.query_managers.lasair import LasairLSSTQueryManager, LasairZTFQueryManager
+from aas2rto.query_managers.lasair import LasairLSSTQueryManager, LasairZTFQueryManager
 from aas2rto.query_managers.tns import TNSQueryManager
 from aas2rto.query_managers.yse import YSEQueryManager
 

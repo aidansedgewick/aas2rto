@@ -62,7 +62,8 @@ class TargetLookup:
 
     def __setitem__(self, key: str, target: Target) -> None:
         if not isinstance(key, str):
-            logger.warning(f"key '{key}' should be 'str', not type={type(key)}")
+            msg = f"key '{key}' should be 'str', not type={type(key).__name__}"
+            logger.warning(msg)
         if not isinstance(target, Target):
             msg = f"new target {key} is type `{type(target)}`, not `aas2rto.target.Target`"
             raise NotATargetError(msg)
@@ -77,7 +78,8 @@ class TargetLookup:
 
     def __getitem__(self, key: str) -> Target:
         if not isinstance(key, str):
-            logger.warning(f"key '{key}' should be 'str', not type='{type(key)}'")
+            msg = f"key '{key}' should be 'str', not type='{type(key).__name__}'"
+            logger.warning(msg)
         base_id = self.id_mapping.get(key, None)
         if base_id is None:
             raise KeyError(f"No target with name {key}")
@@ -234,6 +236,13 @@ class TargetLookup:
             coord = SkyCoord(ra=ra, dec=dec, unit=(u.hourangle, u.deg))
         else:
             coord = SkyCoord(ra=ra, dec=dec, unit="deg")
+
+        alt_ids = target_config.pop("alt_ids", {})
+        mod_alt_ids = {}
+        for alt_src, alt_id in alt_ids.items():
+            alt_ids[alt_src] = str(alt_id)  # convert all alt ids to str.
+
+        target_config["alt_ids"] = alt_ids
         target_config["coord"] = coord
 
         # Now do the creating/updating
@@ -245,7 +254,6 @@ class TargetLookup:
                 logger.info(f"updating base_score of {target_id} to {base_score}")
                 target.base_score = base_score
             target.update_coordinates(coord)
-            alt_ids = target_config.get("alt_ids", {})
             target.alt_ids.update(alt_ids)
             opp_target = target_config.get("target_of_opportunity", True)
             target.target_of_opportunity = opp_target

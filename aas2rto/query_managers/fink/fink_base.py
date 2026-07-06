@@ -25,13 +25,18 @@ from aas2rto.exc import (
     MissingCoordinatesError,
     MissingTargetIdError,
 )
-from aas2rto.query_managers.base import LightcurveQueryManager, KafkaQueryManager
+from aas2rto.query_managers.base import (
+    BaseQueryManager,
+    KafkaQueryManager,
+    LightcurveQueryManager,
+)
 from aas2rto.query_managers.fink.fink_portal_client import FinkBasePortalClient
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.utils import (
+    QueryTracker,
     calc_file_age,
-    check_safe_to_query,
+    # check_safe_to_query,
     check_missing_config_keys,
     check_unexpected_config_keys,
     chunk_list,
@@ -115,6 +120,9 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
     def portal_client_class(self) -> type[FinkBasePortalClient]:
         """The class -- NOT instance -- of the PortalClient which should be used
 
+        eg. `portal_client_class = FinkZTFPortalClient`\n
+        -- NOT `portal_client_class = FinkZTFPortalClient()`
+
         See aas2rto.query_managers.fink.fink_portal_client
         """
 
@@ -140,6 +148,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
     def new_target_from_alert(
         self, processed_alert: dict, t_ref: Time = None
     ) -> Target:
+        # This is already ABC in superclass?
         """new_target_from_alert(self, alert: dict, t_ref: Time)
 
         Create a single `Target` from a processed alert (dict)"""
@@ -159,23 +168,17 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
     def load_missing_alerts_for_target(self, fink_id: str) -> bool:
         """load_missing_alerts_for_target(self, target_id: str):"""
 
-    @abc.abstractmethod
-    def load_cutouts_for_alert(self, fink_id: str, alert_id: int) -> dict | None:
-        """load_cutouts(self, fink_id: int, alert_id: int):
+    ##===== Default configuration here =====##
 
-        Your function should accept fink_id [str] and alert_id [int].
-        If the cutouts for this id exist, return a dict.
-        If they don't exist, return None."""
-
-    DEFAULT_TASKS = ("alerts", "queries", "lightcurves", "cutouts", "stale_files")
-    REQUIRED_KAFKA_PARAMS = (
+    default_tasks = ("alerts", "queries", "lightcurves", "cutouts", "stale_files")
+    required_kafka_params = (
         "username",
         "group.id",
         "bootstrap.servers",
         "topics",
         "survey",
     )
-    REQUIRED_DIRECTORIES = ("alerts", "cutouts", "lightcurves", "query_results")
+    required_directories = ("alerts", "cutouts", "lightcurves", "query_results")
 
     default_config = {
         "max_failed_queries": 10,
@@ -191,64 +194,55 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
         "query_interval": 1.0,
         "query_lookback": 20.0,
         "stale_file_age": 60.0,
-        "tasks": DEFAULT_TASKS,
+        "tasks": default_tasks,
     }
     config_comments = {
         "max_failed_queries": "Quit after how many failed queries?",
         "max_query_time": "Quit after how long spent making queries?",
         "lightcurve_update_interval": "How often [DAYS] to check for updated LCs?",
         "lightcurve_chunk_size": "How many LCs to query at once? [MAX=25]",
-        "kafka": f"dict: must provide {REQUIRED_KAFKA_PARAMS}",
+        "kafka": f"dict: must provide {required_kafka_params}",
         "n_alerts": "How many alerts to listen for [PER KAFKA TOPIC] per loop?",
         "alert_timeout": "How long to listen for new alerts?",
         "fink_classes": "To query with 'latests' - try eg. FinkZTFQuery.classes()",
         "query_interval": "How long [DAYS] to wait until new 'latests' query?",
         "query_lookback": "How far back [DAYS] to query for",
         "stale_file_age": "How old [DAYS] should files be deleted?",
-        "tasks": f"which subset to perform, from: {DEFAULT_TASKS}",
+        "tasks": f"which subset to perform, from: {default_tasks}",
     }
 
     ##===== initialisation here =====##
 
     def __init__(self, config: dict, target_lookup: TargetLookup, parent_path: Path):
-        # Config steps
-        self.config = self.default_config.copy()
-        self.config.update(config)
+        # Combine default_config and config, set target_lookup, populate paths_lookup
+        super().__init__(config, target_lookup, parent_path)
 
-        check_unexpected_config_keys(
-            self.config, self.default_config, name=f"{self.name}_config", raise_exc=True
-        )
+        # Extract and check kakfa parameters.
         self.process_kafka_config()
-
-        # Set the TargetLookup
-        self.target_lookup = target_lookup
 
         # Initialize the portal client - maybe credentials needed in future...
         self.portal_client: FinkBasePortalClient = self.portal_client_class()
-
-        # Process the paths
-        self.process_paths(
-            parent_path=parent_path, directories=self.REQUIRED_DIRECTORIES
-        )
 
         # Are there any FINK tasks we want to skip?
         self.tasks = self.config.get("tasks")
         check_unexpected_config_keys(
             self.tasks,
-            self.DEFAULT_TASKS,
-            name=f"{self.name}.config.tasks",
+            self.default_tasks,
+            name=f"{self.name}.tasks",
             raise_exc=True,
         )
 
     def process_kafka_config(self):
         self.kafka_config = self.config.get("kafka", None)
         if self.kafka_config is None:
-            logger.info(f"No 'kafka' in {self.name} config: will not listen for alerts")
+            self.logger.info(
+                f"No 'kafka' in {self.name} config: will not listen for alerts"
+            )
             return
 
         missing_keys = check_missing_config_keys(
             self.kafka_config,
-            self.REQUIRED_KAFKA_PARAMS,
+            self.required_kafka_params,
             name=f"{self.name}.kafka",
             raise_exc=True,
             exc_class=BadKafkaConfigError,
@@ -257,7 +251,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
         topics = self.kafka_config["topics"]
         if isinstance(topics, str):
             self.kafka_config["topics"] = [topics]
-            logger.info("converted kafka topics 'str' to 'list'")
+            self.logger.info("converted kafka topics 'str' to 'list'")
 
         if fink_client is None:
             msg = (
@@ -304,7 +298,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
     def listen_for_alerts(self, t_ref: Time = None) -> list[dict]:
         if self.kafka_config is None:
-            logger.debug("no kafka config - skip alerts")
+            self.logger.debug("no kafka config - skip alerts")
             return []
 
         n_alerts = self.config["n_alerts"]
@@ -315,29 +309,23 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
         for topic in self.kafka_config["topics"]:
             topic_alerts = []
             with AlertConsumer([topic], self.kafka_config, survey) as consumer:
-                logger.info(f"listen for up to {n_alerts} from {topic}")
+                self.logger.info(f"listen for up to {n_alerts} from {topic}")
                 for ii in range(n_alerts):
                     try:
                         alert_data: FinkAlert = consumer.poll(timeout=timeout)
                     except Exception as e:
-                        logger.warning(f"In poll:\n    {type(e)}: {e}")
+                        self.logger.warning(f"In poll:\n    {type(e)}: {e}")
                         alert_data = (None, None, None)  # match return from no-alert
                     if alert_data[0] is None:
-                        logger.info(f"break after {len(topic_alerts)}")
+                        self.logger.info(f"break after {len(topic_alerts)}")
                         break
                     processed_alert = self.process_single_alert(alert_data)
                     if processed_alert is not None:
                         topic_alerts.append(processed_alert)
-                logger.info(f"{len(topic_alerts)} alerts from {topic}")
+                self.logger.info(f"{len(topic_alerts)} alerts from {topic}")
             alerts.extend(topic_alerts)
-        logger.info(f"{len(alerts)} alerts from all topics")
+        self.logger.info(f"{len(alerts)} alerts from all topics")
         return alerts
-
-    def update_info_messages(self, processed_alerts: list[dict], t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        for alert in processed_alerts:
-            self.apply_updates_from_alert(alert, t_ref=t_ref)
 
     def load_single_lightcurve(self, target_id: str, t_ref: Time = None):
         target = self.target_lookup.get(target_id, None)
@@ -352,7 +340,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
                 lightcurve = pd.read_csv(lightcurve_filepath)
             except Exception as e:
                 msg = f"During read lc for {fink_id}:\n    {type(e).__name__}: {e}"
-                logger.warning(msg)
+                self.logger.warning(msg)
                 lightcurve = None
         else:
             lightcurve = None
@@ -376,9 +364,9 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             query_results_filepath = self.get_query_results_filepath(fink_class)
             file_age = calc_file_age(query_results_filepath, t_ref)
             if file_age < query_interval:
-                logger.info(f"{fink_class} has results {file_age:.1f}d old - skip")
+                self.logger.info(f"{fink_class} has results {file_age:.1f}d old - skip")
                 continue
-            logger.info(f"query 'latests' for class '{fink_class}'")
+            self.logger.info(f"query 'latests' for class '{fink_class}'")
 
             ##== Are there any existing results? Decides how far back we need to query
             if query_results_filepath.exists():
@@ -412,14 +400,15 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             )
             combined_results.to_csv(query_results_filepath, index=False)
 
-            ##== Check what's different from the exisi
+            ##== Check what's different from the existing
             classifier_updates = updates_from_classifier_queries(
                 existing_results, new_results, id_key=self.target_id_key
             )
             classifier_updates.loc[:, "fink_class"] = fink_class
             if len(classifier_updates) > 0:
                 results_list.append(classifier_updates)
-                logger.info(f"{len(classifier_updates)} updates for '{fink_class}'")
+                msg = f"{len(classifier_updates)} updates for '{fink_class}'"
+                self.logger.info(msg)
 
         if len(results_list) > 0:
             results = pd.concat(results_list)
@@ -465,66 +454,34 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
         if fink_id_list is None:
             # Can't just query all in target_lookup, some may not have valid fink_id...
-            fink_id_list = self.select_lightcurves_to_query(
-                t_ref=t_ref
-            )  # super() method
+            # call superclass method - loops
+            fink_id_list = self.select_lightcurves_to_query(t_ref=t_ref)
         logger.info(f"attempt to query {len(fink_id_list)} LCs")
 
         chunk_size = self.config["lightcurve_chunk_size"]
 
-        success = []
-        missing = []
-        failed = []
         chunk_results = []
-        failed_queries = 0
-
-        t_start = time.perf_counter()
+        qtracker = QueryTracker.start(
+            max_query_time=self.config["max_query_time"],
+            max_failed_queries=self.config["max_failed_queries"],
+        )
         for ii, fink_id_chunk in enumerate(
             chunk_list(fink_id_list, chunk_size=chunk_size)
         ):
-            if not check_safe_to_query(
-                t_start=t_start,
-                failed_queries=failed_queries,
-                max_query_time=self.config["max_query_time"],
-                max_failed_queries=self.config["max_failed_queries"],
-            ):
+            if not qtracker.safe_to_query():
                 logger.warning("Stop LC queries for now")
                 break
 
-            chunk_str = ",".join([str(fink_id) for fink_id in fink_id_chunk])
-            logger.info(f"start LC query chunk {ii+1} ({len(fink_id_chunk)} LCs)")
-            payload = {
-                self.target_id_key: chunk_str,
-                "withupperlim": True,
-            }
-            lightcurve_columns = self.config["lightcurve_columns"]
-            if lightcurve_columns is not None:
-                payload["columns"] = lightcurve_columns
-
-            t1 = time.perf_counter()
+            logger.info(f"try chunk {ii+1} ({len(fink_id_chunk)} targets)")
             try:
-                result: pd.DataFrame = self.portal_client.query_lightcurve(
-                    return_type="pandas", **payload
-                )
-                chunk_results.append(result)
+                result = self._query_lightcurve_chunk(fink_id_chunk)
             except Exception as e:
                 msg = f"LC query chunk {ii+1} failed:\n    {type(e).__name__}: {e}"
                 logger.error(msg)
-                failed_queries = failed_queries + 1
-                failed.extend(fink_id_chunk)
+                qtracker.track_failed(*fink_id_chunk)
                 continue
-            t2 = time.perf_counter()  # continue doesn't matter - t1 re-set every loop
-            logger.info(f"LC query chunk {ii+1} in {t2-t1:.1f}s")
 
-            if self.target_id_key not in result:
-                msg = (
-                    f"\033[33;1mkey '{self.target_id_key}' not in returned columns\033[0m:"
-                    f"\n {result.columns.values}"
-                )
-                logger.warning(msg)
-                result[self.target_id_key] = "0"  # Still need to to split on target_id
-
-            result[self.target_id_key] = result[self.target_id_key].astype(str)
+            chunk_results.append(result)
 
             for fink_id in fink_id_chunk:
 
@@ -533,9 +490,9 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
                 processed_lc = self.process_fink_lightcurve(unprocessed_lc)
 
                 if processed_lc.empty:
-                    missing.append(fink_id)
+                    qtracker.track_missing(fink_id)
                 else:
-                    success.append(fink_id)
+                    qtracker.track_success(fink_id)
 
                 lightcurve_filepath = self.get_lightcurve_filepath(fink_id)
                 processed_lc.to_csv(lightcurve_filepath, index=False)
@@ -549,10 +506,35 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             bulk_lc.to_csv(bulk_filepath, index=False)
             logger.info(f"written bulk results to {bulk_filepath}")
 
-        logger.info(f"{len(success)} LCs queried ok, {len(missing)} returned no LC")
-        if len(failed) > 0:
-            logger.warning(f"{len(failed)} LCs were in {failed_queries} failed queries")
-        return success, missing, failed
+        qtracker.log_summary(name=f"{self.name} lightcurve queries")
+        return qtracker.success, qtracker.missing, qtracker.failed
+
+    def _query_lightcurve_chunk(self, fink_id_chunk: list[str]):
+        """"""
+
+        chunk_str = ",".join([str(fink_id) for fink_id in fink_id_chunk])
+        payload = {self.target_id_key: chunk_str, "withupperlim": True}
+        lightcurve_columns = self.config["lightcurve_columns"]
+        if lightcurve_columns is not None:
+            payload["columns"] = lightcurve_columns
+
+        t1 = time.perf_counter()
+        result: pd.DataFrame = self.portal_client.query_lightcurve(
+            return_type="pandas", **payload
+        )
+        t2 = time.perf_counter()  # continue doesn't matter - t1 re-set every loop
+        self.logger.info(f"query in {t2-t1:.1f}s")
+
+        if self.target_id_key not in result:
+            msg = (
+                f"\033[33;1mkey '{self.target_id_key}' not in returned columns\033[0m:"
+                f"\n {result.columns.values}"
+            )
+            self.logger.warning(msg)
+            result[self.target_id_key] = "0"  # Still need to to split on target_id
+
+        result[self.target_id_key] = result[self.target_id_key].astype(str)
+        return result
 
     def integrate_alerts(self):
         targets_modified = []
@@ -564,26 +546,19 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             # this load() must to be defined per-survey, as alert schema is different
             if alerts_loaded:
                 targets_modified.append(target_id)
-        logger.info(f"loaded missing alerts for {len(targets_modified)} targets")
+        self.logger.info(f"loaded missing alerts for {len(targets_modified)} targets")
         return targets_modified
 
     def query_latest_cutouts(self):
 
-        success = []
-        missing = []
-        failed = []
-        failed_queries = 0
-
-        t_start = time.perf_counter()
+        qtracker = QueryTracker.start(
+            max_query_time=self.config["max_query_time"],
+            max_failed_queries=self.config["max_failed_queries"],
+        )
         for target_id, target in self.target_lookup.items():
 
-            if not check_safe_to_query(
-                t_start=t_start,
-                failed_queries=failed_queries,
-                max_query_time=self.config["max_query_time"],
-                max_failed_queries=self.config["max_failed_queries"],
-            ):
-                logger.warning("Stop cutouts queries for now")
+            if not qtracker.safe_to_query():
+                self.logger.warning("Stop cutouts queries for now")
                 break
 
             fink_id = self.get_relevant_id_from_target(target)
@@ -605,11 +580,20 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
                 try:
                     cutouts = self.portal_client.cutouts(**payload)
                 except Exception as e:
-                    failed_queries = failed_queries + 1
+                    qtracker.track_failed(target_id)
                     continue
+
+                cutouts["meta"] = {
+                    "mjd": fink_data.detections["mjd"].iloc[-1],
+                    "band": fink_data.detections["band"].iloc[-1],
+                }
 
                 with open(latest_cutout_filepath, "rb") as f:
                     pickle.dump(cutouts, f)
+                qtracker.track_success(fink_id)
+
+        qtracker.log_summary(name=f"{self.name} cutouts")
+        return qtracker.success, qtracker.missing, qtracker.failed
 
     def load_cutouts(self):
         loaded_cutouts = []
@@ -622,12 +606,10 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             fink_data = target.target_data.get(self.name, None)
             if fink_data is None:
                 continue
-            if fink_data.detections is None:
-                continue
-            if self.alert_id_key not in fink_data.detections:
+            if self.alert_id_key not in fink_data.lightcurve:
                 highlight = f"'{self.alert_id_key}' not in {self.name}_data.lightcurve"
                 msg = f"{target_id}: for {self.name} \033[33;1m{highlight}\033[0m"
-                logger.warning(msg)
+                self.logger.warning(msg)
                 continue
 
             current_cutouts_id = fink_data.meta.get("cutouts_alert_id", -1)
@@ -649,14 +631,24 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
         N_loaded = len(loaded_cutouts)
         N_skipped = len(skipped_reload)
-        logger.info(f"loaded cutouts for {N_loaded} targets (skipped {N_skipped})")
+        self.logger.info(f"loaded cutouts for {N_loaded} targets (skipped {N_skipped})")
         if len(missing_cutouts) > 0:
-            logger.info(f"missing cutouts for {len(missing_cutouts)}!!")
+            self.logger.info(f"missing cutouts for {len(missing_cutouts)}!!")
         return loaded_cutouts, missing_cutouts, skipped_reload
+
+    def load_cutouts_for_alert(self, fink_id: int, alert_id: int):
+        cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
+        if not cutouts_filepath.exists():
+            return None
+
+        with open(cutouts_filepath, "rb") as f:
+            cutouts = pickle.load(f)
+        return cutouts
 
     def perform_all_tasks(self, iteration: int, t_ref: Time = None):
         # Are we in startup?
         if iteration == 0:
+            self.logger.info("skip many tasks on first iteration")
             # If yes, we don't want to do anything other than load existing data.
             self.load_target_lightcurves()  # Use per-QM load_single_lightcurve()
             self.integrate_alerts()
@@ -666,8 +658,8 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
         # Are there any new alerts?
         if "alerts" in self.tasks:
             processed_alerts = self.listen_for_alerts()
-            self.add_targets_from_alerts(processed_alerts, t_ref=t_ref)
-            self.update_info_messages(processed_alerts, t_ref=t_ref)
+            self.add_targets_from_alerts(processed_alerts, t_ref=t_ref)  # KafkaQM mthd
+            self.add_messages_from_alerts(processed_alerts, t_ref=t_ref)  # KafkaQM mthd
 
         # Any targets flagged as interesting *not* from alerts?
         if "queries" in self.tasks:

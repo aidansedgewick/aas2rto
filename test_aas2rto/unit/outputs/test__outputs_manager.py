@@ -24,7 +24,6 @@ from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 
-
 # class Test__BlankPlotHelper:
 #     def test__blank_plot_helper(self, tmp_path: Path):
 #         # Arrange
@@ -72,7 +71,6 @@ class Test__WriteComments:
         with open(exp_T00_comms_filepath, "r") as f:
             comm_str = "".join(f.readlines())
 
-        print(comm_str)
         assert "T00 comment" in comm_str
         assert "T00 lasilla comment" in comm_str
         assert "T00 astrolab comment" in comm_str
@@ -281,14 +279,13 @@ class Test__BuildAllRankedLists:
 class Test__VisibleTargets:
 
     def test__vis_targets_at_obs(
-        self, om_vis_targets: OutputsManager, lasilla: Observer, t_fixed: Time
+        self, outputs_mgr_vis_targets: OutputsManager, lasilla: Observer, t_fixed: Time
     ):
         # Arrange
-        outputs_mgr = om_vis_targets
+        outputs_mgr = outputs_mgr_vis_targets
 
         # Act
         vis_list = outputs_mgr.build_visible_target_list_for_obs(lasilla, t_ref=t_fixed)
-        print(vis_list)
 
         # Assert
         assert isinstance(vis_list, pd.DataFrame)
@@ -299,9 +296,11 @@ class Test__VisibleTargets:
         assert vis_list["target_id"].iloc[2] == "Tv01"  # at midnight lst +30.0
         # no Tv04 -
 
-    def test__visible_targets(self, om_vis_targets: OutputsManager, t_fixed: Time):
+    def test__visible_targets(
+        self, outputs_mgr_vis_targets: OutputsManager, t_fixed: Time
+    ):
         # Arrange
-        outputs_mgr = om_vis_targets
+        outputs_mgr = outputs_mgr_vis_targets
 
         # Act
         outputs_mgr.build_visible_target_lists(t_ref=t_fixed)
@@ -310,10 +309,10 @@ class Test__VisibleTargets:
         assert set(outputs_mgr.obs_visible_lists.keys()) == set(["lasilla", "astrolab"])
 
     def test__no_ephem_warns(
-        self, om_vis_targets: OutputsManager, lasilla: Observer, t_fixed: Time
+        self, outputs_mgr_vis_targets: OutputsManager, lasilla: Observer, t_fixed: Time
     ):
         # Arrange
-        outputs_mgr = om_vis_targets
+        outputs_mgr = outputs_mgr_vis_targets
         for target_id, target in outputs_mgr.target_lookup.items():
             target.ephem_info = {}
 

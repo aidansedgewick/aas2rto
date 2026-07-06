@@ -347,7 +347,6 @@ class Test__AddTargetFromFile:
         # Arrange
         target_config_example["ra"] = "15:00:00.00"
         target_config_example["dec"] = "-15:30:00.00"
-        print(target_config_example)
 
         target_config_path = tmp_path / "test_target.yaml"
         with open(target_config_path, "w+") as f:

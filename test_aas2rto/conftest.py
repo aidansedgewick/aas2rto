@@ -47,6 +47,39 @@ def remove_empty_filetree(dirpath: Path, depth=0, max_depth=6):
         dirpath.rmdir()
 
 
+def pytest_sessionstart(session):
+    """
+    Executes exactly once at the absolute beginning of the test session.
+    Prints an informational banner to prevent user confusion regarding paths.
+    """
+    # Using \033 escape codes for bold teal terminal text decoration
+    print("\n\033[1;36mNOTE: Modified tmp_path layout is active.\033[0m")
+    print("\033[36m   Temporary test outputs are isolated dynamically by:")
+    print(
+        "   .../pytest-NUM/[test_file]/[TestClass]/[test_function]/[worker_id]\033[0m\n"
+    )
+
+
+@pytest.fixture
+def tmp_path(tmp_path_factory: pytest.TempPathFactory, request: pytest.FixtureRequest):
+    base_dir = tmp_path_factory.getbasetemp()
+
+    test_path = base_dir / request.path.stem
+
+    if request.node.cls is not None:
+        test_path = test_path / request.node.cls.__name__
+
+    test_path = test_path / request.node.name
+
+    if hasattr(request.config, "workerinput"):
+        worker_id = request.config.workerinput["workerid"]
+        test_path = test_path / worker_id
+
+    test_path.mkdir(exist_ok=True, parents=True)
+
+    return test_path
+
+
 @pytest.fixture()  # do NOT auto use here. Often want to check empty dirs 'by hand'...
 def remove_tmp_dirs(tmp_path: Path):
     # Arrange
@@ -63,7 +96,7 @@ def remove_tmp_dirs(tmp_path: Path):
 def no_subprocess(monkeypatch: pytest.MonkeyPatch):
     # define HERE (main conftest.py), so that no subprocess commands ever run.
     def dummy_check_output(*args, **kwargs):
-        logger.info("subprocesses prevented in tests")
+        logger.info("subprocesses PREVENTED in tests with fixture in unit/conftest.py")
         return "".encode()
 
     monkeypatch.setattr(subprocess, "check_output", dummy_check_output)
@@ -151,10 +184,10 @@ def badqual_rows(missing_id: int, t_fixed: Time):
 
 
 @pytest.fixture
-def det_rows(t_fixed: Time, id0: int):
+def valid_det_rows(t_fixed: Time, id0: int):
     return [
         [id0 + 1, t_fixed.mjd + 4.1, 21.0, 0.05, 21.8, 2, "valid"],  # note wrong order!
-        [id0 + 0, t_fixed.mjd + 4.0, 21.0, 0.08, 22.0, 1, "valid"],
+        [id0 + 0, t_fixed.mjd + 4.0, 21.0, 0.08, 22.0, 1, "valid"],  # checks sort call
         [id0 + 2, t_fixed.mjd + 5.0, 20.0, 0.08, 22.0, 1, "valid"],
         [id0 + 3, t_fixed.mjd + 5.1, 20.0, 0.05, 21.8, 2, "valid"],
         [id0 + 4, t_fixed.mjd + 6.0, 19.0, 0.08, 22.0, 1, "valid"],
@@ -163,8 +196,8 @@ def det_rows(t_fixed: Time, id0: int):
 
 
 @pytest.fixture
-def lc_rows(ulim_rows: list, badqual_rows: list, det_rows: list):
-    return ulim_rows + badqual_rows + det_rows
+def lc_rows(ulim_rows: list, badqual_rows: list, valid_det_rows: list):
+    return ulim_rows + badqual_rows + valid_det_rows
 
 
 @pytest.fixture
@@ -175,6 +208,11 @@ def lc_col_names():
 @pytest.fixture
 def lc_pandas(lc_rows, lc_col_names):
     return pd.DataFrame(lc_rows, columns=lc_col_names)
+
+
+@pytest.fixture
+def valid_det_lc_pandas(valid_det_rows: list, lc_col_names):
+    return pd.DataFrame(valid_det_rows, columns=lc_col_names)
 
 
 @pytest.fixture
@@ -300,6 +338,7 @@ def ztf_lc(lc_pandas: pd.DataFrame):
         "band": "fid",
     }
     lc_pandas.rename(col_mapping, inplace=True, axis=1)
+    lc_pandas.loc[:, "jd"] = Time(lc_pandas["mjd"], format="jd").mjd
     lc_pandas.loc[:, "blah"] = 100.0  # To test removed in LC compiler?
     return lc_pandas
 
@@ -332,18 +371,18 @@ def lsst_id0():
 @pytest.fixture
 def lsst_rows(lsst_id0: int, t_fixed: Time):
     return [
-        [lsst_id0 + 0, t_fixed.mjd + 0.0, 1000.0, 100.0, "g"],  # ~23.9+-0.1
-        [lsst_id0 + 1, t_fixed.mjd + 1.0, 2000.0, 200.0, "r"],  # ~23.1+-0.1
-        [lsst_id0 + 2, t_fixed.mjd + 2.0, 5000.0, 500.0, "i"],  # ~22.2+-0.1
-        [lsst_id0 + 3, t_fixed.mjd + 3.0, 10000.0, 100.0, "g"],  # ~21.4+-0.01
-        [lsst_id0 + 4, t_fixed.mjd + 4.0, 20000.0, 200.0, "r"],  # ~20.6+-0.01
-        [lsst_id0 + 5, t_fixed.mjd + 5.0, 50000.0, 500.0, "i"],  # ~19.7+-0.01
+        [lsst_id0 + 0, t_fixed.mjd + 0.0, 1000.0, 100.0, "g", 0.8],  # ~23.9+-0.1
+        [lsst_id0 + 1, t_fixed.mjd + 1.0, 2000.0, 200.0, "r", 0.8],  # ~23.1+-0.1
+        [lsst_id0 + 2, t_fixed.mjd + 2.0, 5000.0, 500.0, "i", 0.8],  # ~22.2+-0.1
+        [lsst_id0 + 3, t_fixed.mjd + 3.0, 10000.0, 100.0, "g", 1.0],  # ~21.4+-0.01
+        [lsst_id0 + 4, t_fixed.mjd + 4.0, 20000.0, 200.0, "r", 1.0],  # ~20.6+-0.01
+        [lsst_id0 + 5, t_fixed.mjd + 5.0, 50000.0, 500.0, "i", 1.0],  # ~19.7+-0.01
     ]
 
 
 @pytest.fixture
 def lsst_lc(lsst_rows: list[list]):
-    col_names = "diaSourceId midpointMjdTai psfFlux psfFluxErr band".split()
+    col_names = "diaSourceId midpointMjdTai psfFlux psfFluxErr band reliability".split()
     return pd.DataFrame(lsst_rows, columns=col_names)
 
 
@@ -483,7 +522,7 @@ def outputs_mgr_with_plots(
 
 
 @pytest.fixture
-def tl_vis_targets(lasilla: Observer, t_fixed: Time):
+def tlookup_vis_targets(lasilla: Observer, t_fixed: Time):
     # Reverse engineer some targets which will be visible and not visible at t_fixed
     midnight = lasilla.midnight(t_fixed, which="next", n_grid_points=40)
     t_early = midnight - 3.0 * u.hour  # earlier
@@ -522,14 +561,14 @@ def tl_vis_targets(lasilla: Observer, t_fixed: Time):
 
 
 @pytest.fixture  #
-def om_vis_targets(
-    tl_vis_targets: TargetLookup,
+def outputs_mgr_vis_targets(
+    tlookup_vis_targets: TargetLookup,
     path_mgr: PathManager,
     obs_mgr_config: dict,
     t_fixed: Time,
 ):
-    obs_mgr = ObservatoryManager(obs_mgr_config, tl_vis_targets, path_mgr)
-    om = OutputsManager({}, tl_vis_targets, path_mgr, obs_mgr)
+    obs_mgr = ObservatoryManager(obs_mgr_config, tlookup_vis_targets, path_mgr)
+    om = OutputsManager({}, tlookup_vis_targets, path_mgr, obs_mgr)
     om.observatory_manager.apply_ephem_info(t_ref=t_fixed)
     return om
 
@@ -614,7 +653,9 @@ def telegram_msgr(telegram_config: dict):
     return TelegramMessenger(telegram_config)
 
 
-class MockBot:
+class MockTelegramBot:
+    """methods in mock need to be async def, as messages are sent using asyncio.run()"""
+
     def __init__(self):
         self.token = "mock_token"
 
@@ -642,11 +683,11 @@ class MockBot:
 
 @pytest.fixture
 def telegram_msgr(telegram_config: dict, monkeypatch: pytest.MonkeyPatch):
-    def get_mock_bot():
-        return MockBot()
+    def get_mock_telegram_bot():
+        return MockTelegramBot()
 
     msgr = TelegramMessenger(telegram_config)
-    monkeypatch.setattr(msgr, "get_bot", get_mock_bot)
+    monkeypatch.setattr(msgr, "get_bot", get_mock_telegram_bot)
     return msgr
 
 
@@ -697,10 +738,10 @@ def fink_config(fink_kafka_config: dict):
 
 @pytest.fixture
 def lasair_ztf_kafka_config():
-    topic_keys = {"lasair_id": "objectId", "ra": "ramean", "dec": "decmean"}
+    topic_keys = {"id_key": "objectId", "ra_key": "ramean", "dec_key": "decmean"}
     return {
-        "server": "lasair-blah.org",
-        "group_id": "test_group",
+        "bootstrap.servers": "lasair-blah.org",
+        "group.id": "test_group",
         "topics": {
             "cool_sne": topic_keys,
         },
@@ -710,25 +751,30 @@ def lasair_ztf_kafka_config():
 
 @pytest.fixture
 def lasair_ztf_config(lasair_ztf_kafka_config: dict):
-    return {"kafka": lasair_ztf_kafka_config, "client_token": "example_token"}
+    return {
+        "kafka": lasair_ztf_kafka_config,
+        "client_token": "example_token",
+    }
 
 
 @pytest.fixture
 def lasair_lsst_kafka_config():
-    topic_keys = {"lasair_id": "diaObjectId", "ra": "ramean", "dec": "decmean"}
+    topic_keys = {"id_key": "diaObjectId", "ra_key": "ra", "dec_key": "decl"}
     return {
-        "server": "lasair-blah.org",
-        "group_id": "test_group",
+        "bootstrap.servers": "lasair-blah.org",
+        "group.id": "test_group",
         "topics": {
             "cool_sne": topic_keys,
         },
-        "survey": "lsst",
     }
 
 
 @pytest.fixture
 def lasair_lsst_config(lasair_lsst_kafka_config: dict):
-    return {"kafka": lasair_lsst_kafka_config, "token": "example_token"}
+    return {
+        "kafka": lasair_lsst_kafka_config,
+        "client_token": "example_token",
+    }
 
 
 @pytest.fixture
@@ -791,8 +837,8 @@ def global_qm_config(
     return {
         "fink_lsst": copy.deepcopy(fink_config),
         "fink_ztf": copy.deepcopy(fink_config),
-        # "lasair_ztf": copy.deepcopy(lasair_ztf_config),
-        # "lasair_lsst": copy.deepcopy(lasair_lsst_config),
+        "lasair_ztf": copy.deepcopy(lasair_ztf_config),
+        "lasair_lsst": copy.deepcopy(lasair_lsst_config),
         "atlas": copy.deepcopy(atlas_config),
         "yse": copy.deepcopy(yse_config),
         "tns": copy.deepcopy(tns_config),

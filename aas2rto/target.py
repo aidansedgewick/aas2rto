@@ -122,10 +122,10 @@ class Target:
         # Is this target known by any other names?
         self.alt_ids: dict[str, str] = alt_ids or {}
         if source is not None:
-            self.alt_ids[source] = target_id
+            self.alt_ids[source] = self.target_id  # string-ified.
         else:
             if target_id not in self.alt_ids.values():
-                self.alt_ids["<unknown>"] = target_id
+                self.alt_ids["<unknown>"] = self.target_id
 
         # Keep track of what's going on
         self.creation_time: Time = t_ref
@@ -458,8 +458,8 @@ class Target:
 
         info_lines.append("alt names")
         for name, source_list in alt_rev.items():
-            l = f"    {name} (" + ",".join(source_list) + ")"
-            info_lines.append(l)
+            line = f"    {name} (" + ",".join(source_list) + ")"
+            info_lines.append(line)
 
         return info_lines
 

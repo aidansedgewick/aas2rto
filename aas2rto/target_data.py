@@ -17,7 +17,6 @@ from aas2rto.exc import (
     UnknownPhotometryTagWarning,
 )
 
-
 logger = getLogger(__name__.split(".")[-1])
 
 
@@ -141,7 +140,6 @@ class TargetData:
                 try:
                     lightcurve.sort_values(date_col, inplace=True, ignore_index=True)
                 except Exception as e:
-                    print(lightcurve[date_col])
                     raise
             if isinstance(lightcurve, Table):
                 lightcurve.sort(date_col)

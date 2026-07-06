@@ -25,11 +25,47 @@ from aas2rto.target_lookup import TargetLookup
 
 
 @pytest.fixture
-def fink_ztf_alert_list(ztf_alert_base: dict, fink_alert_extras: dict, t_fixed: Time):
+def mock_ztf_cutouts():
+    return dict(
+        cutoutScience=dict(stampData=np.random.normal(0.0, 0.1, (10, 10))),
+        cutoutDifference=dict(stampData=np.random.normal(0.0, 0.1, (10, 10))),
+        cutoutTemplate=dict(stampData=np.random.normal(0.0, 0.1, (10, 10))),
+    )
+
+
+@pytest.fixture
+def fink_ztf_alert_base(fink_alert_extras: dict, mock_ztf_cutouts: dict, t_fixed: Time):
+    return {
+        "objectId": "ZTF00abc",  # the target_id
+        "candid": 0,  # the alert_id
+        "candidate": {
+            "ra": 180.0,
+            "dec": -30.0,
+            "jd": t_fixed.jd,
+            "magpsf": 20.0,
+            "sigpsf": 0.1,
+            "fid": 1,  # 1=ztf-g, 2=ztf-r
+        },
+        **mock_ztf_cutouts,
+    }
+
+
+@pytest.fixture
+def fink_ztf_alert(fink_ztf_alert_base: dict, fink_alert_extras: dict):
+    # Arrange
+    alert = copy.deepcopy(fink_ztf_alert_base)
+    alert.update(fink_alert_extras)
+    return ("some_topic", alert, "some_schema")
+
+
+@pytest.fixture
+def fink_ztf_alert_list(
+    fink_ztf_alert_base: dict, fink_alert_extras: dict, t_fixed: Time
+):
     alert_data_list = []
     for ii in range(5):
         # prepare "main" data
-        alert = copy.deepcopy(ztf_alert_base)  # so nested dict is not just VIEW
+        alert = copy.deepcopy(fink_ztf_alert_base)  # so nested dict is not just VIEW
         alert["candidate"]["jd"] = (t_fixed + ii * u.day).jd
         alert["candidate"]["magpsf"] = 20.0 - ii * 0.5
         alert["candidate"]["sigpsf"] = 0.1
@@ -80,8 +116,7 @@ def processed_ztf_alert_list(
 def unprocessed_ztf_lc(ztf_lc: pd.DataFrame):
     lc = ztf_lc.copy()
     lc.loc[:, "objectId"] = "ZTF00xyz"
-    lc["jd"] = Time(lc["mjd"].values, format="mjd").jd
-    lc.drop("mjd", axis=1, inplace=True)
+    lc.drop("mjd", axis=1, inplace=True)  # There is no MJD in ztf lightcurves.
     return lc
 
 
@@ -90,17 +125,10 @@ def unprocessed_ztf_lc(ztf_lc: pd.DataFrame):
 
 class Test__ProcessZTFAlert:
 
-    @pytest.fixture
-    def ztf_alert_data(self, ztf_alert_base: dict, fink_alert_extras: dict):
-        # Arrange
-        alert = copy.deepcopy(ztf_alert_base)
-        alert.update(fink_alert_extras)
-        return ("some_topic", alert, "some_schema")
-
-    def test__process_ztf_alert(self, ztf_alert_data: dict):
+    def test__process_ztf_alert(self, fink_ztf_alert: dict):
 
         # Act
-        proc_alert = process_fink_ztf_alert(ztf_alert_data)
+        proc_alert = process_fink_ztf_alert(fink_ztf_alert)
 
         # Assert
         candidate_keys = "objectId ra dec candid jd magpsf sigpsf fid".split()
@@ -116,7 +144,7 @@ class Test__ProcessZTFAlert:
         assert "candidate" not in proc_alert.keys()  # flattened.
 
     def test__write_alert_data(
-        self, ztf_alert_data: FinkAlert, patch_fink_readstamp: NoReturn, tmp_path: Path
+        self, fink_ztf_alert: FinkAlert, patch_fink_readstamp: NoReturn, tmp_path: Path
     ):
         # Arrange
         alert_path = tmp_path / "alert.json"
@@ -124,7 +152,7 @@ class Test__ProcessZTFAlert:
 
         # Act
         proc_alert = process_fink_ztf_alert(
-            ztf_alert_data, alert_filepath=alert_path, cutouts_filepath=cutouts_path
+            fink_ztf_alert, alert_filepath=alert_path, cutouts_filepath=cutouts_path
         )
 
         # Assert
