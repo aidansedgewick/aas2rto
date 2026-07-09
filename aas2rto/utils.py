@@ -284,3 +284,14 @@ def get_observatory_name(observatory: Observer | str | None):
 #             msg = f"retrive_nested exited early ('{key}' not found)"
 #             raise MissingKeysError(msg)
 #     return result or default_value
+
+
+def format_link_as_markdown(link: str, text: str = None):
+    if text is not None:
+        return f"<{link}|{str(text)}>"
+    return f"<{link}>"
+
+
+def format_link_as_html(link: str, text: str = None, prefix: str = "//"):
+    text = text or ""
+    return f'<a href="{prefix}{link}">{text}</a>'

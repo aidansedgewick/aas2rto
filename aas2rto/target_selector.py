@@ -1,11 +1,7 @@
-import json
 import logging
 import os
-import shutil
 import sys
 import time
-import traceback
-import warnings
 import yaml
 from functools import partial
 from multiprocessing import Pool
@@ -20,21 +16,17 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 import astropy.units as u
-from astropy.coordinates import EarthLocation
 from astropy.time import Time
 
-from astroplan import Observer
-from astroplan.plots import plot_altitude
 
 from aas2rto import utils
 from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
 from aas2rto.messaging.messaging_manager import MessagingManager
 from aas2rto.modeling.modeling_manager import ModelingManager
-from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
-from aas2rto.plotting import PlottingManager, plot_default_lightcurve, plot_visibility
+from aas2rto.plotting import PlottingManager
 from aas2rto.query_managers.primary import PrimaryQueryManager
 from aas2rto.recovery.recovery_manager import RecoveryManager
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
@@ -306,7 +298,7 @@ class TargetSelector:
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
         extra_plotting_functions: list[Callable] = None,
-        skip_tasks: list = None,
+        skip_tasks: list = (),
         iteration: int = -1,
         t_ref: Time = None,
     ):
@@ -632,6 +624,8 @@ class TargetSelector:
                 recovery_file=recovery_file
             )
 
+        skip_tasks = skip_tasks or []  # Don't like mutable arg...
+
         # Send some messages on start-up.
         try:
             nodename = os.uname().nodename
@@ -661,14 +655,14 @@ class TargetSelector:
             t_ref = Time.now()
 
             t_start = time.perf_counter()
-            loop_skip_tasks = skip_tasks or []
+            loop_skip_tasks = list(skip_tasks) or []
             if iteration_idx == 0:
                 # Don't send messages on the first loop.
                 # If many targets are recovered, 100s of messages could be sent...
                 loop_skip_tasks.append("messaging")
                 loop_skip_tasks.append("write_targets")
                 loop_skip_tasks.append("web")
-                loop_skip_tasks.append("modeling")
+                # loop_skip_tasks.append("modeling")
                 # loop_skip_tasks.append("plotting")
 
             try:

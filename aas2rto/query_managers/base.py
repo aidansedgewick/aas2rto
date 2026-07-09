@@ -251,6 +251,7 @@ class LightcurveQueryManager(BaseQueryManager, abc.ABC):
             lc_age = calc_file_age(lightcurve_filepath, t_ref=t_ref)
             if lc_age > max_age:
                 to_query.append(relevant_id)
+
         msg = f"LCs for {len(to_query)} targets need updating (age > {max_age:.1f}d or missing)"
         logger.info(msg)
         if len(no_relevant_id) > 0:
@@ -340,7 +341,7 @@ class LightcurveQueryManager(BaseQueryManager, abc.ABC):
         N_missing = len(missing)
         N_skipped = len(skipped)
         t_load = t_end - t_start
-        msg = f"{self.name}: load {N_loaded}, missing {N_missing} LCs in {t_load:.1f}s"
+        msg = f"load {N_loaded}, missing {N_missing} LCs in {t_load:.1f}s"
         self.logger.info(msg)
         return loaded, skipped, missing
 

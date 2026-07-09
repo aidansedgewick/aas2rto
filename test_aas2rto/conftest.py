@@ -664,19 +664,29 @@ class MockTelegramBot:
         chat_id: int = None,
         text: str = None,
         disable_web_page_preview: bool = None,
+        parse_mode: str = None,
     ):
         if not isinstance(text, str):
             raise TypeError(f"text should be str, not {type(text)}")
 
         return dict(user=chat_id, msg_type="text", length=len(text))
 
-    async def send_media_group(self, chat_id: int = None, media: list = None):
+    async def send_media_group(
+        self,
+        chat_id: int = None,
+        media: list = None,
+        parse_mode: str = None,
+    ):
         if not isinstance(media, list):
             raise TypeError(f"media_group should be list, not type {type(media)}!")
         return dict(user=chat_id, msg_type="media_group", length=len(media))
 
     async def send_photo(
-        self, chat_id: int = None, photo: bytes = None, caption: str = None
+        self,
+        chat_id: int = None,
+        photo: bytes = None,
+        caption: str = None,
+        parse_mode: str = None,
     ):
         return dict(user=chat_id, msg_type="single_photo", length="n/a")
 

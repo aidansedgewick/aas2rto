@@ -111,7 +111,7 @@ def process_fink_lsst_alert(
         cutout_key = f"cutout{imtype}"
         cutout_data = data.pop(cutout_key, None)
         if cutout_data is not None:
-            cutout = readstamp(cutout_data)
+            cutout = readstamp(cutout_data, gzipped=False)
             cutouts[imtype.lower()] = cutout
 
         cutouts_meta = {"mjd": alert["mjd"], "band": alert["band"]}

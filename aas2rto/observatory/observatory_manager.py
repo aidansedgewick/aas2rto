@@ -80,8 +80,6 @@ class ObservatoryManager:
             most usefully some local noon
         human_time
             a string only used in logging - helpful to write when ephem_info starts.
-        **kwargs
-            all passed to EphemInfo - so just the kwargs for that.
         """
 
         dt = self.config["dt"]
@@ -116,6 +114,7 @@ class ObservatoryManager:
             curr_ephem_info = self.current_ephem_info.get(obs_name, None)
             if curr_ephem_info is None:
                 logger.info(f"no {obs_name} ephem_info")
+                logger.info(f"check validity from prev. local noon first")
                 curr_ephem_info = self.update_ephem_info(
                     observatory, prev_noon, human_time="prev. local noon"
                 )
@@ -127,7 +126,7 @@ class ObservatoryManager:
 
             remaining_night = night & future_ephem
             if sum(remaining_night) > 0:
-                continue
+                continue  # Still valid
 
             logger.info(f"{obs_name} ephem_info invalid")
             # If not valid, update the ephem_info to the next night!
@@ -142,6 +141,7 @@ class ObservatoryManager:
         """
         t_ref = t_ref or Time.now()
 
+        logger.info(f"check ephem_info")
         self.check_and_update_ephem_info(t_ref=t_ref)
 
         for obs_name, observatory in self.sites.items():

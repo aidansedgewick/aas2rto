@@ -40,7 +40,7 @@ def get_next_valid_sunset_sunrise(
     observatory: Observer,
     t_ref: Time = None,
     horizon=-18.0 * u.deg,
-    delta_t=30 * u.min,
+    delta_t=20 * u.min,
 ):
     """
     If the next sunrise is closer than delta_t, compute the one after.

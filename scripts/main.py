@@ -6,7 +6,11 @@ from pathlib import Path
 from astropy.time import Time
 
 from aas2rto import TargetSelector
-from aas2rto.modeling import empty_modeling, SncosmoSaltModeler
+from aas2rto.modeling.example_functions import empty_modeling
+from aas2rto.modeling.sncosmo_salt import (
+    SncosmoSaltModeler,
+    initialize_pickleable_model,
+)
 from aas2rto.plotting import plot_default_lightcurve, plot_sncosmo_lightcurve
 from aas2rto.plotting.salt_param_plotter import SaltParamPlottingWrapper
 from aas2rto.scoring import (
@@ -46,32 +50,21 @@ if __name__ == "__main__":
     selector = TargetSelector.from_config(config_file)
 
     extra_plotting_functions = []
-    lc_plotting_function = plot_default_lightcurve
-    if "supernovae" in config_file.stem or "sne" in config_file.stem:
-        scoring_function = SupernovaPeakScore(
-            use_compiled_lightcurve=True, faint_limit=23.0
-        )  # This is a class - initialise it!
+    scoring_function = SupernovaPeakScore(
+        faint_limit=23.0
+    )  # This is a class - initialise it!
 
-        models_path = None  # selector.path_manager.project_path / "sncosmo_salt_models"
-        modeling_function = SncosmoSaltModeler(
-            existing_models_path=models_path,
-            use_emcee=False,
-            show_traceback=True,
-        )
-        lc_plotting_function = plot_sncosmo_lightcurve
+    models_path = selector.path_manager.project_path / "sncosmo_salt_models"
+    modeling_function = SncosmoSaltModeler(
+        existing_models_path=models_path,
+        initializer=initialize_pickleable_model,
+        use_emcee=False,
+        show_traceback=True,
+    )
+    lc_plotting_function = plot_sncosmo_lightcurve
 
-        salt_param_plotter = SaltParamPlottingWrapper()
-        extra_plotting_functions.append(salt_param_plotter)
-
-    elif "atlas_test" in config_file.stem:
-        scoring_function = example_functions.latest_flux_atlas_requirement
-        modeling_function = empty_modeling
-    elif "kn" in config_file.stem:
-        scoring_function = KilonovaDiscReject()
-        modeling_function = empty_modeling
-    else:
-        scoring_function = example_functions.latest_flux
-        modeling_function = empty_modeling
+    salt_param_plotter = SaltParamPlottingWrapper()
+    extra_plotting_functions.append(salt_param_plotter)
 
     logger.info(f"use \033[36;1m {scoring_function.__name__}\033[0m scoring")
     logger.info(f"use \033[36;1m {modeling_function.__name__}\033[0m model")

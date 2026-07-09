@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 import warnings
 from dataclasses import dataclass
+from functools import partial
 from logging import getLogger
 from multiprocessing import Pool
 from typing import Any, Callable
+
+import tqdm
 
 from astropy.time import Time
 
@@ -19,18 +24,25 @@ class ModelingResult:
     model: Any
     success: bool
     reason: str
+    comments: list[str]
 
 
 def modeling_wrapper(func, target, t_ref=None):
     try:
-        model = func(target, t_ref=t_ref)
+        result = func(target, t_ref=t_ref)
+        if isinstance(result, tuple) and len(result) == 2:
+            model, comments = result
+        else:
+            model = result
+            comments = ["no comments"]
         success = True
         reason = "success"
     except Exception as e:
         model = None
+        comments = [f"Model failed"]
         success = False
         reason = e
-    return ModelingResult(target.target_id, model, success, reason)
+    return ModelingResult(target.target_id, model, success, reason, comments)
 
 
 def pool_modeling_wrapper(args_kwargs):
@@ -59,8 +71,15 @@ class ModelingManager:
             name="modeling_manager",
         )
 
+        ncpu = self.config["ncpu"]
+        if ncpu is not None:
+            if not isinstance(ncpu, int):
+                raise ValueError(f"'ncpu' must be integer, not {type(ncpu)}")
+
         self.target_lookup = target_lookup
         self.path_manager = path_manager
+
+    # def recover_models_from_file(self, )
 
     def build_target_models(
         self, modeling_functions: list[Callable], t_ref: Time = None
@@ -112,21 +131,18 @@ class ModelingManager:
             if ncpu is None:  # serial:  #
                 logger.info("build in serial")
                 result_list = []
-                for target in targets_to_model:
+                for target in tqdm.tqdm(targets_to_model, total=len(targets_to_model)):
                     result = modeling_wrapper(modeling_func, target, t_ref=t_ref)
                     result_list.append(result)
             else:
-                if not isinstance(ncpu, int):
-                    raise ValueError(f"'ncpu' must be integer, not {type(ncpu)}")
                 logger.info(f"build with {ncpu} Pool workers")
-                with Pool(ncpu) as p:
-                    args_kwargs = []
-                    for target in targets_to_model:
-                        # make a 2-tuple: args (n-tuple) and kwargs,
-                        # so we can pass this data as a single arg to Pool.map.
-                        dat = ((modeling_func, target), dict(t_ref=t_ref))
-                        args_kwargs.append(dat)
-                    result_list = p.map(pool_modeling_wrapper, args_kwargs)
+                with Pool(ncpu) as pool:
+                    frozen_args = partial(modeling_wrapper, modeling_func, t_ref=t_ref)
+                    iterator = pool.imap_unordered(frozen_args, targets_to_model)
+
+                    result_list: list[ModelingResult] = []
+                    for result in tqdm.tqdm(iterator, total=len(targets_to_model)):
+                        result_list.append(result)
 
             built = []
             failed = []
@@ -137,6 +153,7 @@ class ModelingManager:
                 target = self.target_lookup.get(target_id)
                 target.models[model_key] = result.model
                 target.models_t_ref[model_key] = t_ref.mjd
+                target.model_comments[model_key] = result.comments
                 if result.success:
                     if result.model is None:
                         no_model.append(target_id)

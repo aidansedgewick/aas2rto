@@ -238,7 +238,7 @@ class Test__WriteSaltModel:
         with open(model_path, "rb") as f:
             data = pickle.load(f)
         assert isinstance(data, dict)
-        assert set(data.keys()) == set(["parameters", "result"])
+        assert set(data.keys()) == set(["parameters", "result", "comments"])
 
         exp_params = "z x0 x1 c t0 mwebv".split()
         assert isinstance(data["parameters"], dict)
@@ -253,7 +253,7 @@ class Test__ReadSaltModel:
         write_salt_model(salt_model, model_path)
 
         # Act
-        recovered = read_salt_model(model_path, initialize_model)
+        recovered, comms = read_salt_model(model_path, initialize_model)
 
         # Assert
         assert isinstance(recovered, sncosmo.Model)
@@ -271,7 +271,7 @@ class Test__ReadSaltModel:
         write_salt_model(salt_model, model_path)
 
         # Act
-        recovered = read_salt_model(model_path, initialize_model)
+        recovered, comms = read_salt_model(model_path, initialize_model)
 
         # Assert
         assert len(recovered.result["samples"]) == 500
@@ -344,7 +344,7 @@ class Test__ModelTarget:
         assert not salt_modeler.use_emcee
 
         # Act
-        fitted_model = salt_modeler(target_to_model, t_ref=t_model)
+        fitted_model, comms = salt_modeler(target_to_model, t_ref=t_model)
 
         # Assert
         assert isinstance(fitted_model, sncosmo.Model)
@@ -378,10 +378,13 @@ class Test__ModelTarget:
         target_to_model.target_data["tns"] = tns_td
 
         # Act
-        fitted_model = salt_modeler(target_to_model, t_ref=t_model)
+        fitted_model, comms = salt_modeler(target_to_model, t_ref=t_model)
 
         # Assert
         assert np.isclose(fitted_model["z"], 0.02)
+
+        comms_str = " ".join(comms)
+        assert "use known TNS" in comms_str
 
     def test__no_lc_no_model(
         self, salt_modeler: SncosmoSaltModeler, target_to_model: Target, t_model: Time
@@ -401,10 +404,13 @@ class Test__ModelTarget:
         assert all(target_to_model.compiled_lightcurve["mag"] > 12.0)
 
         # Act
-        result = modeler(target_to_model, t_ref=t_model)
+        model, comms = modeler(target_to_model, t_ref=t_model)
 
         # Assert
-        assert result is None
+        assert model is None
+        assert isinstance(comms, list)
+        comms_str = " ".join(comms)
+        assert "too faint" in comms_str
 
     def test__too_few_dets_no_model(self, target_to_model: Target, t_model: Time):
         # Arrange
@@ -412,17 +418,19 @@ class Test__ModelTarget:
         assert len(target_to_model.compiled_lightcurve) < 25
 
         # Act
-        fitted_model = modeler(target_to_model, t_ref=t_model)
+        fitted_model, comms = modeler(target_to_model, t_ref=t_model)
 
         # Assert
         assert fitted_model is None
+        comms_str = " ".join(comms)
+        assert "no model - too few det" in comms_str
 
     def test__other_initializer(self, target_to_model: Target, t_model: Time):
         # Arrange
         modeler = SncosmoSaltModeler(initializer=initialize_pickleable_model)
 
         # Act
-        fitted_model = modeler(target_to_model, t_ref=t_model)
+        fitted_model, comms = modeler(target_to_model, t_ref=t_model)
 
         # Assert
         assert isinstance(fitted_model, sncosmo.Model)
@@ -439,11 +447,17 @@ class Test__ModelTarget:
         with pytest.raises(sncosmo.fitting.DataQualityError):
             _, _ = sncosmo.fit_lc(
                 input_lc, model, ["z", "x0", "x1", "c", "t0"], bounds={"z": (0.0, 0.1)}
-            )
-        fitted_model = salt_modeler(target_to_model, t_ref=t_model)
+            )  # Check sncosmo WOULD raise it...
+        fitted_model, comms = salt_modeler(
+            target_to_model, t_ref=t_model
+        )  # ...but caught!
 
         # Assert
         assert fitted_model is None
+        assert isinstance(comms, list)
+
+        comms_str = " ".join(comms)
+        assert "Failed because DataQualityError" in comms_str
 
     def test__write_model(self, target_to_model: Target, t_model: Time, tmp_path: Path):
         # Arrange
@@ -451,7 +465,7 @@ class Test__ModelTarget:
         modeler = SncosmoSaltModeler(existing_models_path=existing_models_path)
 
         # Act
-        model = modeler(target_to_model, t_ref=t_model)
+        model, comms = modeler(target_to_model, t_ref=t_model)
 
         # Assert
         exp_model_path = tmp_path / "models/T00m_sncosmo_salt.pkl"
@@ -461,7 +475,7 @@ class Test__ModelTarget:
             data = pickle.load(f)
 
         assert isinstance(data, dict)
-        assert set(data.keys()) == set(["parameters", "result"])
+        assert set(data.keys()) == set(["parameters", "result", "comments"])
 
     def test__read_if_missing_model(
         self,
@@ -479,7 +493,7 @@ class Test__ModelTarget:
         modeler = SncosmoSaltModeler(existing_models_path=existing_models_path)
 
         # Act
-        fitted_model = modeler(target_to_model, t_ref=t_model)
+        fitted_model, comms = modeler(target_to_model, t_ref=t_model)
 
         # Assert
         assert "weird_key" in fitted_model.result.keys()
@@ -503,7 +517,7 @@ class Test__ModelTarget:
         modeler = SncosmoSaltModeler(existing_models_path=existing_models_path)
 
         # Act
-        fitted_model = modeler(target_to_model, t_ref=t_model)
+        fitted_model, comms = modeler(target_to_model, t_ref=t_model)
 
         # Assert
         assert "weird_key" not in fitted_model.result.keys()
@@ -516,7 +530,7 @@ class Test__EmceeModeler:
         modeler = SncosmoSaltModeler(use_emcee=True, nsamples=250, nwalkers=12)
 
         # Act
-        fitted_model = modeler(target_to_model)
+        fitted_model, comms = modeler(target_to_model)
 
         # Assert
         assert isinstance(fitted_model, sncosmo.Model)

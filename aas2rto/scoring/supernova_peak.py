@@ -182,7 +182,6 @@ class SupernovaPeakScore:
         max_chisq_nu: float = 10.0,
         min_mw_sep: float = 15.0,
         min_gal_lat: float = 5.0,
-        use_compiled_lightcurve=True,
         scoring_sources: tuple = DEFAULT_SCORING_SOURCES,
         # scoring_bands: tuple = DEFAULT_SCORING_BANDS,
     ):
@@ -200,7 +199,6 @@ class SupernovaPeakScore:
         self.max_chisq_nu = max_chisq_nu
         self.min_mw_sep = min_mw_sep
         self.min_gal_lat = min_gal_lat
-        self.use_compiled_lightcurve = use_compiled_lightcurve
         self.scoring_sources = scoring_sources
         # self.scoring_bands = scoring_bands
 
@@ -347,13 +345,25 @@ class SupernovaPeakScore:
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
             tns_type_str = str(tns_data.parameters.get("type", ""))
+            tns_comm = ""
             if tns_type_str == "nan":
                 tns_type_str = ""  # Catch strange 'nan'.
+            else:
+                tns_comm = tns_comm + f"TNS type {tns_type_str}"
             known_redshift = float(tns_data.parameters.get("redshift", -1.0))
             if np.isfinite(known_redshift) and known_redshift > 0:
                 tns_redshift_str = f"{known_redshift:.4f}"
+                tns_comm = tns_comm + f" z={known_redshift:.1f}"
+                scoring_comments.append(tns_comm)
+
         target.flags["TNS_type"] = tns_type_str
         target.flags["TNS_redshift"] = tns_redshift_str
+
+        ###===== Flag sources =====###
+        for source in self.scoring_sources:
+            target.flags[source] = ""
+            if source in detections["source"]:
+                target.flags[source] = "y"
 
         ###===== Factors dependent on Model =====###
 
@@ -428,10 +438,10 @@ class SupernovaPeakScore:
                 peak_dt_flag = f"{peak_dt:+.1f}"
             target.flags["peak_dt"] = peak_dt_flag
 
-            if isinstance(chisq_nu, float) or samples:
-                good_chisq = (0.0 < chisq_nu) and chisq_nu < self.max_chisq_nu
+            if isinstance(chisq_nu, float):
+                good_chisq = (0.0 < chisq_nu) and (chisq_nu < self.max_chisq_nu)
 
-                if good_chisq or samples:
+                if good_chisq:
                     factors["interest_factor"] = f_interest
                     dt_comm = f"interest {f_interest:.2f} from peak_dt={peak_dt:+.1f}d"
 

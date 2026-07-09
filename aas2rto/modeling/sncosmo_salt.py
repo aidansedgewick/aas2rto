@@ -1,5 +1,6 @@
 import copy
 import pickle
+import time
 import traceback
 import warnings
 from logging import getLogger
@@ -38,7 +39,6 @@ from dust_extinction.parameter_averages import F99
 
 from aas2rto import paths
 from aas2rto.target import Target
-
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -120,11 +120,16 @@ def initialize_pickleable_model() -> sncosmo.Model:
     return model
 
 
-def write_salt_model(model: sncosmo.Model, filepath: Path):
+def write_salt_model(model: sncosmo.Model, filepath: Path, comments: list[str] = None):
     parameters = {k: v for k, v in zip(model.param_names, model.parameters)}
     model_result = getattr(model, "result", None)
 
-    model_data = {"parameters": parameters, "result": model_result}
+    comments = comments or []
+    model_data = {
+        "parameters": parameters,
+        "result": model_result,
+        "comments": comments,
+    }
 
     # CANNOT just pickle whole model: sncosmo.F99Dust() is not serializable.
     with open(filepath, "wb+") as f:
@@ -132,14 +137,17 @@ def write_salt_model(model: sncosmo.Model, filepath: Path):
     return
 
 
-def read_salt_model(filepath: Path, initializer: Callable):
+def read_salt_model(
+    filepath: Path, initializer: Callable
+) -> tuple[sncosmo.Model, list[str]]:
     with open(filepath, "rb") as f:
         model_data = pickle.load(f)
 
     model = initializer()
     model.set(**model_data["parameters"])
     model.result = model_data.get("result", None)
-    return model
+    comments = model_data.get("comments", [])
+    return model, comments
 
 
 class SncosmoSaltModeler:
@@ -154,9 +162,10 @@ class SncosmoSaltModeler:
         existing_models_path: Path = None,
         initializer: Callable = None,
         use_emcee: bool = False,
-        nsamples: int = 2500,
+        minimum_emcee_score: float = 0.0,
+        nsamples: int = 1500,
         nwalkers: int = 12,
-        z_max: float = 0.2,
+        z_max: float = 0.5,
         show_traceback: bool = True,
     ):
 
@@ -180,6 +189,7 @@ class SncosmoSaltModeler:
 
         self.initializer = initializer or initialize_model
         self.use_emcee = use_emcee
+        self.minimum_emcee_score = minimum_emcee_score
         self.nsamples = nsamples
         self.nwalkers = nwalkers
         self.z_max = z_max
@@ -197,7 +207,9 @@ class SncosmoSaltModeler:
         logger.info(f"set faint_limit={self.faint_limit} (no models for fainter)")
         logger.info(f"set use_badqual: {self.use_badqual}")
 
-    def __call__(self, target: Target, t_ref: Time = None):
+    def __call__(
+        self, target: Target, t_ref: Time = None
+    ) -> tuple[sncosmo.Model, list[str]]:
         t_ref = t_ref or Time.now()
 
         target_id = target.target_id
@@ -208,17 +220,20 @@ class SncosmoSaltModeler:
         if self.existing_models_path is not None:
             model_stem = f"{target_id}_{self.model_key}"
             model_filepath = self.existing_models_path / f"{model_stem}.pkl"
+
+            # If we've never tried to fit a model, just try loading the one we know.
             if existing_model is None and model_filepath.exists():
+                model = None
+                comments = []
                 try:
-                    model = read_salt_model(model_filepath, self.initializer)
+                    model, comments = read_salt_model(model_filepath, self.initializer)
                 except Exception as e:
                     logger.error(f"{target_id}: error loading {model_filepath.stem}")
                     if self.show_traceback:
                         tr = traceback.format_exc()
                         logger.error(f"TRACEBACK:\n{tr}")
-                    model = None
                 if model is not None:
-                    return model
+                    return model, comments
         else:
             model_filepath = None
 
@@ -233,23 +248,26 @@ class SncosmoSaltModeler:
 
         brightest_detection = detections["mag"].min()
         if brightest_detection > self.faint_limit:
-            msg = (
-                f"no model for {target_id}:\n    "
-                f"brightest {brightest_detection} > {self.faint_limit}: too faint!"
+            comm = (
+                f"no model - {brightest_detection:.1f} > {self.faint_limit:1f} "
+                "(too faint)"
             )
-            logger.debug(msg)
-            return None
+            logger.debug(f"{target.target_id}: {comm}")
+            return None, [comm]
 
         N_detections = {}
         for fid, fid_history in detections.groupby("band"):
             N_detections[fid] = len(fid_history)
 
         if len(detections) < self.min_detections:
-            logger.debug(
-                f"{target_id}: too few detections "
+            comm = (
+                f"no model - too few detections "
                 f"{len(detections)} < {self.min_detections} (min)"
             )
-            return None
+            logger.debug(f"{target.target_id}: {comm}")
+            return None, [comm]
+
+        model_comments = []  # Something to track our comments
 
         ##===== Now actually start to build the model =====##
         model: sncosmo.Model = self.initializer()
@@ -270,10 +288,18 @@ class SncosmoSaltModeler:
         if tns_data is not None:
             known_redshift = float(tns_data.parameters.get("redshift", "nan"))
             if np.isfinite(known_redshift):
-                logger.debug(f"{target.target_id} use known TNS z={known_redshift:.3f}")
+                comm = f"use known TNS z={known_redshift:.3f}"
+                logger.debug(f"{target.target_id}: {comm}")
                 model.set(z=known_redshift)
                 fitting_params.remove("z")
                 bounds.pop("z")
+                model_comments.append(comm)
+
+        ##===== Is it sensible to try emcee?? =====##
+        last_score = target.get_latest_science_score()
+        allow_emcee = True
+        if isinstance(last_score, float) and last_score < self.minimum_emcee_score:
+            allow_emcee = False
 
         ##===== Actually fit the model now!! =====##
         try:
@@ -282,49 +308,76 @@ class SncosmoSaltModeler:
                 lsq_result, lsq_fitted_model = sncosmo.fit_lc(
                     input_lightcurve, model, fitting_params, bounds=bounds
                 )
-
-                ##===== Do we want to do MCMC?? =====##
-                if self.use_emcee:
-                    try:
-                        result, fitted_model = sncosmo.mcmc_lc(
-                            input_lightcurve,
-                            lsq_fitted_model,
-                            fitting_params,
-                            nsamples=self.nsamples,
-                            nwalkers=self.nwalkers,
-                            bounds=bounds,
-                        )
-                    except Exception as e:
-                        errname = type(e).__name__
-                        msg = f"{target.target_id} mcmc error: {errname}\n    {e}"
-                        logger.warning(msg)
-                        if self.show_traceback:
-                            tr = traceback.format_exc()
-                            logger.error(f"TRACEBACK:\n{tr}")
-                        fitted_model = lsq_fitted_model
-                        result = lsq_result
-                else:
-                    fitted_model = lsq_fitted_model
-                    result = lsq_result
-            fitted_model.result = result
-            logger.debug(f"{target.target_id} fitted model!")
-
         except Exception as e:
             errname = type(e).__name__
             msg = f"{target.target_id} lsq error: {errname}\n    {e}"
             logger.warning(msg)
-            if self.show_traceback and type(e).__name__ not in [
-                "DataQualityError",
+            if type(e).__name__ not in [
+                "DataQualityError",  # Common, boring
                 "LinAlgError",
             ]:
-                tr = traceback.format_exc()
-                logger.error(f"TRACEBACK:\n{tr}")
-            fitted_model = None
+                if self.show_traceback:
+                    tr = traceback.format_exc()
+                    logger.error(f"TRACEBACK:\n{tr}")
+            else:
+                model_comments.append(f"Failed because {type(e).__name__}")
+            lsq_fitted_model = None
+            lsq_result = None
+
+        ##===== Do we want to do MCMC?? =====##
+        if self.use_emcee and allow_emcee and lsq_fitted_model is not None:
+
+            t_start = time.perf_counter()
+            logger.debug(f" {target.target_id} start emcee fit")
+            try:
+                result, fitted_model = sncosmo.mcmc_lc(
+                    input_lightcurve,
+                    lsq_fitted_model,
+                    fitting_params,
+                    nsamples=self.nsamples,
+                    nwalkers=self.nwalkers,
+                    bounds=bounds,
+                )
+            except Exception as e:
+                errname = type(e).__name__
+                msg = f"{target.target_id} mcmc error: {errname}\n    {e}"
+                logger.warning(msg)
+                if self.show_traceback:
+                    tr = traceback.format_exc()
+                    logger.error(f"TRACEBACK:\n{tr}")
+                fitted_model = None
+                result = None
+
+            if fitted_model is None:
+                # Go back to using the lsq results.
+                fitted_model = lsq_fitted_model
+                result = lsq_result
+            else:
+                samples = result.get("samples", None)
+                vparam_names = result["vparam_names"]
+                median_params = np.nanquantile(samples, q=0.5, axis=0)
+                if samples is not None:
+                    pdict = {k: v for k, v in zip(vparam_names, median_params)}
+                    model_copy = copy.deepcopy(fitted_model)
+                    model_copy.update(pdict)
+                    chisq = sncosmo.chisq(input_lightcurve, model_copy)
+                    result["chisq"] = chisq
+                    result["ndof"] = len(input_lightcurve) - len(vparam_names)
+
+            t_stop = time.perf_counter()
+            dt = t_stop - t_start
+            logger.debug(f"{target.target_id} fit in {dt:.1f}")
+        else:
+            fitted_model = lsq_fitted_model  # Use this even if it's real or None.
+            result = lsq_result
+
+        if fitted_model is not None:
+            fitted_model.result = result  # Monkey patch it on.
 
         ##===== Should we write this model back out again?? =====##
-        if model_filepath is not None:
+        if model_filepath is not None and fitted_model is not None:
             try:
-                write_salt_model(model, model_filepath)
+                write_salt_model(fitted_model, model_filepath)
             except Exception as e:
                 msg = f"could not pickle data from {type(model)} into {model_filepath}"
                 logger.error(msg)
@@ -332,4 +385,4 @@ class SncosmoSaltModeler:
                     tr = traceback.format_exc()
                     logger.error(f"TRACEBACK:\n{tr}")
 
-        return fitted_model
+        return fitted_model, model_comments

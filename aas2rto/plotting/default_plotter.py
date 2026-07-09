@@ -159,8 +159,8 @@ class DefaultLightcurvePlotter:
         self.cutout_keys = ["science", "template", "difference"]
 
     def init_fig(self, figsize: tuple = None):
-        figsize = figsize or self.default_figsize
-        self.fig = plt.figure(figsize=figsize)
+        self.figsize = figsize or self.default_figsize
+        self.fig = plt.figure(figsize=self.figsize)
         self.ax = self.fig.add_subplot(self.lc_gs[:, :-1])
 
     def plot_photometry(self, target: Target, band_col=None):
@@ -290,7 +290,16 @@ class DefaultLightcurvePlotter:
             if im is None:
                 continue
 
-            im_finite = im[np.isfinite(im)]
+            try:
+                im_finite = im[np.isfinite(im)]
+            except Exception as e:
+                print(type(im))
+                try:
+                    print(type(im[0]))
+                    print(type(im[0][0]))
+                except Exception as e:
+                    continue
+
             vmin, vmax = self.zscaler.get_limits(im_finite.flatten())
             im_ax.imshow(im, vmin=vmin, vmax=vmax)
 
@@ -383,22 +392,58 @@ class DefaultLightcurvePlotter:
         twiny.set_xticklabels(xticklabels)
 
     def add_comments(self, target: Target):
+        # Some constants
+        fontsize = 8
+        linespacing = 1.2  # plt default?   # fontsize in pt is 1/72
+        line_height = (fontsize * linespacing / 72) / self.figsize[1]  # y-height
 
         self.fig.subplots_adjust(bottom=0.35)
 
         transform_kwargs = dict(ha="left", va="top", transform=self.fig.transFigure)
-
         names = list(set(target.alt_ids.values()))
         alt_names_str = "alt names:\n    " + " - ".join(n for n in names)
-        self.fig.text(0.03, 0.25, alt_names_str, fontsize=8, **transform_kwargs)
 
-        comments = target.science_comments
-        if len(comments) > 0:
-            N = len(comments) // 2
+        y_alt_comms = 0.28
+        self.fig.text(0.03, y_alt_comms, alt_names_str, fontsize=8, **transform_kwargs)
+
+        sci_comm_strings = []
+        y_sci_comms = 0.225
+        MAX_COMM_LEN = 87
+        if len(target.science_comments) > 0:
+            for comm in target.science_comments:
+                if len(comm) < MAX_COMM_LEN:
+                    sci_comm_strings.append(comm)
+                    continue
+                comm_split = [
+                    comm[ii : ii + MAX_COMM_LEN]
+                    for ii in range(0, len(comm), MAX_COMM_LEN)
+                ]
+                sci_comm_strings.extend(comm_split)
+
+            N = len(sci_comm_strings) // 2
             text_col1 = "score comments:\n" + "\n".join(
-                f"    {comm}" for comm in comments[:N]
+                f"    {comm}" for comm in sci_comm_strings[:N]
             )
-            self.fig.text(0.03, 0.2, text_col1, fontsize=8, **transform_kwargs)
-            text_col2 = "\n" + "\n".join(f"    {comm}" for comm in comments[N:])
-            self.fig.text(0.53, 0.2, text_col2, fontsize=8, **transform_kwargs)
+            self.fig.text(0.03, y_sci_comms, text_col1, fontsize=8, **transform_kwargs)
+            text_col2 = "\n" + "\n".join(f"    {comm}" for comm in sci_comm_strings[N:])
+            self.fig.text(0.53, y_sci_comms, text_col2, fontsize=8, **transform_kwargs)
             self.comments_added = True
+
+        model_comm_strings = []
+
+        y_model_comms = y_sci_comms - (len(sci_comm_strings) + 1) // 2 * line_height
+        if target.model_comments:
+            for model_key, model_comments in target.model_comments.items():
+                model_comments.append(f"{model_key} comments\n")
+                for comm in model_comments:
+                    model_comm_strings.append(f"    {comm}")
+
+            N = len(model_comm_strings) // 2
+            text_col1 = "\n".join(f"    {comm}" for comm in sci_comm_strings[:N])
+            self.fig.text(
+                0.03, y_model_comms, text_col1, fontsize=8, **transform_kwargs
+            )
+            text_col2 = "\n" + "\n".join(f"    {comm}" for comm in sci_comm_strings[N:])
+            self.fig.text(
+                0.53, y_model_comms, text_col2, fontsize=8, **transform_kwargs
+            )

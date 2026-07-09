@@ -562,6 +562,7 @@ class Test__InfoLines:
     # These tests are pretty silly - just check no crash.
     def test__target_id_lines(self, mock_target: Target):
         # Arrange
+        mock_target.alt_ids["broker_lsst"] = "1001"
         mock_target.alt_ids["ztf"] = "ZTF25abc"
         mock_target.alt_ids["tns"] = "2025xyz"
         mock_target.alt_ids["yse"] = "fYSE25_001"
@@ -571,11 +572,17 @@ class Test__InfoLines:
         info_str = " ".join(id_lines)
 
         # Assert
-        assert "FINK: ztf.fink-portal.org/ZTF25abc" in info_str
-        assert "Lasair: lasair-ztf.lsst.ac.uk/objects/ZTF25abc" in info_str
-        assert "ALeRCE: alerce.online/object/ZTF25abc" in info_str
-        assert "TNS: wis-tns.org/object/2025xyz" in info_str
-        assert "YSE: ziggy.ucolick.org/yse/transient_detail/fYSE25_001" in info_str
+        assert "FINK-LSST: lsst.fink-portal.org/1001" in info_str
+        assert "Lasair-LSST: lasair.lsst.ac.uk/objects/1001" in info_str
+        assert "ALeRCE-LSST: lsst.alerce.online/object/1001?survey=lsst" in info_str
+        assert "FINK-ZTF: ztf.fink-portal.org/ZTF25abc" in info_str
+        assert "Lasair-ZTF: lasair-ztf.lsst.ac.uk/objects/ZTF25abc" in info_str
+        assert "ALeRCE-ZTF: alerce.online/object/ZTF25abc" in info_str
+        assert "TNS name: wis-tns.org/object/2025xyz" in info_str
+        assert "YSE-PZ: ziggy.ucolick.org/yse/transient_detail/fYSE25_001" in info_str
+        # "%3A" is the HTML code for ":"
+        exp_tns_url = "wis-tns.org/search?ra=12%3A00%3A00.00&decl=00%3A00%3A00.00"
+        assert exp_tns_url in info_str
 
         assert "alt names" in info_str
 

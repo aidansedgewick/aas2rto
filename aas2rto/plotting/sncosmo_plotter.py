@@ -131,7 +131,8 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
             self.models_plotted = True
 
             if samples is not None:
-                median_model = get_model_median_params(model)
+                # burnin already removed...
+                median_model = get_model_median_params(model, burnin=0)
 
                 model_med_flux = median_model.bandflux(band, tgrid, zp=8.9, zpsys="ab")
                 with warnings.catch_warnings():
@@ -147,7 +148,7 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
                     samples_lb, samples_med, samples_ub = get_sample_quartiles(
                         samples_tgrid, model, band, q=quartiles
                     )
-                    fb_kwargs = dict(color=band_color, alpha=0.2)
+                    fb_kwargs = dict(color=band_color, alpha=0.1)
                     self.ax.fill_between(
                         samples_tgrid_shift, samples_lb, samples_ub, **fb_kwargs
                     )
@@ -158,10 +159,10 @@ class SncosmoLightcurvePlotter(DefaultLightcurvePlotter):
 
         if self.samples_plotted:
             x, y = [0, 0], [23, 23]
-            l0 = self.ax.plot(x, y, ls="-", color="k", label="median parameters")
-            l1 = self.ax.plot(x, y, ls="--", color="k", label="LC samples median")
-            l2 = self.ax.plot(x, y, ls=":", color="k", label="mean parameters")
-            lines_legend = self.ax.legend(handles=[l0[0], l1[0], l2[0]], loc=4)
+            l0 = self.ax.plot(x, y, ls="-", color="k", label="Med. params")
+            l1 = self.ax.plot(x, y, ls="--", color="k", label="Med. samples")
+            l2 = self.ax.plot(x, y, ls=":", color="k", label="Mean params")
+            lines_legend = self.ax.legend(handles=[l0[0], l1[0], l2[0]], loc=2)
             # extra [0] indexing because ax.plot returns LIST of n-1 lines for n points.
             self.ax.add_artist(lines_legend)
         return

@@ -1,3 +1,5 @@
+import traceback
+
 from logging import getLogger
 from pathlib import Path
 from typing import Callable
@@ -14,7 +16,6 @@ from aas2rto.path_manager import PathManager
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
-
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -73,7 +74,9 @@ def science_score_wrapper(
         details = (
             f"For target {target.target_id} at {t_str},\n"
             f"    science score with '{func_name}' failed.\n"
-            f"    Set science score to -1.0 to exclude. Details:\n    {type(e)}: {e}"
+            f"    Set science score to -1.0 to exclude. "
+            f"Details:\n    {type(e)}: {e}"
+            f"===== Traceback =====\n    {traceback.format_exc()}"
         )
         scoring_res = (-1.0, [details])
 

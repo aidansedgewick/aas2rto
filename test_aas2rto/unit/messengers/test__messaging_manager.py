@@ -1,11 +1,13 @@
 import pytest
 
+from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
 from aas2rto.messaging.messaging_manager import MessagingManager
 from aas2rto.messaging.telegram_messenger import TelegramMessenger
 from aas2rto.messaging.slack_messenger import SlackMessenger
 from aas2rto.path_manager import PathManager
+from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
 
@@ -91,8 +93,8 @@ class Test__MessagingTasks:
 
         # Assert
         assert set(sent) == set()
-        assert set(skipped) == set(["T01"])
-        assert set(no_updates) == set(["T00"])
+        assert set(skipped) == set(["T00", "T01"])  # BOTH were skipped.
+        assert set(no_updates) == set(["T00", "T01"])
 
     def test__no_score(self, msg_mgr: MessagingManager, t_fixed: Time):
         # Arrange
@@ -106,7 +108,7 @@ class Test__MessagingTasks:
         # Assert
         assert set(sent) == set()
         assert set(skipped) == set(["T00", "T01"])
-        assert set(no_updates) == set()
+        assert set(no_updates) == set(["T01"])
 
     def test__bad_score(self, msg_mgr: MessagingManager, t_fixed: Time):
         # Arrange
@@ -120,7 +122,36 @@ class Test__MessagingTasks:
         # Assert
         assert set(sent) == set()
         assert set(skipped) == set(["T00", "T01"])
-        assert set(no_updates) == set()
+        assert set(no_updates) == set(["T01"])
+
+
+class Test__MessageFilter:
+    def test__no_reason_filter(self, msg_mgr: MessagingManager):
+        # Arrange
+
+        def msg_filter(target: Target, t_ref: Time = None):
+            if target.target_id == "T00":
+                return False
+            else:
+                return True
+
+        # Act
+        sent, skipped, no_updates = msg_mgr.perform_messaging_tasks(
+            message_filter=msg_filter
+        )
+
+        assert set(sent) == set(["T01"])
+        assert set(skipped) == set(["T00"])
+        assert set(no_updates) == set(["T00", "T01"])
+
+
+class Test__MessagesFormatted:
+    def test__telegram_no_href(self, msg_mgr: MessagingManager, basic_target: Target):
+        # Arrange
+        basic_target.alt_ids["ztf"] = "ZTF00abc"
+        basic_target.alt_ids["broker_lsst"] = "1001"
+
+        # Act
 
 
 class Test__CrashReports:

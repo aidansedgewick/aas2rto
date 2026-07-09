@@ -99,6 +99,7 @@ class Target:
         # Models
         self.models: dict[str, Any] = {}
         self.models_t_ref: dict[str, float] = {}
+        self.model_comments: list[str] = {}
 
         # Scoring data
         # self.score_history = {"no_observatory": []}
@@ -135,6 +136,7 @@ class Target:
         self.send_updates: bool = False
         self.info_messages: list[str] = []
         self.sudo_messages: list[str] = []
+        self.last_message_time: Time = None
 
     # def update_coordinates(self, ra: float, dec: float):
     #     self.ra = ra
@@ -376,15 +378,13 @@ class Target:
         self,
         header_open: str = "",
         header_close: str = "",
-        link_open: str = "",
-        link_close: str = "",
+        link_formatter: Callable = None,
         t_ref: Time = None,
     ):
         info_lines = self.get_info_lines(
             header_open=header_open,
             header_close=header_close,
-            link_open=link_open,
-            link_close=link_close,
+            link_formatter=link_formatter,
             t_ref=t_ref,
         )
         return "\n".join(info_lines)
@@ -393,8 +393,8 @@ class Target:
         self,
         header_open: str = "",
         header_close: str = "",
-        link_open: str = "",
-        link_close: str = "",
+        link_formatter: Callable = None,
+        link_fmt: str = None,
         t_ref: Time = None,
     ):
         t_ref = t_ref or Time.now()
@@ -402,9 +402,7 @@ class Target:
 
         info_lines = [f"Target {self.target_id} at {t_ref_str}"]
 
-        target_id_lines = self.get_target_id_info_lines(
-            link_open=link_open, link_close=link_close
-        )
+        target_id_lines = self.get_target_id_info_lines(link_formatter=link_formatter)
         coordinate_lines = self.get_coordinate_info_lines()
         flag_lines = self.get_flag_lines()
         photometry_lines = self.get_photometry_info_lines()
@@ -419,35 +417,49 @@ class Target:
         info_lines.extend(photometry_lines)
         return info_lines
 
-    def get_target_id_info_lines(self, link_open: str = "", link_close: str = ""):
+    def get_target_id_info_lines(self, link_formatter: Callable = None):
+
+        # Just return the plain link if there is no formatter
+        link_formatter = link_formatter or no_format
+
         info_lines = []
 
-        for source in ("lsst", "ztf"):
-            source_id = self.alt_ids.get(source, None)
-            if source_id is not None:
-                fink_url = f"{source}.fink-portal.org/{source_id}"
-                lasair_url = f"lasair-{source}.lsst.ac.uk/objects/{source_id}"
-                if source == "lsst":
-                    # special case for alerce...
-                    alerce_url = f"lsst.alerce.online/object/{source_id}?survey=lsst"
-                else:
-                    alerce_url = f"alerce.online/object/{source_id}"
-                broker_lines = [
-                    f"    {source}-FINK: {link_open}{fink_url}{link_close}",
-                    f"    {source}-Lasair: {link_open}{lasair_url}{link_close}",
-                    f"    {source}-ALeRCE: {link_open}{alerce_url}{link_close}",
-                ]
-                info_lines.extend(broker_lines)
+        source_links = {}
+        lsst_id = self.alt_ids.get("broker_lsst", None)
+        if lsst_id is not None:
+            links = {
+                "FINK-LSST": f"lsst.fink-portal.org/{lsst_id}",
+                "Lasair-LSST": f"lasair.lsst.ac.uk/objects/{lsst_id}",
+                "ALeRCE-LSST": f"lsst.alerce.online/object/{lsst_id}?survey=lsst",
+            }
+            source_links.update(links)
+
+        ztf_id = self.alt_ids.get("ztf", None)
+        if ztf_id is not None:
+            links = {
+                "FINK-ZTF": f"ztf.fink-portal.org/{ztf_id}",
+                "Lasair-ZTF": f"lasair-ztf.lsst.ac.uk/objects/{ztf_id}",
+                "ALeRCE-ZTF": f"alerce.online/object/{ztf_id}",
+            }
+            source_links.update(links)
 
         tns_name = self.alt_ids.get("tns", None)
         if tns_name is not None:
-            tns_url = f"wis-tns.org/object/{tns_name}"
-            info_lines.append(f"    TNS: {link_open}{tns_url}{link_close}")
+            source_links["TNS name"] = f"wis-tns.org/object/{tns_name}"
 
         yse_name = self.alt_ids.get("yse", None)
         if yse_name is not None:
-            yse_url = f"ziggy.ucolick.org/yse/transient_detail/{yse_name}"
-            info_lines.append(f"    YSE: {link_open}{yse_url}{link_close}")
+            source_links["YSE-PZ"] = (
+                f"ziggy.ucolick.org/yse/transient_detail/{yse_name}"
+            )
+
+        for source_name, link in source_links.items():
+            formatted_link = link_formatter(link)
+            info_lines.append(f"    {source_name}: {formatted_link}")
+
+        tns_direct_query = self.get_tns_coord_query_link()
+        formatted_link = link_formatter(tns_direct_query, "here")  # Link is long...
+        info_lines.append(f"    Direct TNS query: {formatted_link}")
 
         alt_rev = {}
         for source, alt_name in self.alt_ids.items():
@@ -462,6 +474,20 @@ class Target:
             info_lines.append(line)
 
         return info_lines
+
+    def get_tns_coord_query_link(self):
+        if self.coord is None:
+            return ""
+        sep = ("%3A", "%3A")
+        ra_str = self.coord.ra.to_string(
+            unit=u.hourangle, decimal=False, pad=True, sep=sep, precision=2
+        )
+        dec_str = self.coord.dec.to_string(
+            unit=u.deg, decimal=False, pad=True, sep=sep, precision=2
+        )
+
+        q_str = f"ra={ra_str}&decl={dec_str}&radius=10&coords_unit=arcsec&include_frb=1"
+        return f"wis-tns.org/search?{q_str}"
 
     def get_flag_lines(self):
         formatted_flags = []
@@ -535,7 +561,7 @@ class Target:
             score_str = "no_score"
         else:
             score_str = f"{last_score:.3f}"
-        lines.append(f"score = {score_str} for no_observatory")
+        lines.append(f"score = {score_str} for science score")
 
         score_comments = self.science_comments
         score_comments = score_comments or missing_score_comments
@@ -562,3 +588,7 @@ class Target:
         with open(comments_file, "w+") as f:
             f.writelines([line + "\n" for line in lines])
         return lines
+
+
+def no_format(link, text=None):
+    return link

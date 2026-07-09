@@ -163,7 +163,10 @@ class TelegramMessenger:
             try:
                 sent = asyncio.run(
                     bot.send_message(
-                        chat_id=user, text=text, disable_web_page_preview=True
+                        chat_id=user,
+                        parse_mode="HTML",
+                        text=text,
+                        disable_web_page_preview=True,
                     )
                 )
                 sent_messages.append(sent)
@@ -192,7 +195,9 @@ class TelegramMessenger:
                 bot = self.get_bot()
                 try:
                     sent = asyncio.run(
-                        bot.send_media_group(chat_id=user, media=media_list)
+                        bot.send_media_group(
+                            chat_id=user, media=media_list, parse_mode="HTML"
+                        )
                     )
                     sent_messages.append(sent)
                 except ValueError:
@@ -204,7 +209,12 @@ class TelegramMessenger:
                     bot = self.get_bot()
                     try:
                         sent = asyncio.run(
-                            bot.send_photo(chat_id=user, photo=img, caption=caption)
+                            bot.send_photo(
+                                chat_id=user,
+                                photo=img,
+                                caption=caption,
+                                parse_mode="HTML",
+                            )
                         )
                         sent_messages.append(sent)
                     except ValueError:

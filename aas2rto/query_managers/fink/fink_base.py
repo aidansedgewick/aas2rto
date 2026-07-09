@@ -333,7 +333,6 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             return None
 
         fink_id = self.get_relevant_id_from_target(target)
-
         lightcurve_filepath = self.get_lightcurve_filepath(fink_id)
         if lightcurve_filepath.exists():
             try:
@@ -478,7 +477,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             except Exception as e:
                 msg = f"LC query chunk {ii+1} failed:\n    {type(e).__name__}: {e}"
                 logger.error(msg)
-                qtracker.track_failed(*fink_id_chunk)
+                qtracker.track_failed(fink_id_chunk)
                 continue
 
             chunk_results.append(result)
@@ -551,6 +550,8 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
     def query_latest_cutouts(self):
 
+        self.logger.info("start cutout queries")
+
         qtracker = QueryTracker.start(
             max_query_time=self.config["max_query_time"],
             max_failed_queries=self.config["max_failed_queries"],
@@ -566,34 +567,61 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
                 continue  # There is no relevant ID to ask FINK for cutouts.
             fink_data = target.target_data.get(self.name, None)
             if fink_data is None:
-                continue  # The target has no fink data.
-            if fink_data.detections is None:
+                continue  # The target has no fink data
+
+            if fink_data.lightcurve is None:
                 continue  # The target has no detections
-            latest_alert_id = fink_data.detections[self.alert_id_key].iloc[-1]
+
+            fink_lc = fink_data.lightcurve
+
+            latest_alert_id = None
+            for ii in range(1, len(fink_lc) + 1):
+                row = fink_lc.iloc[-ii]
+                alert_id = row[self.alert_id_key]
+                if np.isfinite(alert_id) and alert_id > 0:
+                    latest_alert_id = alert_id
+                    break
+            if latest_alert_id is None:
+                continue  # No alert_id worth querying.
+
             latest_cutout_filepath = self.get_cutouts_filepath(fink_id, latest_alert_id)
 
             if not latest_cutout_filepath.exists():
                 payload = {
-                    self.target_id_key: fink_id,
-                    self.alert_id_key: latest_alert_id,
+                    self.target_id_key: str(fink_id),
+                    self.alert_id_key: str(latest_alert_id),
+                    "output-format": "array",
+                    "kind": "All",
                 }
                 try:
-                    cutouts = self.portal_client.cutouts(**payload)
+                    cdata = self.portal_client.cutouts(**payload)
                 except Exception as e:
                     qtracker.track_failed(target_id)
                     continue
 
-                cutouts["meta"] = {
-                    "mjd": fink_data.detections["mjd"].iloc[-1],
-                    "band": fink_data.detections["band"].iloc[-1],
-                }
+                # TODO: neaten process_cutouts
+                # for
+                try:
+                    data = cdata.json()
+                except Exception as e:
+                    continue
 
-                with open(latest_cutout_filepath, "rb") as f:
+                cutouts = {}
+                for imtype in self.portal_client.imtypes:
+                    cutout_key = f"b:cutout{imtype}"
+                    cutout_data = data.pop(cutout_key, None)
+                    cutouts[imtype.lower()] = np.array(cutout_data)
+
+                # cutouts["meta"] = {"mjd": row["mjd"], "band": row["band"]}
+
+                with open(latest_cutout_filepath, "wb+") as f:
                     pickle.dump(cutouts, f)
                 qtracker.track_success(fink_id)
 
         qtracker.log_summary(name=f"{self.name} cutouts")
         return qtracker.success, qtracker.missing, qtracker.failed
+    
+    def process_cutouts(self, cutouts)
 
     def load_cutouts(self):
         loaded_cutouts = []
@@ -606,6 +634,9 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             fink_data = target.target_data.get(self.name, None)
             if fink_data is None:
                 continue
+            if fink_data.lightcurve is None:
+                continue
+
             if self.alert_id_key not in fink_data.lightcurve:
                 highlight = f"'{self.alert_id_key}' not in {self.name}_data.lightcurve"
                 msg = f"{target_id}: for {self.name} \033[33;1m{highlight}\033[0m"
@@ -685,9 +716,11 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
         return
 
 
-def readstamp(stamp: str, return_type="array", gzipped=True) -> np.array:
+def readstamp(
+    stamp: str, return_type: str = "array", gzipped: bool = True, hdu: int = 0
+) -> np.array:
     """Read the stamp data inside an alert.
-    Copied directly from Fink's utils:
+    Modified from Fink's utils:
     https://github.com/astrolabsoftware/fink-science-portal/blob/master/apps/utils.py#L216 ...
 
     Parameters
@@ -707,18 +740,24 @@ def readstamp(stamp: str, return_type="array", gzipped=True) -> np.array:
     def extract_stamp(fitsdata):
         with fits.open(fitsdata, ignore_missing_simple=True) as hdul:
             if return_type == "array":
-                data = hdul[0].data
+                data = hdul[hdu].data
             elif return_type == "FITS":
                 data = io.BytesIO()
                 hdul.writeto(data)
                 data.seek(0)
+            else:
+                raise ValueError("Return type must be 'array' or 'FITS'")
         return data
 
     if not isinstance(stamp, io.BytesIO):
         stamp = io.BytesIO(stamp)
 
     if gzipped:
-        with gzip.open(stamp, "rb") as f:
-            return extract_stamp(io.BytesIO(f.read()))
+        try:
+            with gzip.open(stamp, "rb") as f:
+                return extract_stamp(io.BytesIO(f.read()))
+        except gzip.BadGzipFile as e:
+            logger.error(e)
+            return extract_stamp(stamp)
     else:
         return extract_stamp(stamp)

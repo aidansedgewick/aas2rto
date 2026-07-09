@@ -153,7 +153,7 @@ class FinkBasePortalClient(abc.ABC):
         data = json.loads(response.content)
         return self.process_data(data, fix_keys=fix_keys, return_type=return_type)
 
-    def process_data(self, data, fix_keys=True, return_type="records", df_kwargs=None):
+    def process_table(self, data, fix_keys=True, return_type="records"):
         if fix_keys:
             for row in data:
                 self.fix_dict_keys_inplace(row)
@@ -172,10 +172,10 @@ class FinkBasePortalClient(abc.ABC):
 
     def cutouts(self, method: str = "post", **payload):
         cutouts_kind = payload.get("kind", None)
-        if (cutouts_kind is not None) and (cutouts_kind not in self.imtypes):
-            raise ValueError(f"cutouts kind must be in 'imtypes'")
+        if cutouts_kind not in list(self.imtypes) + ["All"]:
+            raise ValueError(f"cutouts kind must be '{self.imtypes}' or 'All'")
 
-        client_kwargs = dict(method=method)
+        client_kwargs = dict(method=method, process=False)
         return self.do_request("cutouts", **client_kwargs, **payload)
 
     def conesearch(

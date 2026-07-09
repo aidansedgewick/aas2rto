@@ -65,7 +65,11 @@ class Test_ModelingResult:
     def test__init(self):
         # Act
         res = ModelingResult(
-            target_id="T00", model=MockModel(), success=True, reason="good reason"
+            target_id="T00",
+            model=MockModel(),
+            success=True,
+            reason="good reason",
+            comments=["some commet"],
         )
 
         # Assert
@@ -76,7 +80,13 @@ class Test_ModelingResult:
 
     def test__init_with_model_None(self):
         # Act
-        res = ModelingResult(target_id="T00", model=None, success=False, reason="fail")
+        res = ModelingResult(
+            target_id="T00",
+            model=None,
+            success=False,
+            reason="fail",
+            comments=["some comments"],
+        )
 
         # Assert
         assert res.target_id == "T00"

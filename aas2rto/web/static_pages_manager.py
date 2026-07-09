@@ -15,8 +15,13 @@ from aas2rto import utils
 from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
+from aas2rto.utils import format_link_as_html
 
 logger = getLogger(__name__.split(".")[-1])
+
+
+def fixed_text_html_formatter(link, text=None):
+    return format_link_as_html(link, text="link", prefix="http://")
 
 
 class StaticPagesManager:
@@ -342,10 +347,11 @@ class StaticPagesManager:
             additional_path_list.append(im_path)
 
         header_tags = dict(header_open="<h2>", header_close="</h2>")
-        link_tags = dict(link_open='<a href="http://', link_close='">link</a>')
-        target_info_str = target.get_info_string(**header_tags, **link_tags)
+        target_info_str = target.get_info_string(
+            **header_tags, link_formatter=fixed_text_html_formatter
+        )
 
-        target_info_str = target_info_str.replace("\n", "<br>")
+        target_info_str = target_info_str.replace("\n", "\n<br>")
         page_data = dict(
             target_id=target.target_id,
             target_text=target_info_str,
