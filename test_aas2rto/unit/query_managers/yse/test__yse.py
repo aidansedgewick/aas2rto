@@ -258,7 +258,6 @@ class Test__QueryExplorers:
         assert existing_query_results_filepath.exists()
         results = pd.read_csv(existing_query_results_filepath)
         assert len(results) == 4
-        print(results)
         assert set(results["name"]) == set(["2023J", "2023K", "2023L", "2023M"])
 
     def test__no_requery_recent_results(
@@ -538,7 +537,6 @@ class Test__PerformAllTasks:
 
     def test__non_zero_iteration(self, yse_qm: YSEQueryManager, t_fixed: Time):
         # Arrange
-        print(yse_qm.target_lookup.id_mapping)
         assert yse_qm.target_lookup["2023J"].target_id == "T00"
 
         # Act

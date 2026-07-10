@@ -758,9 +758,10 @@ def yse_explorer_queries(yse_query_name: str):
     return {
         yse_query_name: {
             "query_id": 101,
-            "target_id_col": "name",
-            "coordinate_cols": ("ra", "dec"),
-            "comparison_col": "n_det",
+            "target_id_key": "name",
+            "ra_key": "ra",
+            "dec_key": "dec",
+            "comparison_key": "n_det",
         }
     }
 

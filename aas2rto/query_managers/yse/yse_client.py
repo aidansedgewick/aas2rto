@@ -6,7 +6,6 @@ import pandas as pd
 
 from astropy.table import Table
 
-
 logger = getLogger(__name__.split(".")[-1])
 
 
@@ -72,7 +71,7 @@ class YSEClient:
         self, query_id: int, process: bool = True, return_type: str = "pandas"
     ):
         url = f"{self.base_url}/explorer/{query_id}/download"
-        response = requests.get(url, auth=self.yse_auth)
+        response: requests.Response = requests.get(url, auth=self.yse_auth)
         if not process:
             return response
 
@@ -237,8 +236,6 @@ class YSEClient:
             if return_type == "pandas":
                 lc = pd.DataFrame(data=data_rows, columns=columns)
             elif return_type == "astropy":
-                print(data_rows)
-                print(columns)
                 lc = Table(rows=data_rows, names=columns)
             elif return_type == "records":
                 lc = [{k: v for k, v in zip(columns, row)} for row in data_rows]
