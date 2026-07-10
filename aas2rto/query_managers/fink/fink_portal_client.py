@@ -36,11 +36,25 @@ class FinkMissingRequiredParametersError(Exception):
     pass
 
 
-RESPONSE_PROCESSORS = {
+def readstamp(self):
+    pass
+
+
+TABLE_RESPONSE_PROCESSORS = {
     "pandas": pd.DataFrame,
     "astropy": lambda data: Table(rows=data),
     "records": lambda data: data,
 }
+CUTOUT_RESPONSE_PROCESSORS = {"array": lambda data: np.array(data), "fits": readstamp}
+DEFAULT_TABLE_RETURN_TYPE = "records"
+
+
+def fix_dict_keys_inplace(data: dict):
+    key_lookup = {k: k.split(":")[-1] for k in data.keys()}
+    for old_key, new_key in key_lookup.items():
+        # Not dangerous, as not iterating over the dict we're updating.
+        data[new_key] = data.pop(old_key)
+    # NO RETURN - dictionary is modified "in place"...
 
 
 class FinkBasePortalClient(abc.ABC):
@@ -74,18 +88,11 @@ class FinkBasePortalClient(abc.ABC):
 
     @abc.abstractmethod
     def query_classifiers(self, *args, **payload):
-        """"""
+        """Define which endpoint should be used for querying classifiers.
+        eg. they are different for LSST and ZTF"""
 
     def __init__(self):
         pass  # In case of credentials required, implement here
-
-    @staticmethod
-    def fix_dict_keys_inplace(data: dict):
-        key_lookup = {k: k.split(":")[-1] for k in data.keys()}
-        for old_key, new_key in key_lookup.items():
-            # Not dangerous, as not iterating over the dict we're updating.
-            data[new_key] = data.pop(old_key)
-        # NO RETURN - dictionary is modified "in place"...
 
     @staticmethod
     def process_kwargs(**kwargs):
@@ -117,9 +124,6 @@ class FinkBasePortalClient(abc.ABC):
     def do_request(
         self,
         endpoint: str,
-        process=True,
-        fix_keys=True,
-        return_type=None,
         method: str = "post",
         **payload,
     ):
@@ -137,87 +141,246 @@ class FinkBasePortalClient(abc.ABC):
             raise ValueError(msg)
         if response.status_code != 200:
             self.raise_client_error(response, endpoint=endpoint)
-
-        if process:
-            return self.process_response(
-                response, fix_keys=fix_keys, return_type=return_type
-            )
         return response
 
-    def process_response(
-        self,
-        response: requests.Response,
-        fix_keys: bool = True,
-        return_type: bool = None,
-    ):
-        data = json.loads(response.content)
-        return self.process_data(data, fix_keys=fix_keys, return_type=return_type)
-
-    def process_data(self, data, fix_keys=True, return_type="records", df_kwargs=None):
+    @staticmethod
+    def process_table_data(data, fix_keys: str = True, return_type: str = None):
+        return_type = return_type or DEFAULT_TABLE_RETURN_TYPE
         if fix_keys:
             for row in data:
-                self.fix_dict_keys_inplace(row)
-        processor = RESPONSE_PROCESSORS.get(return_type)
+                fix_dict_keys_inplace(row)
+        processor = TABLE_RESPONSE_PROCESSORS.get(return_type, None)
         if processor is None:
-            processors_str = ", ".join(f"'{x}'" for x in RESPONSE_PROCESSORS.keys())
+            processors_str = ", ".join(
+                f"'{x}'" for x in TABLE_RESPONSE_PROCESSORS.keys()
+            )
             return_type_err_msg = (
-                f"Unknown return_type='\033[33;1m{return_type}\033[0m'. Choose from:\n    "
-                f"{processors_str}"
+                f"Unknown return_type='\033[33;1m{return_type}\033[0m'. "
+                f"Choose from:\n    {processors_str}"
             )
             raise ValueError(return_type_err_msg)
         return processor(data)
 
+    @staticmethod
+    def process_cutout_data(data: dict, output_format: str, fix_keys: bool = True):
+
+        if fix_keys:
+            fix_dict_keys_inplace(data)
+        processor = CUTOUT_RESPONSE_PROCESSORS[output_format]
+
+        cutout_data = {}
+        for key, data in data.items():
+            cutout_data[key] = processor(data)
+        return cutout_data
+
     ##===== Methods which look common among surveys =====##
     # ...and do the same thing in each survey.
 
-    def cutouts(self, method: str = "post", **payload):
+    def cutouts(
+        self,
+        method: str = "post",
+        process: bool = True,
+        fix_keys: bool = True,
+        **payload,
+    ):
         cutouts_kind = payload.get("kind", None)
-        if (cutouts_kind is not None) and (cutouts_kind not in self.imtypes):
-            raise ValueError(f"cutouts kind must be in 'imtypes'")
+        output_format = payload.get("output-format", None)
 
-        client_kwargs = dict(method=method)
-        return self.do_request("cutouts", **client_kwargs, **payload)
+        # Do some checks on parameters.
+        if cutouts_kind is not None:
+            if cutouts_kind != "All":
+                if cutouts_kind not in self.imtypes:
+                    raise ValueError(f"cutouts kind must be 'All' '{self.imtypes}'")
+            if cutouts_kind == "All":
+                if output_format is None:
+                    output_format = "array"
+                    payload["output-format"] = output_format
+                else:
+                    if output_format != "array":
+                        msg = f"for kind 'All', output-format must be 'array'"
+                        raise ValueError(msg)
+        else:
+            cutouts_kind = "All"
+            output_format = "array"
+            payload["kind"] = cutouts_kind
+            payload["output-format"] = output_format
+
+        response: requests.Response = self.do_request(
+            "cutouts", method=method, **payload
+        )
+        if process:
+            return self.process_cutout_data(
+                response, output_format=output_format, fix_keys=fix_keys
+            )
+        return response
 
     def conesearch(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "conesearch", method=method, **payload
         )
-        return self.do_request("conesearch", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(fix_keys=fix_keys, return_type=return_type)
+        return response
 
     def sso(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
-        )
-        return self.do_request("sso", **client_kwargs, **payload)
+        response: requests.Response = self.do_request("sso", method=method, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
 
-    def schema(self, method="get", **payload):
-        client_kwargs = dict(method=method, fix_keys=False, return_type="records")
-        return self.do_request("schema", **client_kwargs, **payload)
+    def schema(self, method: str = "get", process: bool = True, **payload):
+        self.disallow_http_method(method, disallowed="post", endpoint="schema")
+        response: requests.Response = self.do_request(
+            "schema", method=method, **payload
+        )
+        if process:
+            return response.json()
+        return response
 
     def skymap(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "skymap", method=method, **payload
         )
-        return self.do_request("skymap", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
 
-    def statistics(self, fix_keys=True, return_type=None, **payload):
-        return self.do_request(
-            "statistics", fix_keys=fix_keys, return_type=return_type, **payload
-        )
-
-    def resolver(
-        self, method="post", process=True, fix_keys=True, return_type=None, **payload
+    def statistics(
+        self,
+        process: bool = True,
+        fix_keys: bool = True,
+        return_type: str = None,
+        **payload,
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request("statistics", **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
+
+    def resolver(self, method="post", process=True, fix_keys=True, **payload):
+        response: requests.Response = self.do_request(
+            "resolver", method=method, **payload
         )
-        return self.do_request("resolver", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type="records"
+            )
+        return response
+
+    def query_and_consolidate(
+        self,
+        endpoint_method: Callable,
+        t_start: Time = None,
+        t_stop: Time = None,
+        step: u.Quantity = 24 * u.h,
+        return_type: str = "pandas",
+        fix_keys: bool = True,
+        n: int = 1000,
+        depth: int = 0,
+        max_depth: int = 6,
+        **payload,
+    ):
+        """
+        For an endpoint with `startdate` and `stopdate`, call query on a time grid,
+        and consolidate the results.
+
+        If the number of rows returned equals the maximum allowed, call recursively and
+        try a smaller interval
+
+        Parameters
+        ----------
+        endpoint_method : Callable
+            eg. ztf_client.latests
+        t_start : astropy.time.Time, optional
+            Defaults to Time.now() - 1 day
+        t_stop : astropy.time.Time, optional
+            Defaults to Time.now()
+        step : astropy.units.Quantity
+            Default is 3.0 * u.h
+        return_type : str
+            Choose 'records', 'astropy', 'pandas'
+        fix_keys : bool, default=True
+            Remove FINK-added column prefixes
+        n : int, default = 1000
+            Maximum rows per query
+        **payload
+            All other parameters passed to the endpoint you are querying.
+
+        """
+
+        if depth > max_depth:
+            raise RecursionError(f"Depth {depth} > {max_depth}")
+
+        ##===== Prepare a grid of dates.
+        t_stop = t_stop or Time.now()
+        t_start = t_start or t_stop - 1.0 * u.day
+        step_day = step.to(u.day).value
+        t_grid = Time(
+            np.arange(t_start.mjd, (t_stop + step).mjd, step_day), format="mjd"
+        )
+
+        query_results = []
+        payload["n"] = n
+
+        ##===== Loop through a grid of dates.
+        for t1, t2 in zip(t_grid[:-1], t_grid[1:]):
+            payload = copy.deepcopy(payload)
+            t1_str = t1.strftime("%Y-%m-%d %H:%M")
+            t2_str = t2.strftime("%Y-%m-%d %H:%M")
+            payload["startdate"] = t1.iso
+            payload["stopdate"] = t2.iso
+            logger.info(f"start query {t1_str} - {t2_str}")
+            result = endpoint_method(
+                fix_keys=fix_keys, return_type=return_type, **payload
+            )
+            logger.info("  " * depth + f"returned {len(result)}")
+
+            if len(result) == n:
+                msg = f"returned {n} rows: recurse depth={depth+1}"
+                logger.warning(msg)
+                try:
+                    sub_result = self.query_and_consolidate(
+                        endpoint_method,
+                        **dict(t_start=t1, t_stop=t2, step=step / 6.0),  # grid params
+                        **dict(return_type=return_type, fix_keys=fix_keys),  # client
+                        **dict(depth=depth + 1, max_depth=max_depth),  # recursion
+                        **payload,
+                    )
+                    query_results.append(sub_result)
+                except RecursionError:
+                    logger.error("Cannot recurse deeper")
+                    query_results.append(result)  #
+            else:
+                if len(result) > 0:
+                    logger.info("  " * depth + f"returned {len(result)}")
+                    query_results.append(result)
+
+        ##===== Now combine all the results.
+        if return_type == "records":
+            return itertools.chain.from_iterable(result)
+        elif return_type == "pandas":
+            if len(query_results) > 0:
+                return pd.concat(query_results)
+            return pd.DataFrame(columns=[self.target_id_key])
+        elif return_type == "astropy":
+            if len(query_results) > 0:
+                return vstack(query_results)
+            return Table(names=[self.target_id_key])
+        else:
+            msg = f"Unknown return_type='{return_type}': Use None, 'pandas', 'astropy'"
+            raise ValueError(msg)
 
 
 class FinkZTFPortalClient(FinkBasePortalClient):
@@ -229,135 +392,128 @@ class FinkZTFPortalClient(FinkBasePortalClient):
     def anomaly(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "anomaly", method=method, **payload
         )
-        return self.do_request("anomaly", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
 
     def classes(
         self, method="get", process=True, fix_keys=True, return_type=None, **payload
     ):
         self.disallow_http_method(method, disallowed="post", endpoint="classes")
-        client_kwargs = dict(
-            method="get", process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "classes", method="get", **payload
         )
-        return self.do_request("classes", **client_kwargs, **payload)
+        if process:
+            return response.json()
+        return response
 
     def latests(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "latests", method=method, **payload
         )
-        return self.do_request("latests", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
 
     def objects(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
         # NOT a base class method, as it has different behaviour in each survey.
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "objects", method=method, **payload
         )
-        return self.do_request("objects", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
 
-    def schema(self, method="get", **payload):
-        """get method disallowed for ZTF schema endpoint"""
+    def schema(self, method: str = "post", **payload):
+        """'get' method disallowed for ZTF schema endpoint"""
         self.disallow_http_method(method, disallowed="post", endpoint="schema")
         return super().schema(method=method, **payload)
 
     def ssobulk(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "ssobulk", method=method, **payload
         )
-        return self.do_request("ssobulk", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
 
     def ssocand(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "ssocand", method=method, **payload
         )
-        return self.do_request("ssocand", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
 
     def ssoft(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
-        )
-        return self.do_request("ssoft", **client_kwargs, **payload)
+        response: requests.Response = self.do_request("ssoft", method=method, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
 
     def tracklet(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "tracklet", method=method, **payload
         )
-        return self.do_request("tracklet", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=fix_keys, return_type=return_type
+            )
+        return response
 
     ##===== Extra methods =====##
 
-    def query_classifiers(
-        self,
-        t_start: Time,
-        t_stop: Time = None,
-        step=3 * u.h,
-        return_type="pandas",
-        fix_keys=True,
-        n=1000,
-        **payload,
-    ):
-        t_stop = t_stop or Time.now()
-        step_day = step.to(u.day).value
-        t_grid = Time(
-            np.arange(t_start.mjd, (t_stop + step).mjd, step_day), format="mjd"
-        )
+    def consolidate_latests(self, **kwargs):
+        """
+        All kwargs from query_and_consolidate
+        """
+        return self.query_and_consolidate(self.latests, **kwargs)
 
-        results = []
-        payload["n"] = n
-        for t1, t2 in zip(t_grid[:-1], t_grid[1:]):
-            payload = copy.deepcopy(payload)
-            t1_str = t1.strftime("%Y-%m-%d %H:%M")
-            t2_str = t2.strftime("%Y-%m-%d %H:%M")
-            payload["startdate"] = t1.iso
-            payload["stopdate"] = t2.iso
-            logger.info(f"start query {t1_str} - {t2_str}")
-            try:
-                result = self.latests(
-                    fix_keys=fix_keys, return_type=return_type, **payload
-                )
-            except FinkBadEndpointError as e:
-                break
-
-            if len(result) == n:
-                msg = f"{t1_str} - {t2_str} returned {n} rows. choose shorter timestep!"
-                logger.warning(msg)
-            if len(result) > 0:
-                results.append(result)
-        if return_type == "records":
-            return itertools.chain.from_iterable(result)
-        elif return_type == "pandas":
-            if len(results) > 0:
-                return pd.concat(results)
-            return pd.DataFrame(columns=[self.target_id_key])
-        elif return_type == "astropy":
-            if len(results) > 0:
-                return vstack(results)
-            return Table(names=[self.target_id_key])
-        else:
-            msg = f"Unknown return_type='{return_type}': Use None, 'pandas', 'astropy'"
-            raise ValueError(msg)
+    def consolidate_anomaly(self, **kwargs):
+        return self.query_and_consolidate(self.anomaly, **kwargs)
 
     def query_lightcurve(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        """ZTF lightcurves are queried with the OBJECTS endpoint"""
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        """ZTF lightcurves are queried with the `objects` endpoint"""
+        return self.objects(
+            method=method,
+            process=process,
+            fix_keys=fix_keys,
+            return_type=return_type,
+            **payload,
         )
-        return self.objects(**client_kwargs, **payload)
+
+    def query_classifiers(self, **payload):
+        """ZTF classifiers are queried with the `latests` endpoint"""
+        return self.consolidate_latests(**payload)
 
 
 class FinkLSSTPortalClient(FinkBasePortalClient):
@@ -366,77 +522,81 @@ class FinkLSSTPortalClient(FinkBasePortalClient):
     alert_id_key = "diaSourceId"
     imtypes = ("Difference", "Science", "Template")
 
-    def blocks(self, process=True, fix_keys=True, return_type=None, **payload):
+    def blocks(
+        self, method="get", process: bool = True, fix_keys: bool = True, **payload
+    ):
         """No method keyword here - only http 'get' method is allowed"""
-        client_kwargs = dict(
-            method="get", process=process, fix_keys=fix_keys, return_type=return_type
-        )
-        return self.do_request("blocks", **client_kwargs, **payload)
+        self.disallow_http_method(method, disallowed="post", endpoint="blocks")
+        response: requests.Response = self.do_request("blocks", method="get", **payload)
+        if process:
+            return response.json()
+        return response
 
     def fp(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
-        )
-        return self.do_request("fp", **client_kwargs, **payload)
+
+        response: requests.Response = self.do_request("fp", method=method, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=True, return_type=return_type
+            )
+        return response
 
     def objects(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "objects", method=method, **payload
         )
-        return self.do_request("objects", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=True, return_type=return_type
+            )
+        return response
 
     def sources(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        response: requests.Response = self.do_request(
+            "sources", method=method, **payload
         )
-        return self.do_request("sources", **client_kwargs, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=True, return_type=return_type
+            )
+        return response
 
     def tags(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
-        )
-        return self.do_request("tags", **client_kwargs, **payload)
+        response: requests.Response = self.do_request("tags", method=method, **payload)
+        if process:
+            return self.process_table_data(
+                response.json(), fix_keys=True, return_type=return_type
+            )
+        return response
 
     ##===== Extra methods =====##
+
+    def consolidate_tags(self, **kwargs):
+        return self.query_and_consolidate(self.tags, **kwargs)
 
     def query_lightcurve(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
     ):
-        """LSST lightcurves are queried with the 'SOURCES' endpoint"""
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
+        """LSST lightcurves are queried with the `sources` endpoint"""
+        return self.sources(
+            method=method,
+            process=process,
+            fix_keys=fix_keys,
+            return_type=return_type,
+            **payload,
         )
-        return self.sources(**client_kwargs, **payload)
 
-    def query_classifiers(
-        self, method="post", process=True, fix_keys=True, return_type=None, **payload
-    ):
-        client_kwargs = dict(
-            method=method, process=process, fix_keys=fix_keys, return_type=return_type
-        )
-        raise NotImplementedError("No query classifiers and collate for LSST")
+    def query_classifiers(self, **kwargs):
+        """
+        LSST classifiers are queried with the `tags` endpoint.
+        """
 
-
-### Fancy decorator solution does not work for disallowing http methods because
-### decorator does not know about default arguments. Would need to use inspect,
-### which seems sketchy...
-#
-# def disallow_http_method(disallowed_method: str):
-#     def disallow_decorator(func):
-#         def check_method(endpoint, *args, method: str = None, **payload):
-#             if method == disallowed_method:
-#                 msg = f"method '{method}' disallowed for endpoint '{endpoint}'"
-#                 raise FinkDisallowedMethodError(msg)
-#             return func(endpoint, *args, method=method, **payload)
-
-#         return check_method
-
-#     return disallow_decorator
+        return self.consolidate_tags(**kwargs)

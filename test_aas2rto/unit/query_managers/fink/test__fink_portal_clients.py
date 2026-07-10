@@ -12,6 +12,7 @@ from aas2rto.query_managers.fink.fink_portal_client import (
     FinkZTFPortalClient,
     FinkLSSTPortalClient,
     FinkPortalClientError,
+    fix_dict_keys_inplace,
 )
 
 ##===== Some helper functions here =====##
@@ -50,10 +51,13 @@ class MockPostResponse:
         # json = json or {}
         self.status_code = json.pop("status_code", 200)
         self.reason = json.pop("reason", "OK")
-        content = json.pop("content", {})
-        self.content = json_tools.dumps(content)  # use renamed 'json' module...
+        self._data = json.pop("content", {})
+        self.content = json_tools.dumps(self._data)  # use renamed 'json' module...
         self.elapsed = MockElapsed(json.pop("elapsed", 1.0))
         self.payload = json  # whatever remains...
+
+    def json(self):
+        return self._data
 
 
 class MockGetResponse:
@@ -62,10 +66,13 @@ class MockGetResponse:
         # json = json or {}
         self.status_code = params.pop("status_code", 200)
         self.reason = params.pop("reason", "OK")
-        content = params.pop("content", {})
-        self.content = json_tools.dumps(content)  # use renamed 'json' module...
+        self._data = params.pop("content", {})
+        self.content = json_tools.dumps(self._data)  # renamed 'json' module...
         self.elapsed = MockElapsed(params.pop("elapsed", 1.0))
         self.payload = params  # whatever remains...
+
+    def json(self):
+        return self.content_data
 
 
 ###===== Pytest fixtures here =====###
@@ -144,7 +151,7 @@ class Test__HelperFunctions:
         data = {"p:key01": 1.0, "key02": 1.0, "p:q:key03": 1.0}
 
         # Act
-        FinkCoolPortalClient().fix_dict_keys_inplace(data)
+        fix_dict_keys_inplace(data)
 
         # Assert
         assert set(data.keys()) == set("key01 key02 key03".split())
@@ -164,7 +171,7 @@ class Test__HelperFunctions:
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
 
         # Act
-        processed_data = FinkCoolPortalClient().process_data(
+        processed_data = FinkCoolPortalClient().process_table_data(
             data, return_type="records"
         )
 
@@ -179,7 +186,7 @@ class Test__HelperFunctions:
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
 
         # Act
-        df = FinkCoolPortalClient().process_data(data, return_type="pandas")
+        df = FinkCoolPortalClient().process_table_data(data, return_type="pandas")
 
         # Assert
         assert isinstance(df, pd.DataFrame)
@@ -190,33 +197,33 @@ class Test__HelperFunctions:
         data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
 
         # Act
-        table = FinkCoolPortalClient().process_data(data, return_type="astropy")
+        table = FinkCoolPortalClient().process_table_data(data, return_type="astropy")
 
         # Assert
         assert isinstance(table, Table)
         assert len(table) == 2
 
-    def test__process_response(self):
-        # Arrange
-        data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
-        res = MockPostResponse(json=dict(content=data))  # json.dumps INSIDE __init__
+    # def test__process_response(self):
+    #     # Arrange
+    #     data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
+    #     res = MockPostResponse(json=dict(content=data))  # json.dumps INSIDE __init__
 
-        # Act
-        processed = FinkCoolPortalClient().process_response(res, return_type="records")
+    #     # Act
+    #     processed = FinkCoolPortalClient().process_response(res, return_type="records")
 
-        # Assert
-        assert isinstance(processed, list)
-        assert isinstance(processed[0], dict)
-        assert set(processed[0].keys()) == set("key01 key02".split())
+    #     # Assert
+    #     assert isinstance(processed, list)
+    #     assert isinstance(processed[0], dict)
+    #     assert set(processed[0].keys()) == set("key01 key02".split())
 
-    def test__process_bad_return_fals(self):
-        # Arrange
-        data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
-        res = MockPostResponse(json=dict(content=data))  # json.dumps INSIDE __init__
+    # def test__process_bad_return_fals(self):
+    #     # Arrange
+    #     data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
+    #     res = MockPostResponse(json=dict(content=data))  # json.dumps INSIDE __init__
 
-        # Act
-        with pytest.raises(ValueError):
-            processed = FinkCoolPortalClient().process_response(res, return_type="blah")
+    #     # Act
+    #     with pytest.raises(ValueError):
+    #         processed = FinkCoolPortalClient().process_response(res, return_type="blah")
 
 
 class Test__CommonEndpoints:
@@ -423,7 +430,7 @@ class Test__QueryClassifiers:
 
         # Act
         FinkZTFPortalClient().query_classifiers(
-            t_fixed, t_stop=t_later, n=10, return_type="pandas"
+            t_start=t_fixed, t_stop=t_later, n=10, return_type="pandas"
         )
 
     def test__query_and_collate_astropy(self, t_fixed: Time):
@@ -432,7 +439,7 @@ class Test__QueryClassifiers:
 
         # Act
         FinkZTFPortalClient().query_classifiers(
-            t_fixed, t_stop=t_later, n=10, return_type="astropy"
+            t_start=t_fixed, t_stop=t_later, n=10, return_type="astropy"
         )
 
     def test__query_and_collate_records(self, t_fixed: Time):
@@ -441,5 +448,5 @@ class Test__QueryClassifiers:
 
         # Act
         FinkZTFPortalClient().query_classifiers(
-            t_fixed, t_stop=t_later, n=10, return_type="records"
+            t_start=t_fixed, t_stop=t_later, n=10, return_type="records"
         )
