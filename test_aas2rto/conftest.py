@@ -672,14 +672,22 @@ def msg_mgr(
 
 
 @pytest.fixture
-def fink_kafka_config():
+def fink_kafka_base_config():
     return {
         "username": "user",
         "group.id": 1234,
         "bootstrap.servers": "http://fink.blah.org",
+    }
+
+
+@pytest.fixture
+def fink_kafka_config(fink_kafka_base_config: dict):
+    extra_config = {
         "topics": ["cool_sne"],
         "survey": "cool_survey",
     }
+    fink_kafka_base_config.update(**extra_config)
+    return fink_kafka_base_config
 
 
 @pytest.fixture

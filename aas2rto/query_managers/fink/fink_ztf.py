@@ -23,9 +23,11 @@ from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.fink.fink_base import (
     FinkBaseQueryManager,
     FinkAlert,
+)
+from aas2rto.query_managers.fink.fink_portal_client import (
+    FinkZTFPortalClient,
     readstamp,
 )
-from aas2rto.query_managers.fink.fink_portal_client import FinkZTFPortalClient
 from aas2rto.target import Target
 
 logger = getLogger(__name__.split(".")[-1])
