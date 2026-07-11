@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import abc
 import copy
+import gzip
 import itertools
 import json
 import requests
 import time
+from io import BytesIO
 from logging import getLogger
 from typing import Callable
 
@@ -14,13 +16,16 @@ import numpy as np
 import pandas as pd
 
 from astropy import units as u
+from astropy.io import fits
 from astropy.table import Table, vstack
 from astropy.time import Time
+
+# No aas2rto imports: try to keep this standalone
 
 logger = getLogger(__name__.split(".")[-1])
 
 
-class FinkPortalClientError(Exception):  # Try to keep this standalone...
+class FinkPortalClientError(Exception):
     pass
 
 
@@ -36,8 +41,52 @@ class FinkMissingRequiredParametersError(Exception):
     pass
 
 
-def readstamp(self):
-    pass
+def readstamp(
+    stamp: str, return_type: str = "array", gzipped: bool = True, hdu: int = 0
+) -> np.array:
+    """Read the stamp data inside an alert.
+    Modified from Fink's utils:
+    https://github.com/astrolabsoftware/fink-science-portal/blob/master/apps/utils.py#L216 ...
+
+    Parameters
+    ----------
+    stamp: str
+        String containing binary data for the stamp
+    return_type: str
+        Data block of HDU (`array`) or original FITS uncompressed (`FITS`) as file-object.
+        Default is `array`.
+    hdu: int
+        If return_type is not None:
+
+
+    Returns
+    -------
+    data: np.array
+        2D array containing image data (`array`) or FITS file uncompressed as file-object (`FITS`)
+    """
+
+    def extract_stamp(fitsdata):
+        with fits.open(fitsdata, ignore_missing_simple=True) as hdul:
+            if return_type == "array":
+                data = hdul[hdu].data
+            elif return_type == "FITS":
+                data = BytesIO()
+                hdul.writeto(data)
+                data.seek(0)
+        return data
+
+    if not isinstance(stamp, BytesIO):
+        stamp = BytesIO(stamp)
+
+    if gzipped:
+        try:
+            with gzip.open(stamp, "rb") as f:
+                return extract_stamp(BytesIO(f.read()))
+        except gzip.BadGzipFile as e:
+            logger.error(e)
+            return extract_stamp(stamp)
+    else:
+        return extract_stamp(stamp)
 
 
 TABLE_RESPONSE_PROCESSORS = {
@@ -496,8 +545,9 @@ class FinkZTFPortalClient(FinkBasePortalClient):
         """
         return self.query_and_consolidate(self.latests, **kwargs)
 
-    def consolidate_anomaly(self, **kwargs):
-        return self.query_and_consolidate(self.anomaly, **kwargs)
+    # def consolidate_anomaly(self, **kwargs):
+    #    TODO: Need some way to swap the 'startdate' for 'start_date'
+    #    return self.query_and_consolidate(self.anomaly, **kwargs)
 
     def query_lightcurve(
         self, method="post", process=True, fix_keys=True, return_type=None, **payload
@@ -512,7 +562,10 @@ class FinkZTFPortalClient(FinkBasePortalClient):
         )
 
     def query_classifiers(self, **payload):
-        """ZTF classifiers are queried with the `latests` endpoint"""
+        """ZTF classifiers are queried with the `latests` endpoint
+
+        All kwargs are the same as from query_and_consolidate.
+        """
         return self.consolidate_latests(**payload)
 
 

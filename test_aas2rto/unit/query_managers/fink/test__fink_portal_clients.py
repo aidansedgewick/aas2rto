@@ -1,9 +1,14 @@
-import json as json_tools  # parameter of query is 'json'
+import gzip
+import json as jsonlib  # parameter of client is 'json'
 import pytest
+from io import BytesIO
+
+import numpy as np
 
 import pandas as pd
 
 from astropy import units as u
+from astropy.io import fits
 from astropy.table import Table
 from astropy.time import Time
 
@@ -13,6 +18,7 @@ from aas2rto.query_managers.fink.fink_portal_client import (
     FinkLSSTPortalClient,
     FinkPortalClientError,
     fix_dict_keys_inplace,
+    readstamp,
 )
 
 ##===== Some helper functions here =====##
@@ -52,7 +58,7 @@ class MockPostResponse:
         self.status_code = json.pop("status_code", 200)
         self.reason = json.pop("reason", "OK")
         self._data = json.pop("content", {})
-        self.content = json_tools.dumps(self._data)  # use renamed 'json' module...
+        self.content = jsonlib.dumps(self._data)  # use renamed 'json' module...
         self.elapsed = MockElapsed(json.pop("elapsed", 1.0))
         self.payload = json  # whatever remains...
 
@@ -67,30 +73,128 @@ class MockGetResponse:
         self.status_code = params.pop("status_code", 200)
         self.reason = params.pop("reason", "OK")
         self._data = params.pop("content", {})
-        self.content = json_tools.dumps(self._data)  # renamed 'json' module...
+        self.content = jsonlib.dumps(self._data)  # renamed 'json' module...
         self.elapsed = MockElapsed(params.pop("elapsed", 1.0))
         self.payload = params  # whatever remains...
 
     def json(self):
-        return self.content_data
+        return self._data
 
 
 ###===== Pytest fixtures here =====###
 
 
+@pytest.fixture
+def fink_stamp_data():
+    return np.arange(100).reshape(10, 10)
+
+
+@pytest.fixture
+def fink_cutout_array_data():
+    return {
+        "Difference": np.arange(0, 100).reshape(10, 10).tolist(),
+        "Template": np.arange(0, 100).reshape(10, 10).tolist(),
+        "Science": np.arange(0, 100).reshape(10, 10).tolist(),
+    }
+
+
+@pytest.fixture
+def fink_stamp_bytes(fink_stamp_data: np.ndarray) -> bytes:
+
+    buffer = BytesIO()
+    hdul = fits.PrimaryHDU(data=fink_stamp_data)
+    hdul.writeto(buffer)
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def fink_stamp_gzip_bytes(fink_stamp_data: np.ndarray) -> bytes:
+    buffer = BytesIO()
+    hdul = fits.PrimaryHDU(data=fink_stamp_data)
+    with gzip.GzipFile(fileobj=buffer, mode="wb") as gzip_file:
+        hdul.writeto(gzip_file)
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def mock_table_data():
+    return [
+        {"a:col1": 1, "a:col2": 10, "a:col3": 100},
+        {"a:col1": 2, "a:col2": 20, "a:col3": 200},
+    ]
+
+
 @pytest.fixture(autouse=True)
-def patch_requests(monkeypatch: pytest.MonkeyPatch):
-    def mock_post(*args, **kwargs):
-        return MockPostResponse(*args, **kwargs)
+def patch_post_request(
+    monkeypatch: pytest.MonkeyPatch,
+    fink_stamp_data: np.ndarray,
+    mock_table_data: list[dict],
+):
+
+    TABLE_LIKE_ENPOINTS = ["latests", "sources", "objects", "tags"]
+
+    def mock_post(*args, json: dict = None):
+        json = json or {}
+
+        new_content = None
+
+        endpoint = args[0].split("/")[-1]
+        if endpoint == "cutouts":
+            output_format = json.get("output-format")
+            kinds = [json.get("kind")]
+            if kinds[0] == "All":
+                kinds = ["Difference", "Template", "Science"]
+
+            if output_format == "array":
+                new_content = {f"cutout{k}": fink_stamp_data.tolist() for k in kinds}
+            elif output_format == "FITS":
+                raise NotImplementedError("Write this test...")
+        elif endpoint in TABLE_LIKE_ENPOINTS:
+            print("we are about to return table-like")
+            new_content = mock_table_data
+        else:
+            print(f"we are not replacing content with endpoint {endpoint}")
+
+        provided_content = json.get("content")
+        if provided_content and new_content:
+            raise ValueError("Can't overwrite provided content and new content!")
+        json["content"] = new_content
+
+        return MockPostResponse(*args, json=json)
+
+    monkeypatch.setattr("requests.post", mock_post)
+
+
+@pytest.fixture(autouse=True)
+def patch_get_request(monkeypatch: pytest.MonkeyPatch):
 
     def mock_get(*args, **kwargs):
         return MockGetResponse(*args, **kwargs)
 
-    monkeypatch.setattr("requests.post", mock_post)
     monkeypatch.setattr("requests.get", mock_get)
 
 
 ###===== Test helper functions here =====###
+
+
+class Test__Readstamp:
+    def test__readstamp(self, fink_stamp_gzip_bytes: bytes):
+        # Act
+        recovered = readstamp(fink_stamp_gzip_bytes, gzipped=True)
+        # gzipped is True BY DEFAULT - but explict is helpful reminder here...
+
+        # Assert
+        assert isinstance(recovered, np.ndarray)
+
+        assert recovered.shape == (10, 10)
+
+    def test__readstamp_gzipped(self, fink_stamp_bytes: bytes):
+        # Act
+        recovered = readstamp(fink_stamp_bytes, gzipped=False)
+
+        # Assert
+        assert isinstance(recovered, np.ndarray)
+        assert recovered.shape == (10, 10)
 
 
 class Test__ExamplePortalClient:
@@ -138,11 +242,11 @@ class Test__ExamplePortalClient:
 class Test__PortalClientsInit:
     def test__ztf_query_init(self):
         # Act
-        q = FinkZTFPortalClient()
+        cli = FinkZTFPortalClient()
 
     def test__lsst_query_init(self):
         # Act
-        q = FinkLSSTPortalClient()
+        cli = FinkLSSTPortalClient()
 
 
 class Test__HelperFunctions:
@@ -161,47 +265,50 @@ class Test__HelperFunctions:
         kwargs = {"key01": 1.0, "key02_": 1.0, "key03__": 1.0}
 
         # Act
-        fixed = FinkCoolPortalClient().process_kwargs(**kwargs)
+        fixed = FinkCoolPortalClient.process_kwargs(**kwargs)
 
         # Assert
         assert set(fixed.keys()) == set("key01 key02 key03".split())
 
-    def test__process_data(self):
-        # Arrage
-        data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
-
+    def test__process_table_data(self, mock_table_data: list[dict]):
         # Act
-        processed_data = FinkCoolPortalClient().process_table_data(
-            data, return_type="records"
+        processed_data = FinkCoolPortalClient.process_table_data(
+            mock_table_data, return_type="records"
         )
 
         # Assert
         assert isinstance(processed_data, list)
         assert len(processed_data) == 2
         assert isinstance(processed_data[0], dict)
-        assert set(processed_data[0].keys()) == set("key01 key02".split())
+        assert set(processed_data[0].keys()) == set("col1 col2 col3".split())  # fixed
 
-    def test__process_data_pandas(self):
-        # Arrange
-        data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
+    def test__process_table_data_pandas(self, mock_table_data: list[dict]):
 
         # Act
-        df = FinkCoolPortalClient().process_table_data(data, return_type="pandas")
+        df = FinkCoolPortalClient.process_table_data(
+            mock_table_data, return_type="pandas"
+        )
 
         # Assert
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 2
 
-    def test__process_data_astropy(self):
-        # Arrange
-        data = [{"i:key01": 1.0, "i:key02": 10.0}, {"i:key01": 2.0, "i:key02": 20.0}]
-
+    def test__process_table_data_astropy(self, mock_table_data: list[dict]):
         # Act
-        table = FinkCoolPortalClient().process_table_data(data, return_type="astropy")
+        table = FinkCoolPortalClient.process_table_data(
+            mock_table_data, return_type="astropy"
+        )
 
         # Assert
         assert isinstance(table, Table)
         assert len(table) == 2
+
+    def test__process_table_bad_return_type(self, mock_table_data: list[dict]):
+        # Act
+        with pytest.raises(ValueError):
+            table = FinkCoolPortalClient.process_table_data(
+                mock_table_data, return_type="bad_type"
+            )
 
     # def test__process_response(self):
     #     # Arrange
@@ -226,7 +333,7 @@ class Test__HelperFunctions:
     #         processed = FinkCoolPortalClient().process_response(res, return_type="blah")
 
 
-class Test__CommonEndpoints:
+class Test__CutoutsEndpoint:
 
     def test__cutouts(self):
         # Act
@@ -235,6 +342,27 @@ class Test__CommonEndpoints:
         # Assert
         assert isinstance(res, MockPostResponse)
         assert res.args[0].split("/")[-1] == "cutouts"
+
+    def test__raise_with_all_not_array(self):
+        # Act
+        with pytest.raises(ValueError):
+            res = FinkCoolPortalClient().cutouts(
+                {"kind": "All", "output-format": "other"}
+            )
+
+    def test__process_cutout_data_array(self, fink_cutout_array_data: dict):
+        # Act
+        res = FinkCoolPortalClient.process_cutout_data(fink_cutout_array_data, "array")
+
+        # Assert
+        assert isinstance(res, dict)
+        assert set(res.keys()) == set(["Template", "Science", "Difference"])
+        assert res["Difference"].shape == (10, 10)
+        assert res["Science"].shape == (10, 10)
+        assert res["Template"].shape == (10, 10)
+
+
+class Test__CommonEndpoints:
 
     def test__cutouts_bad_kind(self):
         # Act
@@ -333,6 +461,14 @@ class Test__ZTFEndpoints:
     #     # Assert
     #     assert isinstance(res, MockPostResponse)
     #     assert res.args[0].split("/")[-1] == "explorer"
+
+    def test__ssobulk(self):
+        # Act
+        res = FinkZTFPortalClient().ssobulk(process=False)
+
+        # Assert
+        assert isinstance(res, MockPostResponse)
+        assert res.args[0].split("/")[-1] == "ssobulk"
 
     def test__ssocand(self):
         # Act
