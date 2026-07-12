@@ -266,6 +266,7 @@ class DefaultLightcurvePlotter:
             if len(source_data.cutouts) == 0:
                 continue
             break
+
         if len(cutouts) == 0:
             return
 
@@ -309,7 +310,7 @@ class DefaultLightcurvePlotter:
             self.cutouts_added = True  # Do it INSIDE the loop, so marked true after.
 
         cutouts_mjd = cutouts.get("meta", {}).get("mjd", None)
-        cutouts_band = cutouts.get("meta", {}).get("band", "")
+        cutouts_band = cutouts.get("meta", {}).get("band_label", "")
 
         imtext_kwargs = dict(
             transform=cutout_axes[-1].transAxes,

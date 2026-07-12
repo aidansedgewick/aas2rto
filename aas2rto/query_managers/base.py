@@ -416,7 +416,7 @@ class KafkaQueryManager(BaseQueryManager, abc.ABC):
             if not isinstance(target, Target):
                 msg = (
                     f"implementation of {self.__class__}.new_target_from_alert"
-                    " should return Target"
+                    f" should return 'Target' not type {type(target).__name__}"
                 )
                 raise TypeError(msg)
             self.target_lookup.add_target(target)

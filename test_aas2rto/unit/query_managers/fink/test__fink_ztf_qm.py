@@ -51,6 +51,13 @@ def mock_ztf_alert_cutouts(mock_ztf_cutouts: dict):
 
 
 @pytest.fixture
+def mock_ztf_query_cutouts(mock_ztf_cutouts: dict):
+    return {
+        f"{key}_stampData": data["stampData"] for key, data in mock_ztf_cutouts.items()
+    }
+
+
+@pytest.fixture
 def ztf_alert_base(
     fink_alert_extras: dict, mock_ztf_alert_cutouts: dict, t_fixed: Time
 ):
@@ -403,6 +410,26 @@ class Test__ProcessZTFLC:
 
         # Assert
         assert "candid" in lc.columns
+
+
+class Test__ProcessQueriedCutouts:
+    def test__process_cutouts(
+        self,
+        patched_ztf_qm: FinkZTFQueryManager,
+        mock_ztf_query_cutouts: dict[str, np.ndarray],
+    ):
+        # Arrange
+        row_data = {"fid": 1, "jd": "2460000.0"}
+
+        # Act
+        cutouts = patched_ztf_qm.process_queried_cutouts(
+            mock_ztf_query_cutouts, row_data=row_data
+        )
+
+        # Assert
+        exp_keys = ["science", "difference", "template", "meta"]
+        assert set(cutouts.keys()) == set(exp_keys)
+        assert set(cutouts["meta"]) == set(["mjd", "band", "band_label"])
 
 
 class Test__FinkZTFQMInit:

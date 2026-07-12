@@ -30,6 +30,7 @@ from aas2rto.query_managers.fink.fink_portal_client import (
     readstamp,
 )
 from aas2rto.target import Target
+from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
 
 ##===== Some classes to help testing here =====##
@@ -56,6 +57,9 @@ class MockFinkPortalClient:
     api_url = "fink-fake.org"
     target_id_key = "target_id"
     alert_id_key = "alert_id"
+
+    def cutouts(self, *args, **wargs):
+        pass  # Doesn't matter, we patch later.
 
     def lightcurve_endpoint(self, *args, **kwargs):
         """Endpoint is different from survey to survey"""
@@ -117,6 +121,10 @@ class FinkExampleQM(FinkBaseQueryManager):
             target.info_messages.append("alerts integrated!")
             return target
         return None
+
+    def process_queried_cutouts(self, raw_cutouts: None, row_data=None):
+        raw_cutouts["processed"] = True
+        return raw_cutouts
 
     # def load_cutouts_for_alert(self, fink_id: str, alert_id: int):
     #     cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
@@ -205,6 +213,11 @@ def lc_fink(lc_pandas: pd.DataFrame) -> pd.DataFrame:
 
 
 @pytest.fixture
+def td_fink(lc_fink: pd.DataFrame):
+    return TargetData(lightcurve=lc_fink)
+
+
+@pytest.fixture
 def empty_classifier_results() -> pd.DataFrame:
     return pd.DataFrame(columns="target_id obs_id lastdate".split())
 
@@ -232,9 +245,18 @@ def mock_new_classifier_results() -> pd.DataFrame:
 
 
 @pytest.fixture
+def mock_cutout_query_result() -> dict[str, np.ndarray]:
+    return {
+        k: np.random.normal(0, 1, (10, 10))
+        for k in ["science", "template", "difference"]
+    }
+
+
+@pytest.fixture
 def patch_client_endpoints(
     mock_new_classifier_results: dict,
     lc_fink: pd.DataFrame,
+    mock_cutout_query_result: dict[str, np.ndarray],
     monkeypatch: pytest.MonkeyPatch,
 ):
 
@@ -259,12 +281,16 @@ def patch_client_endpoints(
             return mock_new_classifier_results
         return pd.DataFrame(columns="target_id lastdate fink_class".split())
 
+    def mock_cutouts(*args, **kwargs):
+        return mock_cutout_query_result
+
     monkeypatch.setattr(
         MockFinkPortalClient, "lightcurve_endpoint", mock_lightcurve_endpoint
     )
     monkeypatch.setattr(
         MockFinkPortalClient, "classifier_endpoint", mock_classifier_endpoint
     )
+    monkeypatch.setattr(MockFinkPortalClient, "cutouts", mock_cutouts)
 
 
 @pytest.fixture
@@ -1090,9 +1116,38 @@ class Test__IntegrateAlerts:
         assert set(modified_targets) == set(["T01"])
 
 
+class Test__QueryCutouts:
+    def test__query_cutouts(
+        self, patched_qm: FinkBaseQueryManager, td_fink: TargetData
+    ):
+        # Arrange
+        T00 = patched_qm.target_lookup["T00"]
+        T00.target_data["fink_cool"] = td_fink
+        T00.alt_ids["fink_cool"] = "T00"  # no need for "tlookup.update_id_mapping()"
+        patched_qm.config["n_cutouts"] = 2
+
+        # Act
+        success, missing, failed = patched_qm.query_latest_cutouts()
+
+        # Assert
+        exp_alert_ids = [1000_2000_3000_4000 + ii for ii in [4, 5]]
+        assert set(success) == set([f"T00-{alert_id}" for alert_id in exp_alert_ids])
+        assert set(missing) == set()
+        assert set(failed) == set()
+
+        alert_id_04 = 1000_2000_3000_4004
+        alert_path_04 = patched_qm.get_cutouts_filepath("T00", alert_id_04, mkdir=False)
+        assert alert_path_04.exists()
+
+        with open(alert_path_04, "rb") as f:
+            data_04 = pickle.load(f)
+        exp_keys = "science", "template", "difference", "processed"
+        assert set(data_04.keys()) == set(exp_keys)
+
+
 class Test__LoadCutouts:
     def test__load_cutouts(
-        self, patched_qm: FinkBaseQueryManager, lc_pandas: pd.DataFrame
+        self, patched_qm: FinkBaseQueryManager, lc_fink: pd.DataFrame
     ):
         # Arrange
         T00 = patched_qm.target_lookup["T00"]
@@ -1104,8 +1159,8 @@ class Test__LoadCutouts:
         with open(alert02_filepath, "wb+") as f:
             pickle.dump(dict(science=200), f)
 
-        T00_fink_data = T00.get_target_data("fink_cool")
-        T00_fink_data.add_lightcurve(lc_pandas)
+        T00_fink_data: TargetData = T00.get_target_data("fink_cool")
+        T00_fink_data.add_lightcurve(lc_fink)
 
         # Act
         loaded, empty, skipped = patched_qm.load_cutouts()

@@ -157,7 +157,28 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
     @abc.abstractmethod
     def process_fink_lightcurve(self, unprocessed_lc: pd.DataFrame) -> pd.DataFrame:
-        """process_fink_lc(self, unprocessed_lc: pd.DataFrame):"""
+        """process_fink_lc(self, unprocessed_lc: pd.DataFrame):
+
+        Add columns. Dump the lightcurve to a file (see `get_lightcurve_filepath`)
+        """
+
+    @abc.abstractmethod
+    def process_queried_cutouts(
+        self, cutout_data: dict[str, np.ndarray], row_data: dict
+    ):
+        """
+        process_queried_cutouts(cutout_data: dict[str, np.ndarray], row_data:dict)
+
+        Format the cutouts consistently returned from queries consistently (like cutouts)
+        saved from alerts.
+        They should be formatted as a dict with keys 'science', 'difference', 'template'
+        which are an np.ndarray
+
+        Optionally an extra key 'meta': a dict with 'mjd', 'band', and 'band_label'
+        (a nicely formatted str for plotting eg. 'LSST-$i$', 'ATLAS-$o$'.)
+        for
+
+        """
 
     @abc.abstractmethod
     def load_missing_alerts_for_target(self, fink_id: str) -> bool:
@@ -564,16 +585,19 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             finite_alert_id = np.isfinite(fink_data.lightcurve[self.alert_id_key])
             positive_alert_id = fink_data.lightcurve[self.alert_id_key] > 0
             fink_detections = fink_data.lightcurve[finite_alert_id & positive_alert_id]
-            for ii in range(1, self.config["n_cutouts"] + 1):
+
+            n_cutouts = min(self.config["n_cutouts"], len(fink_detections)) + 1
+
+            for ii in range(1, n_cutouts):
                 row = fink_detections.iloc[-ii]
-                alert_id = row[self.alert_id_key]
+                alert_id = str(row[self.alert_id_key])  # Must query with str...
 
                 cutout_filepath = self.get_cutouts_filepath(fink_id, alert_id)
 
                 if not cutout_filepath.exists():
                     payload = {
                         self.target_id_key: fink_id,
-                        self.alert_id_key: alert_id,
+                        self.alert_id_key: alert_id,  # is a string!
                     }
                     try:
                         cutouts = self.portal_client.cutouts(**payload)
@@ -581,9 +605,14 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
                         qtracker.track_failed(f"{fink_id}-{alert_id}")
                         continue
 
-                    with open(cutout_filepath, "rb") as f:
+                    cutouts = self.process_queried_cutouts(
+                        cutouts, row_data=row.to_dict()
+                    )
+
+                    with open(cutout_filepath, "wb+") as f:
                         pickle.dump(cutouts, f)
-                    qtracker.track_success(alert_id)
+                    print(f"dump to {cutout_filepath}")
+                    qtracker.track_success(f"{fink_id}-{alert_id}")
 
         qtracker.log_summary(name=f"{self.name}_cutouts")
         return qtracker.success, qtracker.missing, qtracker.failed
@@ -603,9 +632,8 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             fink_data = target.target_data.get(self.name, None)
             if fink_data is None:
                 continue
-            if fink_data.detections is None:
-                continue
-            if self.alert_id_key not in fink_data.detections:
+
+            if self.alert_id_key not in fink_data.lightcurve:
                 highlight = f"'{self.alert_id_key}' not in {self.name}_data.lightcurve"
                 msg = f"{target_id}: for {self.name} \033[33;1m{highlight}\033[0m"
                 self.logger.warning(msg)

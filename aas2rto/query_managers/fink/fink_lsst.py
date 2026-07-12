@@ -29,6 +29,10 @@ logger = getLogger(__name__.split(".")[-1])
 
 LSST_TARGET_ID_KEY = "diaObjectId"
 LSST_ALERT_ID_KEY = "diaSourceId"
+LSST_BAND_LABEL_LOOKUP = {b: f"LSST-${b}$" for b in "ugrizy"}
+LSST_CUTOUT_LABEL_LOOKUP = {
+    f"cutout{imtype}": imtype.lower() for imtype in FinkLSSTPortalClient.imtypes
+}
 
 EXTRA_FINK_LSST_ALERT_KEYS = ()
 
@@ -80,6 +84,26 @@ class FinkLSSTQueryManager(FinkBaseQueryManager):
         pass
         # There should be no missing alerts in the LC - fink ingests LSST immediately.
 
+    def process_queried_cutouts(
+        self, raw_cutouts: dict[str, np.ndarray], row_data: dict = None
+    ):
+
+        cutouts = {}
+        for key, data in raw_cutouts.items():
+            new_key = LSST_CUTOUT_LABEL_LOOKUP[key]
+            cutouts[new_key] = data
+
+        if row_data is not None:
+            band = row_data["band"]
+            band_label = LSST_BAND_LABEL_LOOKUP[band]
+            mjd = row_data["midpointMjdTai"]
+            meta = {"band": band, "band_label": band_label, "mjd": mjd}
+        else:
+            meta = {}
+
+        cutouts["meta"] = meta
+        return cutouts
+
 
 def process_fink_lsst_alert(
     alert_data: FinkAlert,
@@ -92,7 +116,7 @@ def process_fink_lsst_alert(
     object_data: dict = data["diaObject"]
     alert: dict = data["diaSource"]
 
-    fink_id: int = str(object_data[LSST_TARGET_ID_KEY])
+    fink_id: str = str(object_data[LSST_TARGET_ID_KEY])
     alert_id: int = alert[LSST_ALERT_ID_KEY]
 
     # Now modify the alert dict - diaSourceId (alert_id) is already included
@@ -117,7 +141,9 @@ def process_fink_lsst_alert(
             cutout = readstamp(cutout_data, gzipped=False)
             cutouts[imtype.lower()] = cutout
 
-        cutouts_meta = {"mjd": alert["mjd"], "band": alert["band"]}
+        band = alert["band"]
+        band_label = LSST_BAND_LABEL_LOOKUP.get(band, f"LSST-${band}$")
+        cutouts_meta = {"mjd": alert["mjd"], "band": band, "band_label": band_label}
         if len(cutouts) > 0:
             cutouts["meta"] = cutouts_meta  # Add meta AFTER "cutouts found" check.
             if cutouts_filepath is not None:

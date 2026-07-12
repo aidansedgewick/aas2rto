@@ -48,6 +48,11 @@ def mock_lsst_alert_cutouts(mock_lsst_cutouts: dict):
 
 
 @pytest.fixture
+def mock_lsst_query_cutouts(mock_lsst_cutouts):
+    return mock_lsst_cutouts
+
+
+@pytest.fixture
 def fink_lsst_alert_base(mock_lsst_alert_cutouts: dict, t_fixed: Time):
     return {
         "diaObject": {
@@ -211,6 +216,26 @@ class Test__TargetFromAlert:
 
     def test__target_(self):
         pass
+
+
+class Test__ProcessQueriedCutouts:
+    def test__process_cutouts(
+        self,
+        patched_lsst_qm: FinkLSSTQueryManager,
+        mock_lsst_query_cutouts: dict[str, np.ndarray],
+    ):
+        # Arrange
+        row_data = {"band": "i", "midpointMjdTai": 60000.0}
+
+        # Act
+        cutouts = patched_lsst_qm.process_queried_cutouts(
+            mock_lsst_query_cutouts, row_data=row_data
+        )
+
+        # Assert
+        exp_keys = ["science", "difference", "template", "meta"]
+        assert set(cutouts.keys()) == set(exp_keys)
+        assert set(cutouts["meta"]) == set(["mjd", "band", "band_label"])
 
 
 class Test__ApplyUpdatesFromAlert:

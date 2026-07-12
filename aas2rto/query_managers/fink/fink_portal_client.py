@@ -259,7 +259,7 @@ class FinkBasePortalClient(abc.ABC):
         )
         if process:
             return self.process_cutout_data(
-                response, output_format=output_format, fix_keys=fix_keys
+                response.json(), output_format=output_format, fix_keys=fix_keys
             )
         return response
 
