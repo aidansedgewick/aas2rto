@@ -16,6 +16,7 @@ from aas2rto.query_managers.atlas.atlas_client import AtlasClient
 from aas2rto.query_managers.base import LightcurveQueryManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.utils import QueryTracker
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -71,17 +72,9 @@ class AtlasQueryManager(LightcurveQueryManager):
     required_directories = ("lightcurves",)
 
     def __init__(self, config: dict, target_lookup: TargetLookup, parent_path: Path):
-
-        self.config = self.default_config.copy()
-        self.config.update(config)
+        super().__init__(config, target_lookup, parent_path)
 
         self.process_credentials()  # BEFORE cfg_chk: credentials error raised first.
-        utils.check_unexpected_config_keys(
-            self.config,
-            self.default_config,
-            name="query_managers.atlas",
-            raise_exc=True,
-        )
 
         self.target_lookup = target_lookup
 
@@ -93,7 +86,7 @@ class AtlasQueryManager(LightcurveQueryManager):
                 f"\n    atlas_config should contain a unique project_identifier"
                 f"\n    so that atlas queries aren't deleted on the server by another project."
             )
-            logger.warning(msg)
+            self.logger.warning(msg)
 
         self.submitted_queries = {}
         self.throttled_queries = []
@@ -101,10 +94,6 @@ class AtlasQueryManager(LightcurveQueryManager):
         # Keep track of who stopped new queries...
         self.local_throttled = False  # ...us?
         self.server_throttled = False  # ...or the server?
-
-        self.process_paths(
-            parent_path=parent_path, directories=self.required_directories
-        )
 
     def get_lightcurve_filepath(self, target_id: str, fmt="csv"):
         return self.paths_lookup["lightcurves"] / f"{target_id}.{fmt}"
@@ -127,7 +116,7 @@ class AtlasQueryManager(LightcurveQueryManager):
         if self.token is not None:
             if username is not None or password is not None:
                 msg = f"IGNORING usr '{username}' pwd '***': using provided token"
-                logger.warning(msg)
+                self.logger.warning(msg)
             self.atlas_client = AtlasClient(self.token)
             return
 
@@ -206,10 +195,10 @@ class AtlasQueryManager(LightcurveQueryManager):
                 try:
                     status, lc = self.recover_query_data(target_id, task_url)
                 except requests.exceptions.ReadTimeout as e:
-                    logger.error("Timeout: break")
+                    self.logger.error("Timeout: break")
                     break
             else:
-                logger.info(f"no task_url (key 'url') for {target_id}")
+                self.logger.info(f"no task_url (key 'url') for {target_id}")
 
             if status == AtlasClient.QUERY_SUBMITTED:
                 self.submitted_queries[target_id] = task_url
@@ -225,10 +214,12 @@ class AtlasQueryManager(LightcurveQueryManager):
         if delete_finished_queries:
             self.atlas_client.delete_tasks(finished_task_urls)
 
-        logger.info(f"{len(finished_queries)} finished, {len(ongoing_queries)} ongoing")
+        self.logger.info(
+            f"{len(finished_queries)} finished, {len(ongoing_queries)} ongoing"
+        )
         return finished_queries, ongoing_queries, error_queries
 
-    def select_lightcurves_to_query(self, t_ref: Time = None):
+    def select_lightcurves_to_query(self, t_ref: Time = None) -> list[str]:
         """OVERRIDES superclass's method.
 
         Because ATLAS forced-phot server is more limited, there are more
@@ -288,11 +279,11 @@ class AtlasQueryManager(LightcurveQueryManager):
             f"    {too_faint} with no detections <{faint_limit:.1f}mag\n"
             f"    {too_stale} with no detections <{stale_time:.1f}d ago"
         )
-        logger.info(msg)
+        self.logger.info(msg)
 
         object_series = pd.Series(score_lookup)
         object_series.sort_values(inplace=True, ascending=False)
-        logger.info(f"{len(object_series)} suitable targets")
+        self.logger.info(f"{len(object_series)} suitable targets")
         return object_series.index.to_list()
 
     def submit_query(self, target: Target, t_ref: Time = None):
@@ -302,7 +293,7 @@ class AtlasQueryManager(LightcurveQueryManager):
 
         query_data = self.prepare_query_payload(target, t_ref=t_ref)
         if query_data.get("ra", None) is None or query_data.get("dec", None) is None:
-            logger.warning(
+            self.logger.warning(
                 f"\033[33m{target.target_id} ra/dec is None!\033[0m skip submit."
             )
             return None
@@ -314,8 +305,11 @@ class AtlasQueryManager(LightcurveQueryManager):
         elif res.status_code == AtlasClient.QUERY_THROTTLED:
             self.throttled_queries.append(target.target_id)
         else:
-            msg = f"{target.target_id} query status \033[33;1m{res.status_code}\033[0m: {res.reason}"
-            logger.error(msg)
+            msg = (
+                f"{target.target_id} query status "
+                f"\033[33;1m{res.status_code}\033[0m: {res.reason}"
+            )
+            self.logger.error(msg)
         return res
 
     def get_atlas_query_comment(self, target_id: str) -> str:
@@ -347,16 +341,10 @@ class AtlasQueryManager(LightcurveQueryManager):
         self.server_throttled = False
 
         max_query_time = self.config["max_query_time"]
-
-        start_time = time.perf_counter()
+        # No 'max_failed_queries' here break after ONE failure.
+        qtracker = QueryTracker.start(max_query_time=max_query_time)
         for target_id in target_id_list:
-            query_time = time.perf_counter() - start_time
-            if query_time > max_query_time:
-                msg = (
-                    f"Query time {query_time:.1f}s > max {max_query_time:.1f}s. "
-                    "Break for now."
-                )
-                logger.warning(msg)
+            if not qtracker.safe_to_query():
                 break
 
             if target_id in self.submitted_queries:
@@ -371,7 +359,7 @@ class AtlasQueryManager(LightcurveQueryManager):
             target = self.target_lookup.get(target_id, None)
             if target is None:
                 msg = f"{target_id} target does not exist!"
-                logger.warning(msg)
+                self.logger.warning(msg)
                 warnings.warn(UnknownTargetWarning(msg))
                 continue
 
@@ -386,10 +374,12 @@ class AtlasQueryManager(LightcurveQueryManager):
                     continue
                 query_status = query_response.status_code
             except requests.exceptions.ReadTimeout as e:
-                logger.info(f"break after {target.target_id} query submit ReadTimeout")
+                self.logger.info(
+                    f"break after {target.target_id} query submit ReadTimeout"
+                )
                 break
             except requests.exceptions.ConnectionError as e:
-                logger.error(f"break after {type(e)} for {target.target_id}")
+                self.logger.error(f"break after {type(e)} for {target.target_id}")
                 break
             if query_status == AtlasClient.QUERY_SUBMITTED:
                 submitted.append(target_id)
@@ -397,16 +387,16 @@ class AtlasQueryManager(LightcurveQueryManager):
                 throttled.append(target_id)
                 self.server_throttled = True
                 msg = "\033[33;1mATLAS THROTTLED\033[0m: no more queries for now..."
-                logger.warning(msg)
+                self.logger.warning(msg)
 
         self.throttled_queries.extend(throttled)
-        logger.info(f"{len(submitted)} new submitted, {len(throttled)} throttled")
+        self.logger.info(f"{len(submitted)} new submitted, {len(throttled)} throttled")
         return submitted, throttled
 
     def retry_throttled_queries(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        logger.info(f"retry {len(self.throttled_queries)} throttled queries")
+        self.logger.info(f"retry {len(self.throttled_queries)} throttled queries")
 
         old_throttled_queries = self.throttled_queries
         self.throttled_queries = []
@@ -433,7 +423,7 @@ class AtlasQueryManager(LightcurveQueryManager):
                     break
 
         if lightcurve_filepath is None:
-            logger.debug(f"{target_id} is missing lightcurve")
+            self.logger.debug(f"{target_id} is missing lightcurve")
             return None
         lightcurve = pd.read_csv(lightcurve_filepath)
         if lightcurve.empty:
@@ -467,13 +457,13 @@ class AtlasQueryManager(LightcurveQueryManager):
         if len(renamed) > 0:
             dt = t_end - t_start
             msg = f"rename {len(renamed)} LCs in {dt:.1f}s (skipped {len(skipped)})"
-            logger.info(msg)
+            self.logger.info(msg)
         return renamed, skipped
 
     def perform_all_tasks(self, iteration: int, t_ref: Time = None):
         # Are we in startup?
         if iteration == 0:
-            logger.info("Skip atlas queries on iter0: only load existing")
+            self.logger.info("Skip atlas queries on iter0: only load existing")
             self.load_target_lightcurves(t_ref=t_ref, only_flag_updated=False)
             return
 

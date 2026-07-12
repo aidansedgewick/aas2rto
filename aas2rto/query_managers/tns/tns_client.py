@@ -7,14 +7,14 @@ import zipfile
 from logging import getLogger
 from itertools import chain
 
-logger = getLogger(__name__.split(".")[-1])
-
 import pandas as pd
 
 from astropy import units as u
 from astropy.io.ascii.core import InconsistentTableError
 from astropy.table import Table, vstack
 from astropy.time import Time, TimeDelta
+
+logger = getLogger(__name__.split(".")[-1])
 
 
 class TNSClientWarning(UserWarning):

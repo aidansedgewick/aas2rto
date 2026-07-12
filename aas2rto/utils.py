@@ -4,6 +4,7 @@ import shutil
 import time
 import warnings
 from logging import getLogger
+from typing import Any
 
 from pathlib import Path
 
@@ -103,38 +104,91 @@ def print_header(s: str) -> None:
     print(fmt_s)
 
 
-def check_safe_to_query(
-    t_start: float = None,
-    failed_queries: int = None,
-    max_query_time: float = 60.0,
-    max_failed_queries: int = 10,
-):
+class QueryTracker:
     """
-    Helper method - check if there have been to many failed queries, or if we're
-    querying for too long this loop.
+    Convenience class to track how query successes and failures, and to check/quit
+    if there have been too many failed queries, or querying is taking too long.
 
-    Parameters
-    ----------
-    t_start: float, optional
-        if queries take longer than self.config["max_query_time"], return False
-        use the result of time.perf_counter()
-    failed_queries: int
-        if failed queries is
     """
 
-    # Is it sensible to conitnue with queries, or is everything failing?
-    if failed_queries is not None:
-        if failed_queries >= max_failed_queries:
-            logger.warning(f"Too many failed queries ({failed_queries})")
+    @classmethod
+    def start(cls, max_query_time: float = np.inf, max_failed_queries: int = np.inf):
+        return cls(time.perf_counter(), max_query_time, max_failed_queries)
+
+    def __init__(self, t_start: float, max_query_time: float, max_failed_queries: int):
+        self.t_start = t_start
+        self.max_query_time = max_query_time
+        self.max_failed_queries = max_failed_queries
+
+        self.n_failed_queries = 0
+        self.n_success_queries = 0
+        self.failed = []
+        self.missing = []
+        self.success = []
+
+    def track_failed(self, failed: Any):
+        if isinstance(failed, list) or isinstance(failed, tuple):
+            self.failed.extend(failed)
+        else:
+            self.failed.append(failed)
+        self.n_failed_queries = self.n_failed_queries + 1
+
+    def track_missing(self, missing: Any):
+        if isinstance(missing, list) or isinstance(missing, tuple):
+            self.missing.extend(missing)
+        else:
+            self.missing.append(missing)
+
+    def track_success(self, success: Any):
+        if isinstance(success, list) or isinstance(success, tuple):
+            self.success.extend(success)
+        else:
+            self.success.append(success)
+        self.n_success_queries = self.n_success_queries + 1
+
+    @property
+    def n_failed(self) -> int:
+        return len(self.failed)
+
+    @property
+    def n_missing(self) -> int:
+        return len(self.missing)
+
+    @property
+    def n_success(self) -> int:
+        return len(self.success)
+
+    def safe_to_query(self):
+        # Is it sensible to conitnue with queries, or is everything failing?
+        if self.n_failed_queries >= self.max_failed_queries:
+            logger.warning(f"Too many failed queries ({self.n_failed})")
             return False
 
-    if t_start is not None:
-        t_elapsed = time.perf_counter() - t_start
-        if t_elapsed > max_query_time:
-            msg = f"queries taking too long ({t_elapsed:.1f}s > max {max_query_time:.1f}s)"
+        t_elapsed = time.perf_counter() - self.t_start
+        if t_elapsed > self.max_query_time:
+            msg = (
+                f"Queries taking too long "
+                f"({t_elapsed:.1f}s > max {self.max_query_time:.1f}s)"
+            )
             logger.warning(msg)
             return False
-    return True
+        return True
+
+    def log_summary(self, name: str = ""):
+        msg = (
+            f"{name} query summary:\n"
+            f"    {self.n_success_queries} succesful queries ({self.n_success} objects)"
+        )
+        if self.n_missing > 0:
+            msg = msg + f"\n    {self.n_missing} objects missing/returned no data"
+
+        if self.n_failed_queries > 0:
+            fail_msg = (
+                f"\n    {self.n_failed_queries} failed queries "
+                f"({self.n_failed} objects)"
+            )
+            msg = msg + fail_msg
+        logger.info(msg)
 
 
 def check_config_keys(

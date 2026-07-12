@@ -332,18 +332,18 @@ def lsst_id0():
 @pytest.fixture
 def lsst_rows(lsst_id0: int, t_fixed: Time):
     return [
-        [lsst_id0 + 0, t_fixed.mjd + 0.0, 1000.0, 100.0, "g"],  # ~23.9+-0.1
-        [lsst_id0 + 1, t_fixed.mjd + 1.0, 2000.0, 200.0, "r"],  # ~23.1+-0.1
-        [lsst_id0 + 2, t_fixed.mjd + 2.0, 5000.0, 500.0, "i"],  # ~22.2+-0.1
-        [lsst_id0 + 3, t_fixed.mjd + 3.0, 10000.0, 100.0, "g"],  # ~21.4+-0.01
-        [lsst_id0 + 4, t_fixed.mjd + 4.0, 20000.0, 200.0, "r"],  # ~20.6+-0.01
-        [lsst_id0 + 5, t_fixed.mjd + 5.0, 50000.0, 500.0, "i"],  # ~19.7+-0.01
+        [lsst_id0 + 0, t_fixed.mjd + 0.0, 1000.0, 100.0, "g", 0.5],  # ~23.9+-0.1
+        [lsst_id0 + 1, t_fixed.mjd + 1.0, 2000.0, 200.0, "r", 0.5],  # ~23.1+-0.1
+        [lsst_id0 + 2, t_fixed.mjd + 2.0, 5000.0, 500.0, "i", 0.8],  # ~22.2+-0.1
+        [lsst_id0 + 3, t_fixed.mjd + 3.0, 10000.0, 100.0, "g", 0.8],  # ~21.4+-0.01
+        [lsst_id0 + 4, t_fixed.mjd + 4.0, 20000.0, 200.0, "r", 0.99],  # ~20.6+-0.01
+        [lsst_id0 + 5, t_fixed.mjd + 5.0, 50000.0, 500.0, "i", 0.99],  # ~19.7+-0.01
     ]
 
 
 @pytest.fixture
 def lsst_lc(lsst_rows: list[list]):
-    col_names = "diaSourceId midpointMjdTai psfFlux psfFluxErr band".split()
+    col_names = "diaSourceId midpointMjdTai psfFlux psfFluxErr band reliability".split()
     return pd.DataFrame(lsst_rows, columns=col_names)
 
 
@@ -672,14 +672,22 @@ def msg_mgr(
 
 
 @pytest.fixture
-def fink_kafka_config():
+def fink_kafka_base_config():
     return {
         "username": "user",
         "group.id": 1234,
         "bootstrap.servers": "http://fink.blah.org",
+    }
+
+
+@pytest.fixture
+def fink_kafka_config(fink_kafka_base_config: dict):
+    extra_config = {
         "topics": ["cool_sne"],
         "survey": "cool_survey",
     }
+    fink_kafka_base_config.update(**extra_config)
+    return fink_kafka_base_config
 
 
 @pytest.fixture
@@ -758,9 +766,10 @@ def yse_explorer_queries(yse_query_name: str):
     return {
         yse_query_name: {
             "query_id": 101,
-            "target_id_col": "name",
-            "coordinate_cols": ("ra", "dec"),
-            "comparison_col": "n_det",
+            "target_id_key": "name",
+            "ra_key": "ra",
+            "dec_key": "dec",
+            "comparison_key": "n_det",
         }
     }
 

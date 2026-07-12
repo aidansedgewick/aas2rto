@@ -42,20 +42,15 @@ class TNSQueryManager(BaseQueryManager):
         "delta_lookback": "how many DAYS of deltas to search for? max available is 14",
     }
 
-    expected_credential_keys = ("user", "uid")
-    required_paths = ("query_results",)
+    required_credential_keys = ("user", "uid")
+    required_directories = ("query_results",)
 
     def __init__(self, config: dict, target_lookup: TargetLookup, parent_path: Path):
-        self.config = copy.deepcopy(self.default_config)
-        self.config.update(config)
+        # Combine default + user config, set target_lookup + logger, process paths
+        super().__init__(config, target_lookup, parent_path)
 
         self.process_credentials()  # sets self.tns_client
-        utils.check_unexpected_config_keys(
-            self.config, self.default_config, "query_managers.tns", raise_exc=True
-        )
         self.apply_units_to_config()
-
-        self.target_lookup = target_lookup
 
         self.tns_results = TNSClient.get_empty_delta_results(return_type="pandas")
         self.daily_delta_results = TNSClient.get_empty_delta_results(
@@ -64,9 +59,6 @@ class TNSQueryManager(BaseQueryManager):
         self.hourly_delta_results = TNSClient.get_empty_delta_results(
             return_type="pandas"
         )
-
-        # Create paths_lookup
-        self.process_paths(parent_path=parent_path, directories=self.required_paths)
 
     def apply_units_to_config(self):
         self.config["sep_limit"] = self.config["sep_limit"] * u.arcsec
@@ -81,7 +73,7 @@ class TNSQueryManager(BaseQueryManager):
 
         utils.check_missing_config_keys(
             credential_config,
-            self.expected_credential_keys,
+            self.required_credential_keys,
             name="query_managers.tns.credentials",
             raise_exc=True,
             exc_class=TNSCredentialError,
@@ -113,11 +105,11 @@ class TNSQueryManager(BaseQueryManager):
 
         df_list = []
         for filepath in existing_results:
-            logger.info(f"load {filepath.stem}")
+            self.logger.info(f"load {filepath.stem}")
             try:
                 df = pd.read_csv(filepath)
             except pd.errors.EmptyDataError:
-                logger.info(f"cannot read {filepath.stem}")
+                self.logger.info(f"cannot read {filepath.stem}")
                 continue
             if not df.empty:
                 df_list.append(df)
@@ -129,7 +121,7 @@ class TNSQueryManager(BaseQueryManager):
             )
             tns_results.drop_duplicates("name", keep="last", inplace=True)
         else:
-            logger.info("no existing TNS information")
+            self.logger.info("no existing TNS information")
             tns_results = TNSClient.get_empty_delta_results(return_type="pandas")
         self.tns_results = tns_results
 
@@ -144,11 +136,11 @@ class TNSQueryManager(BaseQueryManager):
             delta_filepath = self.get_daily_delta_filepath(t_delta)
             if delta_filepath.exists():
                 continue
-            logger.info(f"query for {delta_filepath.name}")
+            self.logger.info(f"query for {delta_filepath.name}")
             df = self.tns_client.get_tns_daily_delta(t_delta)
             if df is not None:
                 if df.empty:
-                    logger.warning(f"{delta_filepath.name} is empty")
+                    self.logger.warning(f"{delta_filepath.name} is empty")
                 df.to_csv(delta_filepath, index=False)
                 new_deltas.append(df)
 
@@ -172,13 +164,15 @@ class TNSQueryManager(BaseQueryManager):
         for filepath in existing_hourly_deltas:
             if relevant_stem in filepath.name:
                 continue  # it's still relevant
-            logger.info(f"unlink {filepath.name}")
+            self.logger.info(f"unlink {filepath.name}")
             filepath.unlink()  # Otherwise it's old, and we'll have the daily one.
 
         remaining_hourly_deltas = sorted(
             list(self.paths_lookup["query_results"].glob(glob_patten))
         )
-        logger.info(f"there are {len(remaining_hourly_deltas)} hourly deltas already")
+        self.logger.info(
+            f"there are {len(remaining_hourly_deltas)} hourly deltas already"
+        )
 
         ref_dt = t_ref.datetime
         curr_hour = ref_dt.hour
@@ -190,7 +184,7 @@ class TNSQueryManager(BaseQueryManager):
             delta_filepath = self.get_hourly_delta_filepath(t_delta)
             if delta_filepath.exists():
                 continue
-            logger.info(f"query for {delta_filepath}")
+            self.logger.info(f"query for {delta_filepath}")
             df = self.tns_client.get_tns_hourly_delta(hour)
             if df is None:
                 continue
@@ -223,7 +217,7 @@ class TNSQueryManager(BaseQueryManager):
         to_combine = [df for df in to_combine if not df.empty]
         if len(to_combine) == 0:
             # Nothing to combine!
-            logger.info("no results to combine!")
+            self.logger.info("no results to combine!")
             self.tns_results = TNSClient.get_empty_delta_results(return_type="pandas")
             return
 
@@ -251,7 +245,7 @@ class TNSQueryManager(BaseQueryManager):
             seplimit = self.config["sep_limit"]
 
         if results is None or results.empty:
-            logger.info("no results to match!")
+            self.logger.info("no results to match!")
             return
 
         tns_candidate_coords = SkyCoord(
@@ -264,21 +258,21 @@ class TNSQueryManager(BaseQueryManager):
             target_candidate_coords.append(target.coord)
             target_candidate_target_ids.append(target_id)
         if len(target_candidate_coords) == 0:
-            logger.info("no targets in target_lookup to match!")
+            self.logger.info("no targets in target_lookup to match!")
             return
         msg = (
             f"Match {len(results)} TNS rows "
             f"against {len(target_candidate_coords)} targets "
             f"(limit <{seplimit})"
         )
-        logger.info(msg)
+        self.logger.info(msg)
 
         target_candidate_coords = SkyCoord(target_candidate_coords)
 
         target_match_idx, tns_match_idx, skysep, _ = search_around_sky(
             target_candidate_coords, tns_candidate_coords, seplimit
         )
-        logger.info(f"coordinate match for {len(target_match_idx)} TNS objects")
+        self.logger.info(f"coordinate match for {len(target_match_idx)} TNS objects")
 
         for ii, (idx1, idx2, skysep) in enumerate(
             zip(target_match_idx, tns_match_idx, skysep)
@@ -299,8 +293,11 @@ class TNSQueryManager(BaseQueryManager):
 
         tns_name = tns_parameters["name"]
         if curr_tns_name is not None and tns_name != curr_tns_name:
-            msg = f"{target_id} new tns match {tns_name} does not match old tns_match {curr_tns_name}"
-            logger.warning(msg)
+            msg = (
+                f"{target_id} new tns match {tns_name} "
+                f"does not match old tns_match {curr_tns_name}"
+            )
+            self.logger.warning(msg)
 
         # Who refers to targets by TNS name only?
         tns_alt_keys = ["tns", "yse"]
@@ -310,7 +307,7 @@ class TNSQueryManager(BaseQueryManager):
             "ZTF": "ztf",
             "ATLAS": "atlas",
             "PS": "panstarrs",
-            "LSST": "lsst",
+            "LSST": "iau_lsst",
         }
 
         for alt_key in tns_alt_keys:
@@ -328,7 +325,7 @@ class TNSQueryManager(BaseQueryManager):
                             f"{target_id}/{tns_name}: new {alt_key} id "
                             f"'{name}' does not match existing '{curr_alt_id}'"
                         )
-                        logger.warning(msg)
+                        self.logger.warning(msg)
                     target.alt_ids[alt_key] = name
 
         existing_parameters = tns_data.parameters or {}

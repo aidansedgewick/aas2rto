@@ -24,16 +24,18 @@ from aas2rto.query_managers.fink.fink_base import (
     FinkAlert,
     FinkBaseQueryManager,
     updates_from_classifier_queries,
+)
+from aas2rto.query_managers.fink.fink_portal_client import (
+    FinkBasePortalClient,
     readstamp,
 )
-from aas2rto.query_managers.fink.fink_portal_client import FinkBasePortalClient
 from aas2rto.target import Target
+from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
-
 
 ##===== Some classes to help testing here =====##
 
-AlertStream = NewType("AlertStream", Iterator[FinkAlert])
+FinkAlertStream = NewType("FinkAlertStream", Iterator[FinkAlert])
 
 
 def target_from_mock_alert(processed_alert: dict, t_ref: Time = None):
@@ -55,6 +57,9 @@ class MockFinkPortalClient:
     api_url = "fink-fake.org"
     target_id_key = "target_id"
     alert_id_key = "alert_id"
+
+    def cutouts(self, *args, **wargs):
+        pass  # Doesn't matter, we patch later.
 
     def lightcurve_endpoint(self, *args, **kwargs):
         """Endpoint is different from survey to survey"""
@@ -117,13 +122,17 @@ class FinkExampleQM(FinkBaseQueryManager):
             return target
         return None
 
-    def load_cutouts_for_alert(self, fink_id: str, alert_id: int):
-        cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
-        if cutouts_filepath.exists():
-            with open(cutouts_filepath, "rb") as f:
-                cutouts = pickle.load(f)
-            return cutouts
-        return None
+    def process_queried_cutouts(self, raw_cutouts: None, row_data=None):
+        raw_cutouts["processed"] = True
+        return raw_cutouts
+
+    # def load_cutouts_for_alert(self, fink_id: str, alert_id: int):
+    #     cutouts_filepath = self.get_cutouts_filepath(fink_id, alert_id, mkdir=False)
+    #     if cutouts_filepath.exists():
+    #         with open(cutouts_filepath, "rb") as f:
+    #             cutouts = pickle.load(f)
+    #         return cutouts
+    #     return None
 
 
 class BadPortalClient:
@@ -164,24 +173,48 @@ def mock_alert_list(alert_base: dict, t_fixed: Time) -> list[FinkAlert]:
 
 
 @pytest.fixture
-def mock_alert_stream(mock_alert_list: list[FinkAlert]) -> AlertStream:
+def mock_alert_stream(mock_alert_list: list[FinkAlert]) -> FinkAlertStream:
     """return a Generator, so that an item is returned every time next() is called"""
 
     def alert_stream():
         for alert in mock_alert_list:
             yield alert
 
-    return alert_stream()
+    return alert_stream()  # call with () ie. return already primed generator.
+
+
+@pytest.fixture
+def patch_consumer_and_poll_method(
+    mock_alert_stream: FinkAlertStream, monkeypatch: pytest.MonkeyPatch
+):
+
+    def mock_poll(self, *args, **kwargs):
+        if self._topics[0] == "cool_sne":
+            try:
+                return next(mock_alert_stream)
+            except StopIteration as e:
+                return (None, None, None)
+        else:
+            return (None, None, None)
+
+    # Mock CONFLUENT consumer, so that real FINK consumer __init__ is called...
+    monkeypatch.setattr("confluent_kafka.Consumer", MockConfluentConsumer)
+    monkeypatch.setattr("fink_client.consumer.AlertConsumer.poll", mock_poll)
 
 
 @pytest.fixture
 def lc_fink(lc_pandas: pd.DataFrame) -> pd.DataFrame:
     lc = lc_pandas.copy()
     lc["jd"] = Time(lc["mjd"], format="mjd").jd
-    lc.drop("mjd", axis=1, inplace=True)
+    # lc.drop("mjd", axis=1, inplace=True)
     lc.rename({"candid": "obs_id"}, axis=1, inplace=True)
     lc.loc[:, "target_id"] = "T00"
     return lc
+
+
+@pytest.fixture
+def td_fink(lc_fink: pd.DataFrame):
+    return TargetData(lightcurve=lc_fink)
 
 
 @pytest.fixture
@@ -212,28 +245,20 @@ def mock_new_classifier_results() -> pd.DataFrame:
 
 
 @pytest.fixture
-def patched_qm(
-    fink_config: dict,
-    tlookup: TargetLookup,
-    tmp_path: Path,
-    mock_alert_stream: AlertStream,
-    lc_fink: pd.DataFrame,
+def mock_cutout_query_result() -> dict[str, np.ndarray]:
+    return {
+        k: np.random.normal(0, 1, (10, 10))
+        for k in ["science", "template", "difference"]
+    }
+
+
+@pytest.fixture
+def patch_client_endpoints(
     mock_new_classifier_results: dict,
+    lc_fink: pd.DataFrame,
+    mock_cutout_query_result: dict[str, np.ndarray],
     monkeypatch: pytest.MonkeyPatch,
 ):
-
-    def mock_poll(self, *args, **kwargs):
-        if self._topics[0] == "cool_sne":
-            try:
-                return next(mock_alert_stream)
-            except StopIteration as e:
-                return (None, None, None)
-        else:
-            return (None, None, None)
-
-    # Mock CONFLUENT consumer, so that FINK consumer __init__ is called...
-    monkeypatch.setattr("confluent_kafka.Consumer", MockConfluentConsumer)
-    monkeypatch.setattr("fink_client.consumer.AlertConsumer.poll", mock_poll)
 
     def mock_lightcurve_endpoint(*args, **kwargs):
         target_id = kwargs.get("target_id", None)
@@ -256,16 +281,30 @@ def patched_qm(
             return mock_new_classifier_results
         return pd.DataFrame(columns="target_id lastdate fink_class".split())
 
+    def mock_cutouts(*args, **kwargs):
+        return mock_cutout_query_result
+
+    monkeypatch.setattr(
+        MockFinkPortalClient, "lightcurve_endpoint", mock_lightcurve_endpoint
+    )
+    monkeypatch.setattr(
+        MockFinkPortalClient, "classifier_endpoint", mock_classifier_endpoint
+    )
+    monkeypatch.setattr(MockFinkPortalClient, "cutouts", mock_cutouts)
+
+
+@pytest.fixture
+def patched_qm(
+    fink_config: dict,
+    tlookup: TargetLookup,
+    tmp_path: Path,
+    patch_consumer_and_poll_method: None,
+    patch_client_endpoints: None,
+):
+
     qm = FinkExampleQM(fink_config, tlookup, parent_path=tmp_path)
     qm.target_lookup["T00"].alt_ids["cool_survey"] = "T00"
     qm.target_lookup["T01"].alt_ids["cool_survey"] = "T01"
-
-    monkeypatch.setattr(
-        qm.portal_client, "lightcurve_endpoint", mock_lightcurve_endpoint
-    )
-    monkeypatch.setattr(
-        qm.portal_client, "classifier_endpoint", mock_classifier_endpoint
-    )
     return qm
 
 
@@ -303,7 +342,7 @@ class Test__HelperFunctions:
         assert isinstance(target, Target)
         assert target.target_id == "T101"
 
-    def test__mock_alert_stream(self, mock_alert_stream: AlertStream):
+    def test__mock_alert_stream(self, mock_alert_stream: FinkAlertStream):
         # Act
         alert = next(mock_alert_stream)
 
@@ -315,7 +354,7 @@ class Test__HelperFunctions:
         assert alert[1]["target_id"] == "T101"  # etc.
         assert alert[1]["obs_id"] == 1000
 
-    def test__mock_poll(self, mock_alert_stream: AlertStream):
+    def test__mock_poll(self, mock_alert_stream: FinkAlertStream):
         """Do I understand how python closures work?"""
 
         # Arrange
@@ -330,16 +369,28 @@ class Test__HelperFunctions:
         assert len(alert) == 3
         assert alert[1]["target_id"] == "T101"  # etc.
 
-    def test__consumer_is_patched(self, patched_qm: FinkBaseQueryManager):
+    def test__patched_consumer_polls(
+        self, patch_consumer_and_poll_method: None, fink_kafka_base_config: dict
+    ):
         # Act
         with AlertConsumer(
-            ["cool_sne"], patched_qm.kafka_config, "cool_survey"
+            ["cool_sne"], fink_kafka_base_config, "cool_survey"
         ) as consumer:
             alert_data = consumer.poll()
 
         # Assert
         assert isinstance(alert_data, tuple)
         assert alert_data[0] == "cool_sne"
+
+    def test__mock_client_is_patched(self, patch_client_endpoints: None):
+        # Arrange
+        client = MockFinkPortalClient()
+
+        # Act
+        lc = client.lightcurve_endpoint(target_id="T00")
+
+        # Assert
+        assert len(lc) == 14  # etc.
 
     def test__fq_objects_is_patched(self, patched_qm: FinkBaseQueryManager):
         # Act
@@ -680,7 +731,7 @@ class Test__ApplyUpdateMessages:
         assert set(patched_qm.target_lookup["T00"].info_messages) == set()
 
         # Act
-        patched_qm.update_info_messages([basic_alert])
+        patched_qm.add_messages_from_alerts([basic_alert])
 
         # Assert
         assert patched_qm.target_lookup["T00"].updated
@@ -1065,9 +1116,38 @@ class Test__IntegrateAlerts:
         assert set(modified_targets) == set(["T01"])
 
 
+class Test__QueryCutouts:
+    def test__query_cutouts(
+        self, patched_qm: FinkBaseQueryManager, td_fink: TargetData
+    ):
+        # Arrange
+        T00 = patched_qm.target_lookup["T00"]
+        T00.target_data["fink_cool"] = td_fink
+        T00.alt_ids["fink_cool"] = "T00"  # no need for "tlookup.update_id_mapping()"
+        patched_qm.config["n_cutouts"] = 2
+
+        # Act
+        success, missing, failed = patched_qm.query_latest_cutouts()
+
+        # Assert
+        exp_alert_ids = [1000_2000_3000_4000 + ii for ii in [4, 5]]
+        assert set(success) == set([f"T00-{alert_id}" for alert_id in exp_alert_ids])
+        assert set(missing) == set()
+        assert set(failed) == set()
+
+        alert_id_04 = 1000_2000_3000_4004
+        alert_path_04 = patched_qm.get_cutouts_filepath("T00", alert_id_04, mkdir=False)
+        assert alert_path_04.exists()
+
+        with open(alert_path_04, "rb") as f:
+            data_04 = pickle.load(f)
+        exp_keys = "science", "template", "difference", "processed"
+        assert set(data_04.keys()) == set(exp_keys)
+
+
 class Test__LoadCutouts:
     def test__load_cutouts(
-        self, patched_qm: FinkBaseQueryManager, lc_pandas: pd.DataFrame
+        self, patched_qm: FinkBaseQueryManager, lc_fink: pd.DataFrame
     ):
         # Arrange
         T00 = patched_qm.target_lookup["T00"]
@@ -1079,8 +1159,8 @@ class Test__LoadCutouts:
         with open(alert02_filepath, "wb+") as f:
             pickle.dump(dict(science=200), f)
 
-        T00_fink_data = T00.get_target_data("fink_cool")
-        T00_fink_data.add_lightcurve(lc_pandas)
+        T00_fink_data: TargetData = T00.get_target_data("fink_cool")
+        T00_fink_data.add_lightcurve(lc_fink)
 
         # Act
         loaded, empty, skipped = patched_qm.load_cutouts()
@@ -1154,26 +1234,3 @@ class Test__PerformAllTasks:
         # Assert
         exp_targets = "T00 T01 T101 T201 T202 T203".split()
         assert set(patched_qm.target_lookup.keys()) == set(exp_targets)
-
-
-class Test__Readstamp:
-    def test__readstamp(self, fink_stamp_bytes: bytes):
-        # Act
-        recovered = readstamp(fink_stamp_bytes, gzipped=True)
-        # gzipped is True BY DEFAULT - but explict is helpful reminder here...
-
-        # Assert
-        assert isinstance(recovered, np.ndarray)
-
-        assert recovered.shape == (10, 10)
-
-    def test__readstamp_gzipped(self, fink_stamp_bytes: bytes):
-        # Arrange
-        decompressed_stamp = gzip.decompress(fink_stamp_bytes)
-
-        # Act
-        recovered = readstamp(decompressed_stamp, gzipped=False)
-
-        # Assert
-        assert isinstance(recovered, np.ndarray)
-        assert recovered.shape == (10, 10)

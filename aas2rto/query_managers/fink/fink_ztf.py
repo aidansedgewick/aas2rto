@@ -23,9 +23,11 @@ from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.fink.fink_base import (
     FinkBaseQueryManager,
     FinkAlert,
+)
+from aas2rto.query_managers.fink.fink_portal_client import (
+    FinkZTFPortalClient,
     readstamp,
 )
-from aas2rto.query_managers.fink.fink_portal_client import FinkZTFPortalClient
 from aas2rto.target import Target
 
 logger = getLogger(__name__.split(".")[-1])
@@ -33,7 +35,11 @@ logger = getLogger(__name__.split(".")[-1])
 ZTF_TARGET_ID_KEY = "objectId"
 ZTF_ALERT_ID_KEY = "candid"
 
-ZTF_BAND_LOOKUP = {0: "ZTF-g", 1: "ZTF-r", 2: "ZTF-i"}
+ZTF_CUTOUT_LABEL_LOOKUP = {
+    f"cutout{imtype}_stampData": imtype.lower()
+    for imtype in FinkZTFPortalClient.imtypes
+}
+ZTF_BAND_LABEL_LOOKUP = {0: "ZTF-$g$", 1: "ZTF-$r$", 2: "ZTF-$i$"}
 
 EXTRA_FINK_ZTF_ALERT_KEYS = (
     # "timestamp", # doesn't exist anymore?!
@@ -143,6 +149,26 @@ class FinkZTFQueryManager(FinkBaseQueryManager):
             cutouts = pickle.load(f)
         return cutouts
 
+    def process_queried_cutouts(
+        self, raw_cutouts: dict[str, np.ndarray], row_data: dict = None
+    ):
+
+        cutouts = {}
+        for key, data in raw_cutouts.items():
+            new_key = ZTF_CUTOUT_LABEL_LOOKUP[key]
+            cutouts[new_key] = data
+
+        if row_data is not None:
+            band = row_data["fid"]
+            band_label = ZTF_BAND_LABEL_LOOKUP[band]
+            mjd = Time(row_data["jd"], format="jd").mjd
+            meta = {"band": band, "band_label": band_label, "mjd": mjd}
+        else:
+            meta = {}
+
+        cutouts["meta"] = meta
+        return cutouts
+
 
 def process_fink_ztf_alert(
     alert_data: tuple[str, dict, str],
@@ -190,10 +216,11 @@ def process_fink_ztf_alert(
                 continue
             cutout = readstamp(cutout_data, return_type="array")
             cutouts[imtype.lower()] = cutout
+        print(f"alert saving with {cutouts.keys()}")
 
-        fid = alert["fid"]
-        band = ZTF_BAND_LOOKUP.get(fid, "")
-        cutouts_meta = {"mjd": alert["mjd"], "band": band}
+        band = alert["fid"]
+        band_label = ZTF_BAND_LABEL_LOOKUP.get(band, f"ZTF-{band}")
+        cutouts_meta = {"mjd": alert["mjd"], "band": band, "band_label": band_label}
         if len(cutouts) > 0:
             cutouts["meta"] = cutouts_meta
             with open(cutouts_filepath, "wb+") as f:

@@ -103,6 +103,13 @@ class CoolKafkaQM(KafkaQueryManager):
         coord = SkyCoord(processed_alert["ra"], processed_alert["dec"], unit=u.deg)
         return Target(target_id, coord)
 
+    def apply_updates_from_alert(self, processed_alert: dict, t_ref: Time = None):
+        fink_id = processed_alert["target_id"]
+        alert_id = processed_alert["obs_id"]
+        target = self.target_lookup[fink_id]
+        target.updated = True
+        target.info_messages.append(f"{fink_id} alert with alert_id {alert_id}")
+
     def perform_all_tasks(self, iteration: int, t_ref: Time = None):
         pass
 

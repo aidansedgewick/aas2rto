@@ -1,6 +1,8 @@
 import copy
+import gzip
 import pickle
 import pytest
+from io import BytesIO
 from pathlib import Path
 from typing import NoReturn
 
@@ -9,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from astropy import units as u
+from astropy.io import fits
 from astropy.time import Time
 
 from aas2rto.query_managers.fink.fink_base import FinkBaseQueryManager, FinkAlert
@@ -22,6 +25,56 @@ from aas2rto.query_managers.fink.fink_ztf import (
 )
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+
+
+@pytest.fixture
+def mock_ztf_cutouts():
+    return dict(
+        cutoutScience=dict(stampData=np.random.normal(0.0, 0.1, (10, 10))),
+        cutoutDifference=dict(stampData=np.random.normal(0.0, 0.1, (10, 10))),
+        cutoutTemplate=dict(stampData=np.random.normal(0.0, 0.1, (10, 10))),
+    )
+
+
+@pytest.fixture
+def mock_ztf_alert_cutouts(mock_ztf_cutouts: dict):
+    cutout_bytes = {}
+    for key, data in mock_ztf_cutouts.items():
+        buffer = BytesIO()
+
+        hdul = fits.PrimaryHDU(data=data["stampData"])
+        with gzip.GzipFile(fileobj=buffer, mode="wb") as gzip_file:
+            hdul.writeto(gzip_file)
+
+        cutout_bytes[key] = dict(stampData=buffer.getvalue())
+    return cutout_bytes
+
+
+@pytest.fixture
+def mock_ztf_query_cutouts(mock_ztf_cutouts: dict):
+    return {
+        f"{key}_stampData": data["stampData"] for key, data in mock_ztf_cutouts.items()
+    }
+
+
+@pytest.fixture
+def ztf_alert_base(
+    fink_alert_extras: dict, mock_ztf_alert_cutouts: dict, t_fixed: Time
+):
+    return {
+        "objectId": "ZTF00abc",  # the target_id
+        "candid": 0,  # the alert_id
+        "candidate": {
+            "ra": 180.0,
+            "dec": -30.0,
+            "jd": t_fixed.jd,
+            "magpsf": 20.0,
+            "sigpsf": 0.1,
+            "fid": 1,  # 1=ztf-g, 2=ztf-r
+        },
+        **fink_alert_extras,
+        **mock_ztf_alert_cutouts,
+    }
 
 
 @pytest.fixture
@@ -48,7 +101,6 @@ def patched_ztf_qm(
     fink_config: dict,
     tlookup: TargetLookup,
     tmp_path: Path,
-    patch_fink_readstamp: NoReturn,
 ) -> FinkZTFQueryManager:
     qm = FinkZTFQueryManager(fink_config, tlookup, parent_path=tmp_path)
     return qm
@@ -116,7 +168,9 @@ class Test__ProcessZTFAlert:
         assert "candidate" not in proc_alert.keys()  # flattened.
 
     def test__write_alert_data(
-        self, ztf_alert_data: FinkAlert, patch_fink_readstamp: NoReturn, tmp_path: Path
+        self,
+        ztf_alert_data: FinkAlert,
+        tmp_path: Path,
     ):
         # Arrange
         alert_path = tmp_path / "alert.json"
@@ -356,6 +410,26 @@ class Test__ProcessZTFLC:
 
         # Assert
         assert "candid" in lc.columns
+
+
+class Test__ProcessQueriedCutouts:
+    def test__process_cutouts(
+        self,
+        patched_ztf_qm: FinkZTFQueryManager,
+        mock_ztf_query_cutouts: dict[str, np.ndarray],
+    ):
+        # Arrange
+        row_data = {"fid": 1, "jd": "2460000.0"}
+
+        # Act
+        cutouts = patched_ztf_qm.process_queried_cutouts(
+            mock_ztf_query_cutouts, row_data=row_data
+        )
+
+        # Assert
+        exp_keys = ["science", "difference", "template", "meta"]
+        assert set(cutouts.keys()) == set(exp_keys)
+        assert set(cutouts["meta"]) == set(["mjd", "band", "band_label"])
 
 
 class Test__FinkZTFQMInit:

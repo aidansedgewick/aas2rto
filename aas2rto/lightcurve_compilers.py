@@ -86,36 +86,24 @@ def prepare_ztf_data(
 
 def prepare_lsst_data(
     lsst_data: TargetData,
+    reliability_threshold: float = 0.0,
     valid_tag: str = DEFAULT_VALID_TAG,
     badqual_tag: str = DEFAULT_BADQUAL_TAG,
     ulimit_tag: str = DEFAULT_ULIMIT_TAG,
 ):
 
-    data_list = []
-    if lsst_data.detections is not None:
-        detections = lsst_data.detections.copy()
-        detections.loc[:, "tag"] = valid_tag
-        # data_list = [detections]
-        data_list.append(detections)
-    if lsst_data.badqual is not None:
-        badqual = lsst_data.badqual.copy()
-        badqual.loc[:, "tag"] = badqual_tag
-        data_list.append(badqual)
-    if lsst_data.non_detections is not None:
-        ulimits = lsst_data.non_detections.copy()
-        ulimits.loc[:, "tag"] = ulimit_tag
-        data_list.append(ulimits)
+    lsst_lc = lsst_data.lightcurve.copy()
+    lsst_lc.loc[:, "tag"] = valid_tag
 
-    # Now combine what's available
-    if len(data_list) > 0:
-        lsst_lc = pd.concat(data_list, ignore_index=True)
-    else:
-        lsst_lc = lsst_data.lightcurve.copy()
-        lsst_lc.loc[:, "tag"] = valid_tag
-
+    badqual_mask = lsst_lc["reliability"] < reliability_threshold
+    lsst_lc.loc[badqual_mask, "tag"] = badqual_tag
     lsst_lc.loc[:, "source"] = "lsst"
 
     lsst_lc = lsst_lc[lsst_lc["psfFlux"] > 0.0]  # TODO: deal with -ve flux better...
+
+    keep_cols = "mjd mag magerr diffmaglim tag band alert_id source".split()
+    if len(lsst_lc) == 0:
+        return pd.DataFrame(columns=keep_cols)
 
     # Convert fluxes into mags and get the upperlims
     psfFlux_snr = lsst_lc["psfFlux"] / lsst_lc["psfFluxErr"]
@@ -305,15 +293,17 @@ class DefaultLightcurveCompiler:
 
     def __init__(
         self,
+        broker_priority: list[str] = None,
         atlas_average_epochs: bool = True,
         atlas_rolling_window: float = 0.1,
-        broker_priority: list[str] = None,
+        lsst_reliability_threshold: float = 0.0,
         yse_use_all_sources: bool = True,
         yse_additional_sources: tuple[str] = (),
     ):
+        self.broker_priority = broker_priority or self.default_broker_priority
         self.atlas_average_epochs = atlas_average_epochs
         self.atlas_rolling_window = atlas_rolling_window
-        self.broker_priority = broker_priority or self.default_broker_priority
+        self.lsst_reliability_threshold = lsst_reliability_threshold
         self.yse_use_all_sources = yse_use_all_sources
         self.yse_additional_sources = yse_additional_sources
 
@@ -374,7 +364,11 @@ class DefaultLightcurveCompiler:
         # If it exists, format it nicely (to match everything else)
         if lsst_data is not None:
             try:
-                lsst_lc = prepare_lsst_data(lsst_data, **tags)
+                lsst_lc = prepare_lsst_data(
+                    lsst_data,
+                    reliability_threshold=self.lsst_reliability_threshold,
+                    **tags,
+                )
                 lightcurve_dfs.append(lsst_lc)
             except Exception as e:
                 logger.error(e)
@@ -402,7 +396,7 @@ class DefaultLightcurveCompiler:
                 yse_df = prepare_yse_data(
                     yse_data,
                     use_all_sources=self.yse_use_all_sources,
-                    additional_sources=self.yse_use_all_sources,
+                    additional_sources=self.yse_additional_sources,
                     **tags,
                 )
                 if not (len(yse_df) == 0 or yse_df.empty):

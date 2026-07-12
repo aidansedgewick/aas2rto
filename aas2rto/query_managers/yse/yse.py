@@ -83,12 +83,13 @@ class YSEQueryManager(LightcurveQueryManager):
         "max_query_time": 300.0,
     }
 
-    expected_credential_keys = ("username", "password")
-    expected_explorer_query_keys = (
+    required_credential_keys = ("username", "password")
+    required_explorer_query_keys = (
         "query_id",
-        "target_id_col",
-        "coordinate_cols",
-        "comparison_col",
+        "target_id_key",
+        "ra_key",
+        "dec_key",
+        "comparison_key",
     )
 
     additional_sources_lookup = {
@@ -102,23 +103,13 @@ class YSEQueryManager(LightcurveQueryManager):
     required_directories = ("lightcurves", "query_results", "parameters")
 
     def __init__(self, config: dict, target_lookup: TargetLookup, parent_path: Path):
-        self.config = self.default_config.copy()
-        self.config.update(config)
+        # Combine default + user config, set target_lookup + logger, process paths
+        super().__init__(config, target_lookup, parent_path)
 
-        utils.check_unexpected_config_keys(
-            self.config, self.default_config, name="query_managers.yse", raise_exc=True
-        )
-
-        self.target_lookup = target_lookup
-
-        self.process_paths(
-            parent_path=parent_path, directories=self.required_directories
-        )
-
-        self.prepare_yse_query()
+        self.initialize_yse_client()
         self.check_query_configs()
 
-    def prepare_yse_query(self):
+    def initialize_yse_client(self):
         credentials = self.config.get("credentials", None)
         if credentials is None:
             raise YSEClientError(
@@ -127,10 +118,10 @@ class YSEQueryManager(LightcurveQueryManager):
             )
         name = "query_managers.yse.credentials"
         utils.check_unexpected_config_keys(
-            credentials, self.expected_credential_keys, name=name, raise_exc=True
+            credentials, self.required_credential_keys, name=name, raise_exc=True
         )
         utils.check_missing_config_keys(
-            credentials, self.expected_credential_keys, name=name, raise_exc=True
+            credentials, self.required_credential_keys, name=name, raise_exc=True
         )
         username = credentials["username"]
         password = credentials["password"]
@@ -144,7 +135,7 @@ class YSEQueryManager(LightcurveQueryManager):
 
         for query_name, query_config in explorer_configs.items():
             if not isinstance(query_config, dict):
-                keys_str = ",".join(f"'{x}'" for x in self.expected_explorer_query_keys)
+                keys_str = ",".join(f"'{x}'" for x in self.required_explorer_query_keys)
                 msg = (
                     f"config for yse query '{query_name}' should be dict with keys:\n"
                     f"    {keys_str}"
@@ -152,7 +143,7 @@ class YSEQueryManager(LightcurveQueryManager):
                 raise TypeError(msg)
 
             name = f"query_managers.yse.explorer_queries.{query_name}"
-            exp_keys = self.expected_explorer_query_keys
+            exp_keys = self.required_explorer_query_keys
             utils.check_missing_config_keys(
                 query_config, exp_keys, name=name, raise_exc=True
             )
@@ -185,25 +176,26 @@ class YSEQueryManager(LightcurveQueryManager):
         results_list = []
         for query_name, query_config in query_configs.items():
             query_id = query_config["query_id"]
-            target_id_col = query_config["target_id_col"]
-            comparison_col = query_config["comparison_col"]
-            ra_col, dec_col = query_config["coordinate_cols"]
+            target_id_key = query_config["target_id_key"]
+            ra_key = query_config["ra_key"]
+            dec_key = query_config["dec_key"]
+            comparison_key = query_config["comparison_key"]
 
             ##== Decide if we need to make the query
             query_results_filepath = self.get_query_results_filepath(query_name)
             file_age = utils.calc_file_age(query_results_filepath, t_ref)
             if file_age < interval:
-                logger.info(f"{query_name} has results {file_age:.1f}d old - skip")
+                self.logger.info(f"{query_name} has results {file_age:.1f}d old - skip")
                 continue
-            logger.info(f"query for '{query_name}' updates")
+            self.logger.info(f"query for '{query_name}' updates")
 
             ##== Are there any existing results?
             if query_results_filepath.exists():
                 existing_results = pd.read_csv(query_results_filepath)
-                logger.info("will check diff against existing results")
+                self.logger.info("will check diff against existing results")
             else:
-                existing_results = pd.DataFrame(columns=[target_id_col, comparison_col])
-                logger.info("no existing results")
+                existing_results = pd.DataFrame(columns=[target_id_key, comparison_key])
+                self.logger.info("no existing results")
 
             ##== Perform the query
             new_results = self.yse_client.query_explorer(query_id, return_type="pandas")
@@ -219,28 +211,28 @@ class YSEQueryManager(LightcurveQueryManager):
 
             ##== Only keep the lastest row for each target in the combined df
             # key_cols = [target_id_col, comparison_col]
-            combined_results.sort_values([target_id_col, comparison_col], inplace=True)
-            combined_results.drop_duplicates(target_id_col, keep="last", inplace=True)
+            combined_results.sort_values([target_id_key, comparison_key], inplace=True)
+            combined_results.drop_duplicates(target_id_key, keep="last", inplace=True)
             combined_results.to_csv(query_results_filepath, index=False)
 
             ##== Check what's now different from the existing results
             explorer_updates = updates_from_explorer_queries(
                 existing_results,
                 new_results,
-                id_key=target_id_col,
-                comparison_key=comparison_col,
+                id_key=target_id_key,
+                comparison_key=comparison_key,
             )
             explorer_updates.loc[:, "query_name"] = query_name
             if len(explorer_updates) > 0:
-                column_map = {target_id_col: "yse_id", ra_col: "ra", dec_col: "dec"}
+                column_map = {target_id_key: "yse_id", ra_key: "ra", dec_key: "dec"}
                 explorer_updates.rename(column_map, axis=1, inplace=True)
                 results_list.append(explorer_updates)
-                logger.info(f"{len(explorer_updates)} updates for '{query_name}'")
+                self.logger.info(f"{len(explorer_updates)} updates for '{query_name}'")
 
         if len(results_list) > 0:
             results = pd.concat(results_list)
             results.drop_duplicates("yse_id", keep="first", inplace=True)
-            logger.info(f"{len(results)} results from {len(results_list)} queries")
+            self.logger.info(f"{len(results)} results from {len(results_list)} queries")
             return results.to_dict("records")
         return []
 
@@ -265,7 +257,7 @@ class YSEQueryManager(LightcurveQueryManager):
 
         N_added = len(targets_added)
         N_skipped = len(existing_skipped)
-        logger.info(f"added {N_added} new targets (skipped {N_skipped} existing)")
+        self.logger.info(f"added {N_added} new targets (skipped {N_skipped} existing)")
         return targets_added, existing_skipped
 
     def apply_update_messages(self, query_records: list[dict], t_ref: Time = None):
@@ -300,7 +292,7 @@ class YSEQueryManager(LightcurveQueryManager):
     #         if file_age > max_age:
     #             to_query.append(yse_id)
 
-    #     logger.info(f"{len(to_query)} need querying ({len(no_yse_id)} have no YSE ID)")
+    #     self.logger.info(f"{len(to_query)} need querying ({len(no_yse_id)} have no YSE ID)")
     #     return to_query
 
     def query_lightcurves(self, id_list: list[str] = None, t_ref: Time = None):
@@ -320,21 +312,21 @@ class YSEQueryManager(LightcurveQueryManager):
         for ii, yse_id in enumerate(id_list):
             # Is it sensible to conitnue with queries, or is everything failing?
             if failed_queries >= max_failed_queries:
-                logger.warning(f"Too many failed LC queries ({failed_queries})")
-                logger.warning(f"Stop LC queries for now")
+                self.logger.warning(f"Too many failed LC queries ({failed_queries})")
+                self.logger.warning(f"Stop LC queries for now")
                 break
             t_elapsed = time.perf_counter() - t_start
             if t_elapsed > max_qtime:
                 msg = f"LC queries taking too long ({t_elapsed:.1f}s > max {max_qtime:.1f}s)"
-                logger.warning(msg)
-                logger.warning("stop for now")
+                self.logger.warning(msg)
+                self.logger.warning("stop for now")
                 break
 
             try:
                 lightcurve = self.yse_client.query_lightcurve(yse_id)
             except Exception as e:
                 msg = f"LC query {yse_id} failed:\n    {type(e).__name__}: {e}"
-                logger.error(msg)
+                self.logger.error(msg)
                 failed.append(yse_id)
                 failed_queries = failed_queries + 1
                 continue
@@ -345,9 +337,11 @@ class YSEQueryManager(LightcurveQueryManager):
             lightcurve_filepath = self.get_lightcurve_filepath(yse_id)
             lightcurve.to_csv(lightcurve_filepath)
 
-        logger.info(f"{len(success)} LCs queried ok, {len(missing)} returned no LC")
+        msg = f"{len(success)} LCs queried ok, {len(missing)} returned no LC"
+        self.logger.info(msg)
         if len(failed) > 0:
-            logger.warning(f"{len(failed)} LCs were in {failed_queries} failed queries")
+            msg = f"{len(failed)} LCs were in {failed_queries} failed queries"
+            self.logger.warning(msg)
         return success, failed
 
     def load_single_lightcurve(self, target_id: str, t_ref: Time = None):
@@ -364,7 +358,7 @@ class YSEQueryManager(LightcurveQueryManager):
                 lightcurve = pd.read_csv(lightcurve_filepath)
             except Exception as e:
                 msg = f"During read lc for {yse_id}:\n    {type(e).__name__}: {e}"
-                logger.warning(msg)
+                self.logger.warning(msg)
                 lightcurve = None
         else:
             lightcurve = None
@@ -374,7 +368,7 @@ class YSEQueryManager(LightcurveQueryManager):
         t_ref = t_ref or Time.now()
 
         if iteration == 0:
-            logger.info("no query for new targets on iter 0")
+            self.logger.info("no query for new targets on iter 0")
 
             self.load_target_lightcurves()
             return

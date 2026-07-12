@@ -17,7 +17,7 @@ from aas2rto.exc import UnknownTargetWarning
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
-from aas2rto.utils import calc_file_age, clear_stale_files
+from aas2rto.utils import calc_file_age, clear_stale_files, check_unexpected_config_keys
 
 logger = getLogger("base_qm")
 
@@ -40,16 +40,16 @@ class BaseQueryManager(abc.ABC):
     Only implements abstract methods and some path-processing methods.
     """
 
-    config: dict = None
-    target_lookup: TargetLookup = None
+    default_config: dict = None
+    required_directories: tuple[str] = ()
 
     @property
     @abc.abstractmethod
-    def name(self):
+    def name(self) -> str:
         """Class attribute - the NAME of the query manager eg. 'atlas', 'fink_ztf', ..."""
 
     @abc.abstractmethod
-    def perform_all_tasks(self, iteration: int, t_ref: Time = None):
+    def perform_all_tasks(self, iteration: int, t_ref: Time = None) -> None:
         """perform_all_tasks(self, iteration: int, t_ref: Time=None)
 
         The method that the TargetSelector will use to operate your QueryManager
@@ -64,9 +64,33 @@ class BaseQueryManager(abc.ABC):
         """
 
     def __init__(self, config: dict, target_lookup: TargetLookup, parent_path: Path):
-        self.config = config
+        # Check the config
+        if not self.default_config:
+            self.config = config
+        else:
+            if not isinstance(self.default_config, dict):
+                msg = (
+                    f"{self.name}.default_config should be type 'dict', "
+                    f"not {type(self.default_config)}"
+                )
+                raise TypeError(msg)
+            self.config = self.default_config.copy()
+            self.config.update(config)
+            check_unexpected_config_keys(
+                self.config, self.default_config, name=self.name, raise_exc=True
+            )
+
+        # Assign the target lookup
         self.target_lookup = target_lookup
+
+        # Process paths
+        self.process_paths(
+            parent_path=parent_path, directories=self.required_directories
+        )
         self.parent_path = parent_path
+
+        # Per-QM logger
+        self.logger = getLogger(f"qm_{self.name}")
 
     def process_paths(
         self,
@@ -74,7 +98,6 @@ class BaseQueryManager(abc.ABC):
         parent_path: Path = None,
         create_paths: bool = True,
         directories: list = None,
-        extra_directories: list = None,
     ):
         """
 
@@ -101,7 +124,7 @@ class BaseQueryManager(abc.ABC):
             data_path = Path(data_path)
             if parent_path is not None:
                 msg = f"Ignoring parent_path={parent_path}: set to {data_path.parent}"
-                logger.warning(msg)
+                self.logger.warning(msg)
             parent_path = data_path.parent
 
         self.parent_path = parent_path.absolute()
@@ -111,12 +134,8 @@ class BaseQueryManager(abc.ABC):
         if isinstance(directories, str):
             directories = [directories]
 
-        extra_directories = extra_directories or []
-        if isinstance(extra_directories, str):
-            extra_directories = [extra_directories]
-
         self.paths_lookup: dict[str, Path] = {}
-        for dir_name in list(directories) + list(extra_directories):
+        for dir_name in list(directories):
             path = self.data_path / dir_name
             self.paths_lookup[dir_name] = path
             setattr(self, f"{dir_name}_path", path)
@@ -148,7 +167,7 @@ class BaseQueryManager(abc.ABC):
                 top_level_dir, t_ref=t_ref, stale_age=stale_age, max_depth=max_depth
             )
             if N_dirs > 0 or N_files > 0:
-                logger.info(
+                self.logger.info(
                     f"Removing stale files in {dir_name}:\n    "
                     f"del {N_files} files >{stale_age:.1f}d old, {N_dirs} empty subdirs"
                 )
@@ -235,9 +254,9 @@ class LightcurveQueryManager(BaseQueryManager, abc.ABC):
             if lc_age > max_age:
                 to_query.append(relevant_id)
         msg = f"LCs for {len(to_query)} targets need updating (age > {max_age:.1f}d or missing)"
-        logger.info(msg)
+        self.logger.info(msg)
         if len(no_relevant_id) > 0:
-            logger.info(
+            self.logger.info(
                 f"({len(no_relevant_id)} have no relevant id for '{self.name}')"
             )
         return to_query
@@ -279,7 +298,7 @@ class LightcurveQueryManager(BaseQueryManager, abc.ABC):
             target = self.target_lookup.get(target_id, None)
             if target is None:
                 msg = f"load_lightcurve: {target_id} not in target_lookup"
-                logger.warning(msg)
+                self.logger.warning(msg)
                 warnings.warn(UnknownTargetWarning(msg))
                 missing.append(target_id)
                 continue
@@ -312,7 +331,7 @@ class LightcurveQueryManager(BaseQueryManager, abc.ABC):
             # If we've reached this point, the new LC must be longer than existing one
             # (or the prev. one was None),
             if not only_flag_updated:
-                logger.debug(f"set {target_id} updated")
+                self.logger.debug(f"set {target_id} updated")
                 target.updated = True
             qm_data.add_lightcurve(lightcurve)
             loaded.append(target_id)
@@ -324,7 +343,7 @@ class LightcurveQueryManager(BaseQueryManager, abc.ABC):
         N_skipped = len(skipped)
         t_load = t_end - t_start
         msg = f"{self.name}: load {N_loaded}, missing {N_missing} LCs in {t_load:.1f}s"
-        logger.info(msg)
+        self.logger.info(msg)
         return loaded, skipped, missing
 
 
@@ -353,18 +372,38 @@ class KafkaQueryManager(BaseQueryManager, abc.ABC):
         self, processed_alert: dict, t_ref: Time = None
     ) -> Target:
         """new_target_from_alert(self, processed_alert: dict, t_ref: Time=None)
-
         return a target, based"""
+
+    @abc.abstractmethod
+    def apply_updates_from_alert(
+        self, processed_alerts: dict, t_ref: Time = None
+    ) -> None:
+        """new_target_from_alert(self, processed_alert: dict, t_ref: Time=None)
+
+        Add messages to a target, based on an alert. Does NOT return the target."""
+
+    def add_messages_from_alerts(
+        self, processed_alerts: list[dict], t_ref: Time = None
+    ):
+        t_ref = t_ref or Time.now()
+
+        for alert in processed_alerts:
+            self.apply_updates_from_alert(alert, t_ref=t_ref)
 
     def add_targets_from_alerts(
         self, processed_alerts: list[dict], t_ref: Time = None
     ) -> list[str]:
+        """Returns a list of target_id (ie. str), NOT list of targets.
+
+        This function that your the `target_id_key` you define in the subclass is in
+        each processed_alert"""
+
         t_ref = t_ref or Time.now()
 
         targets_added = []
         existing_skipped = []
         for alert in processed_alerts:
-            target_id = alert[self.target_id_key]
+            target_id = str(alert[self.target_id_key])
 
             ##== Do we already know about it?
             existing_target = self.target_lookup.get(target_id, None)
@@ -377,13 +416,13 @@ class KafkaQueryManager(BaseQueryManager, abc.ABC):
             if not isinstance(target, Target):
                 msg = (
                     f"implementation of {self.__class__}.new_target_from_alert"
-                    " should return Target"
+                    f" should return 'Target' not type {type(target).__name__}"
                 )
-                raise TypeError()
+                raise TypeError(msg)
             self.target_lookup.add_target(target)
             targets_added.append(target.target_id)
 
         N_added = len(targets_added)
         N_skipped = len(existing_skipped)
-        logger.info(f"added {N_added} new targets (skipped {N_skipped} existing)")
+        self.logger.info(f"added {N_added} new targets (skipped {N_skipped} existing)")
         return targets_added
