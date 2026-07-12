@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from aas2rto.exc import AlreadyRegisteredError
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.query_managers.registry import QueryManagerRegistry, qm_registry
+
+from aas2rto.query_managers.registry import (
+    AlreadyRegisteredError,
+    MalformedQueryManagerError,
+    NotAQueryManagerError,
+)  # Separate import of Exc's
 
 
 @pytest.fixture
@@ -53,21 +58,21 @@ class Test__RegisteringNew:
 
     def test__register_inline(self, mock_registry: QueryManagerRegistry):
         # Act
-        mock_registry._register_class(MockQM)
+        mock_registry._register_query_manager(MockQM)
 
         # Assert
         assert set(mock_registry.all()) == set(["mock_qm"])
 
     def test__reregister_same_no_raises(self, mock_registry: QueryManagerRegistry):
         # Arrange
-        mock_registry._register_class(MockQM)
+        mock_registry._register_query_manager(MockQM)
 
         # Act
-        mock_registry._register_class(MockQM)
+        mock_registry._register_query_manager(MockQM)
 
     def test__rereister_new_raises(self, mock_registry: QueryManagerRegistry):
         # Arrange
-        mock_registry._register_class(MockQM)
+        mock_registry._register_query_manager(MockQM)
 
         class OtherMockQM(BaseQueryManager):
             name = "mock_qm"  # The same as before!
@@ -79,4 +84,23 @@ class Test__RegisteringNew:
 
         # Act
         with pytest.raises(AlreadyRegisteredError):
-            mock_registry._register_class(OtherMockQM)
+            mock_registry._register_query_manager(OtherMockQM)
+
+    def test__not_a_qm_raises(self, mock_registry: QueryManagerRegistry):
+        # Arrange
+
+        class SomeNonQM:
+            pass
+
+        # Assert
+        with pytest.raises(NotAQueryManagerError):
+            mock_registry._register_query_manager(SomeNonQM)
+
+    def test__register_no_name_qm_fails(self, mock_registry: QueryManagerRegistry):
+        # Arrange
+        class NoNameQM(BaseQueryManager):
+            pass
+
+        # Assert
+        with pytest.raises(MalformedQueryManagerError):
+            mock_registry._register_query_manager(NoNameQM)

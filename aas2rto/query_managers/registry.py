@@ -1,9 +1,25 @@
 from __future__ import annotations  # must be first import
 
+import inspect
 from typing import Callable, Type
 
-from aas2rto.exc import AlreadyRegisteredError
 from aas2rto.query_managers.base import BaseQueryManager
+
+
+class RegistrationError(Exception):
+    pass
+
+
+class AlreadyRegisteredError(RegistrationError):
+    pass
+
+
+class NotAQueryManagerError(RegistrationError):
+    pass
+
+
+class MalformedQueryManagerError(RegistrationError):
+    pass
 
 
 class QueryManagerRegistry:
@@ -17,12 +33,31 @@ class QueryManagerRegistry:
     # NOT a class method - used as the decorator
     def register(self):
         def decorator(qm_class: Type[BaseQueryManager]):
-            return self._register_class(qm_class)  # Still return the class def.
+            return self._register_query_manager(qm_class)  # Still return type.
 
         return decorator
 
-    def _register_class(self, qm_class: Type[BaseQueryManager]):
+    def _register_query_manager(self, qm_class: Type[BaseQueryManager]):
         # Normal method "inline" syntax useful for tests
+
+        # Is it a subclass of BaseQueryManager?
+        if not issubclass(qm_class, BaseQueryManager):
+            name = getattr(qm_class, "__name__", repr(qm_class))
+            msg = (
+                "QueryManagerRegistry can only register types that inherit "
+                f"from BaseQueryManager, not '{name}'"
+            )
+            raise NotAQueryManagerError(msg)
+
+        # Are all of the abstract methods defined?
+        if inspect.isabstract(qm_class):
+            abcs = "\n".join(f"    - '{m}'" for m in qm_class.__abstractmethods__)
+            cls_name = qm_class.__name__
+            raise MalformedQueryManagerError(
+                f"'{cls_name}' has unimplemented abstract methods/properties:\n{abcs}"
+            )
+
+        # Has something different already been registered with this name?
         qm_name = qm_class.name
         existing = self._registry.get(qm_name)
         if existing is not None and existing is not qm_class:
@@ -32,6 +67,7 @@ class QueryManagerRegistry:
             )
             raise AlreadyRegisteredError(msg)
 
+        # ...now actually register.
         self._registry[qm_name] = qm_class
         return qm_class
 
