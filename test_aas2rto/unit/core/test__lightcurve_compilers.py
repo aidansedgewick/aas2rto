@@ -39,19 +39,19 @@ class Test__PrepLSST:
         exp_columns = "mjd mag magerr diffmaglim band tag alert_id source".split()
         assert set(processed_lsst.columns) == set(exp_columns)
 
-    def test__prep_lsst_tag(self, lsst_lc: TargetData):
-        # Arrange
-        tag_data = ["badqual", "badqual", "badqual", "valid", "valid", "valid"]
-        lsst_lc.loc[:, "tag"] = tag_data
-        td = TargetData(lightcurve=lsst_lc)
+        assert set(processed_lsst["tag"].values) == set(["valid"])
 
+    def test__prep_lsst_tag(self, lsst_td: TargetData):
         # Act
-        processed_lsst = prepare_lsst_data(td)
+        processed_lsst = prepare_lsst_data(lsst_td, reliability_threshold=0.6)
 
         # Assert
-        print(processed_lsst[["tag", "alert_id", "mjd"]])
-        assert processed_lsst["tag"].iloc[2] == "badqual"
+        assert processed_lsst["tag"].iloc[0] == "badqual"
+        assert processed_lsst["tag"].iloc[1] == "badqual"
+        assert processed_lsst["tag"].iloc[2] == "valid"
         assert processed_lsst["tag"].iloc[3] == "valid"
+        assert processed_lsst["tag"].iloc[4] == "valid"
+        assert processed_lsst["tag"].iloc[5] == "valid"
 
 
 class Test__PrepAtlas:
