@@ -1,12 +1,98 @@
 import pytest
 
+import numpy as np
+
 from astropy.time import Time
 
-from aas2rto.messaging.messaging_manager import MessagingManager
+from aas2rto.messaging.messaging_manager import MessagingManager, DefaultMessageFilter
 from aas2rto.messaging.telegram_messenger import TelegramMessenger
 from aas2rto.messaging.slack_messenger import SlackMessenger
 from aas2rto.path_manager import PathManager
+from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+
+
+@pytest.fixture
+def msg_filter():
+    return DefaultMessageFilter()
+
+
+class Test__DefaultMessageFilter:
+    def test__init(self):
+        # Act
+        f = DefaultMessageFilter()
+
+    def test__allow(
+        self, basic_target: Target, msg_filter: DefaultMessageFilter, t_fixed: Time
+    ):
+        # Arrange
+        basic_target.updated = True
+        basic_target.info_messages.append("Some information")
+        basic_target.update_science_score_history(1.0, t_ref=t_fixed)
+
+        # Act
+        allow, reasons = msg_filter(basic_target, t_ref=t_fixed)
+
+        # Assert
+        assert allow
+        assert set(reasons) == set()
+
+    def test__nothing(
+        self, basic_target: Target, msg_filter: DefaultMessageFilter, t_fixed: Time
+    ):
+        # Act
+        allow, reasons = msg_filter(basic_target, t_ref=t_fixed)
+
+        # Assert
+        assert not allow
+        assert set(reasons) == set(["no science score", "no messages", "not updated"])
+
+    def test__no_score(
+        self, basic_target: Target, msg_filter: DefaultMessageFilter, t_fixed: Time
+    ):
+        # Arrange
+        basic_target.updated = True
+        basic_target.info_messages.append("Some information")
+
+        # Act
+        allow, reasons = msg_filter(basic_target, t_ref=t_fixed)
+
+        # Assert
+        assert not allow
+        assert set(reasons) == set(["no science score"])
+
+    def test__low_score(
+        self, basic_target: Target, msg_filter: DefaultMessageFilter, t_fixed: Time
+    ):
+        # Arrange
+        basic_target.updated = True
+        basic_target.info_messages.append("Some information")
+        basic_target.update_science_score_history(-1.0, t_ref=t_fixed)
+
+        # Act
+        allow, reasons = msg_filter(basic_target, t_ref=t_fixed)
+
+        # Assert
+        assert not allow
+        assert set(reasons) == set(["low score"])
+
+    def test__no_recent_sent(
+        self, basic_target: Target, msg_filter: DefaultMessageFilter, t_fixed: Time
+    ):
+        # Arrange
+        basic_target.updated = True
+        basic_target.info_messages.append("Some information")
+        basic_target.update_science_score_history(1.0, t_ref=t_fixed)
+        first_allow, reasons = msg_filter(basic_target, t_ref=t_fixed)
+        assert first_allow  # reminder
+        basic_target.last_message_time = t_fixed
+
+        # Act
+        allow, reasons = msg_filter(basic_target, t_ref=t_fixed)
+
+        # Assert
+        assert not allow
+        assert set(reasons) == set(["recent message"])
 
 
 class Test__MsgMgrInit:
@@ -69,16 +155,25 @@ class Test__SudoMessages:
 class Test__MessagingTasks:
     def test__updated_and_scored(self, msg_mgr: MessagingManager, t_fixed: Time):
         # Arrange
-        msg_mgr.target_lookup["T00"].update_science_score_history(1.0, t_fixed)
-        msg_mgr.target_lookup["T00"].updated = True
-        msg_mgr.target_lookup["T00"].info_messages.append("here's a message!")
+        T00 = msg_mgr.target_lookup["T00"]
+        T00.update_science_score_history(1.0, t_fixed)
+        T00.updated = True
+        T00.info_messages.append("here's a message!")
+        assert T00.last_message_time is None  # reminder...
 
         # Act
-        sent, skipped, no_updates = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
+        results, reasons = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
 
         # Assert
-        assert set(sent) == set(["T00"])
-        assert set(skipped) == set(["T01"])
+        assert set(results["sent"]) == set(["T00"])
+        assert set(results["skipped"]) == set(["T01"])
+
+        assert isinstance(T00.last_message_time, Time)
+        assert np.isclose(T00.last_message_time.mjd - 60000.0, 0.0)
+
+        assert "T01" in reasons["not updated"]
+        assert "T01" in reasons["no messages"]
+        assert "T01" in reasons["no science score"]
 
     def test__no_update_msgs(self, msg_mgr: MessagingManager, t_fixed: Time):
         # Arrange
@@ -87,12 +182,16 @@ class Test__MessagingTasks:
         # DON'T attach update messages
 
         # Act
-        sent, skipped, no_updates = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
+        results, reasons = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
 
         # Assert
-        assert set(sent) == set()
-        assert set(skipped) == set(["T01"])
-        assert set(no_updates) == set(["T00"])
+        assert set(results.keys()) == set(["sent", "skipped", "error"])
+        assert set(results["sent"]) == set()
+        assert set(results["skipped"]) == set(["T00", "T01"])
+
+        # check filter 'reason' names on fail
+        assert "T00" in reasons["no messages"]
+        assert "T01" in reasons["not updated"]
 
     def test__no_score(self, msg_mgr: MessagingManager, t_fixed: Time):
         # Arrange
@@ -101,12 +200,12 @@ class Test__MessagingTasks:
         msg_mgr.target_lookup["T00"].info_messages.append("here's a message!")
 
         # Act
-        sent, skipped, no_updates = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
+        results, reasons = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
 
         # Assert
-        assert set(sent) == set()
-        assert set(skipped) == set(["T00", "T01"])
-        assert set(no_updates) == set()
+        assert set(results.keys()) == set(["sent", "skipped", "error"])
+        assert set(results["sent"]) == set()
+        assert set(results["skipped"]) == set(["T00", "T01"])
 
     def test__bad_score(self, msg_mgr: MessagingManager, t_fixed: Time):
         # Arrange
@@ -115,12 +214,12 @@ class Test__MessagingTasks:
         msg_mgr.target_lookup["T00"].info_messages.append("here's a message!")
 
         # Act
-        sent, skipped, no_updates = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
+        results, reasons = msg_mgr.perform_messaging_tasks(t_ref=t_fixed)
 
         # Assert
-        assert set(sent) == set()
-        assert set(skipped) == set(["T00", "T01"])
-        assert set(no_updates) == set()
+        assert set(results.keys()) == set(["sent", "skipped", "error"])
+        assert set(results["sent"]) == set()
+        assert set(results["skipped"]) == set(["T00", "T01"])
 
 
 class Test__CrashReports:

@@ -99,8 +99,8 @@ class Test__TargetInit:
         assert len(target.target_data) == 0
 
         assert isinstance(target.alt_ids, dict)
-        assert set(target.alt_ids.keys()) == set(["<unknown>"])
-        assert target.alt_ids["<unknown>"] == "mock_target"
+        assert set(target.alt_ids.keys()) == set(["[unknown]"])
+        assert target.alt_ids["[unknown]"] == "mock_target"
 
         assert np.isclose(target.creation_time.mjd - 60000.0, 0.0)
 
@@ -563,6 +563,7 @@ class Test__InfoLines:
     def test__target_id_lines(self, mock_target: Target):
         # Arrange
         mock_target.alt_ids["ztf"] = "ZTF25abc"
+        mock_target.alt_ids["broker_lsst"] = "1001"
         mock_target.alt_ids["tns"] = "2025xyz"
         mock_target.alt_ids["yse"] = "fYSE25_001"
 
@@ -571,13 +572,42 @@ class Test__InfoLines:
         info_str = " ".join(id_lines)
 
         # Assert
-        assert "FINK: ztf.fink-portal.org/ZTF25abc" in info_str
-        assert "Lasair: lasair-ztf.lsst.ac.uk/objects/ZTF25abc" in info_str
-        assert "ALeRCE: alerce.online/object/ZTF25abc" in info_str
-        assert "TNS: wis-tns.org/object/2025xyz" in info_str
-        assert "YSE: ziggy.ucolick.org/yse/transient_detail/fYSE25_001" in info_str
+        assert "FINK-LSST: lsst.fink-portal.org/1001" in info_str
+        assert "Lasair-LSST: lasair.lsst.ac.uk/objects/1001" in info_str
+        assert "ALeRCE-LSST: lsst.alerce.online/object/1001?survey=lsst" in info_str
+        assert "FINK-ZTF: ztf.fink-portal.org/ZTF25abc" in info_str
+        assert "Lasair-ZTF: lasair-ztf.lsst.ac.uk/objects/ZTF25abc" in info_str
+        assert "ALeRCE-ZTF: alerce.online/object/ZTF25abc" in info_str
+        assert "TNS name: wis-tns.org/object/2025xyz" in info_str
+        assert "YSE-PZ: ziggy.ucolick.org/yse/transient_detail/fYSE25_001" in info_str
+        exp_tns_url = "wis-tns.org/search?ra=12:00:00.00&decl=00:00:00.00"
+        assert exp_tns_url in info_str
 
         assert "alt names" in info_str
+
+    def test__target_id_lines_with_formatter(self, mock_target: Target):
+        # Arrange
+        mock_target.alt_ids["ztf"] = "ZTF25abc"
+        mock_target.alt_ids["broker_lsst"] = "1001"
+
+        def test_link_formatter(link: str, text=None, prefix=None):
+            if text is None:
+                text = "NOTEXT"
+            return f"{prefix}--{link}--{text}"
+
+        # Act
+        id_lines = mock_target.get_target_id_info_lines(
+            link_formatter=test_link_formatter
+        )
+        info_str = " ".join(id_lines)
+
+        # Assert
+        exp_ztf_url = "ztf.fink-portal.org/ZTF25abc"
+        exp_lsst_url = "lsst.fink-portal.org/1001"
+        assert f"FINK-ZTF: https://--{exp_ztf_url}--{exp_ztf_url}" in info_str
+        assert f"FINK-LSST: https://--{exp_lsst_url}--{exp_lsst_url}" in info_str
+
+        assert "--direct search" in info_str
 
     def test__coordinate_info_lines(self, mock_target: Target):
         # Act

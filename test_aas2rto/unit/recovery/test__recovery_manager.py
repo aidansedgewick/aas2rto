@@ -67,7 +67,15 @@ class Test__WriteRecFiles:
 
         assert set(data.keys()) == set(["T00", "T01"])
 
-        expected_keys = ["target_id", "ra", "dec", "base_score", "alt_ids"]
+        expected_keys = [
+            "target_id",
+            "ra",
+            "dec",
+            "base_score",
+            "alt_ids",
+            "creation_time",
+            "last_message_time",
+        ]
         assert set(data["T00"].keys()) == set(expected_keys)
         assert np.isclose(data["T00"]["ra"], 180.0)
         assert np.isclose(data["T00"]["dec"], 0.0)

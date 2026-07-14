@@ -19,6 +19,10 @@ from aas2rto.target import Target
 logger = getLogger(__name__.split(".")[-1])
 
 
+def h2_header_formatter(text: str):
+    return f"<h2>{text}</h2>"
+
+
 class StaticPagesManager:
 
     default_config = {
@@ -48,7 +52,7 @@ class StaticPagesManager:
         self.web_target_path = self.web_base_path / "target"
 
         self.git_repo_status = None  # Mainly for testing
-        self.check_git_config()
+        self.process_git_config()
         self.prepare_git_repo()
 
         self.create_web_directories()  # Do this last - allow for possible clone.
@@ -67,7 +71,7 @@ class StaticPagesManager:
         self.web_target_path = self.web_base_path / "target"
         self.web_target_path.mkdir(exist_ok=True, parents=True)
 
-    def check_git_config(self):
+    def process_git_config(self):
         self.git_config = self.config.get("git", None)
         if self.git_config is None:
             logger.info("Can't use git; no git config provided.")
@@ -85,7 +89,7 @@ class StaticPagesManager:
 
     def prepare_git_repo(self):
         if self.git_config is None:
-            logger.info("Will not prepare .git directory")
+            logger.info("No git repo. Will not prepare .git directory")
             return
 
         remote_name = self.git_config["remote_name"]
@@ -341,9 +345,10 @@ class StaticPagesManager:
             im_path = f"../{web_fig_path.relative_to(self.web_base_path)}"
             additional_path_list.append(im_path)
 
-        header_tags = dict(header_open="<h2>", header_close="</h2>")
-        link_tags = dict(link_open='<a href="http://', link_close='">link</a>')
-        target_info_str = target.get_info_string(**header_tags, **link_tags)
+        target_info_str = target.get_info_string(
+            header_formatter=h2_header_formatter,
+            link_formatter=utils.format_link_as_html,
+        )
 
         target_info_str = target_info_str.replace("\n", "<br>")
         page_data = dict(
@@ -427,7 +432,7 @@ class StaticPagesManager:
         t_ref = t_ref or Time.now()
 
         if self.git_config is None:
-            logger.info("no git config. skip attempting git commit.")
+            logger.info("No git config. Skip attempting git commit.")
 
         git_branch = self.git_config["branch"]
         remote_name = self.git_config["remote_name"]
