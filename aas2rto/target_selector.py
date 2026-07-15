@@ -306,6 +306,7 @@ class TargetSelector:
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
         extra_plotting_functions: list[Callable] = None,
+        message_filter: Callable = None,
         skip_tasks: list = None,
         iteration: int = -1,
         t_ref: Time = None,
@@ -500,7 +501,9 @@ class TargetSelector:
         # ====================== Broadcast any messages ====================== #
         t1 = time.perf_counter()
         if "messaging" not in skip_tasks:
-            self.messaging_manager.perform_messaging_tasks()
+            self.messaging_manager.perform_messaging_tasks(
+                message_filter=message_filter
+            )
         else:
             logger.info("skip messaging tasks")
         perf_times["messaging"] = time.perf_counter() - t1
@@ -531,6 +534,7 @@ class TargetSelector:
         lightcurve_compiler: Callable = None,
         lc_plotting_function: Callable = None,
         extra_plotting_functions: list[Callable] = None,
+        message_filter: Callable = None,
         recovery_file=False,
         skip_tasks=None,
         iterations=None,
@@ -678,6 +682,7 @@ class TargetSelector:
                     lightcurve_compiler=lightcurve_compiler,
                     lc_plotting_function=lc_plotting_function,
                     extra_plotting_functions=extra_plotting_functions,
+                    message_filter=message_filter,
                     skip_tasks=loop_skip_tasks,
                     iteration=iteration_idx,
                     t_ref=t_ref,

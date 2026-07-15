@@ -1,11 +1,15 @@
 import time
 import traceback
+from collections import defaultdict
 from logging import getLogger
+from typing import Callable
 
 from astropy.time import Time
 
 from aas2rto.path_manager import PathManager
+from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.utils import format_link_as_html, format_link_as_markdown
 
 from aas2rto.messaging.telegram_messenger import TelegramMessenger
 from aas2rto.messaging.slack_messenger import SlackMessenger
@@ -18,6 +22,51 @@ EXPECTED_MESSENGERS = {
     "slack": SlackMessenger,
     "telegram": TelegramMessenger,
 }
+
+
+class DefaultMessageFilter:
+
+    def __init__(self, minimum_score: float = 0.0, message_interval_hrs: float = 3.0):
+        self.minimum_score = minimum_score
+        self.message_interval_hrs = message_interval_hrs
+        self.logger = getLogger("message_filter")
+
+    def __call__(self, target: Target, t_ref: Time = None) -> tuple[bool, list[str]]:
+        t_ref = t_ref or Time.now()
+
+        allow = True
+        reasons = []
+        if not target.updated:
+            self.logger.debug(f"{target.target_id} not updated; skip")
+            allow = False
+            reasons.append("not updated")
+
+        if len(target.info_messages) == 0:
+            allow = False
+            reasons.append("no messages")
+
+        last_score = target.get_latest_science_score()
+        if last_score is None:
+            self.logger.debug(f"{target.target_id} last score is None; skip")
+            allow = False
+            reasons.append("no science score")
+        else:
+            if last_score < self.minimum_score:
+                dbg = (
+                    f"{target.target_id} last score: "
+                    f"{last_score} < {self.minimum_score}; skip"
+                )
+                self.logger.debug(dbg)
+                allow = False
+                reasons.append("low score")
+
+        if isinstance(target.last_message_time, Time):
+            message_dt = t_ref - target.last_message_time
+            if message_dt.to("hour").value < self.message_interval_hrs:
+                reasons.append("recent message")
+                allow = False
+
+        return allow, reasons
 
 
 class MessagingManager:
@@ -64,7 +113,9 @@ class MessagingManager:
             return sent, exc
         return [], []
 
-    def perform_messaging_tasks(self, t_ref: Time = None):
+    def perform_messaging_tasks(
+        self, message_filter: Callable = None, t_ref: Time = None
+    ):
         """
         Loop through each target in TargetLookup.
         If there are any messages attached to a target, send them via the available messengers.
@@ -77,46 +128,35 @@ class MessagingManager:
 
         t_ref = t_ref or Time.now()
 
-        skipped = []
-        no_updates = []
-        sent = []
+        message_filter = message_filter or DefaultMessageFilter()
 
-        minimum_score = 0.0  # TODO rework messaging config
+        result = {"sent": [], "skipped": [], "error": []}
+        result_reasons = defaultdict(list)
+
         logger.info("perform messaging tasks")
         for target_id, target in self.target_lookup.items():
             logger.debug(f"messaging for {target_id}")
 
-            if not target.updated:
-                logger.debug(f"{target.target_id} not updated; skip")
-                skipped.append(target_id)
+            allow_message, allow_reasons = message_filter(target, t_ref=t_ref)
+            if isinstance(allow_reasons, str):
+                allow_reasons = [allow_reasons]  # should be a list.
+            if not allow_message:
+                result["skipped"].append(target.target_id)
+                for reason in allow_reasons:
+                    result_reasons[reason].append(target.target_id)
                 continue
-
-            if len(target.info_messages) == 0:
-                logger.debug(f"{target.target_id} no messages")
-                no_updates.append(target_id)
-                continue
-
-            last_score = target.get_latest_science_score()
-            if last_score is None:
-                skipped.append(target_id)
-                logger.debug(f"{target.target_id} last score is None; skip")
-                continue
-
-            if last_score < minimum_score:
-                skipped.append(target_id)
-                dbg = f"{target.target_id} last score: {last_score} < {minimum_score}; skip"
-                logger.debug(dbg)
-                continue
-
-            messages = [target.get_info_string()] + target.info_messages
-            message_text = "\n".join(msg for msg in messages)
 
             lc_fig_path = target.lc_fig_path
             # vis_fig_paths = []
             # for obs_name, vis_fig_path in target.vis_fig_paths.items():
             #     vis_fig_paths.append(vis_fig_path)
 
+            sending_failed = False
             if self.telegram_messenger is not None:
+
+                messages = target.get_info_lines(link_formatter=format_link_as_html)
+                messages.extend(target.info_messages)
+                message_text = "\n".join(msg for msg in messages)
                 try:
                     self.telegram_messenger.message_users(texts=message_text)
                     self.telegram_messenger.message_users(img_paths=lc_fig_path)
@@ -124,22 +164,39 @@ class MessagingManager:
                     #    texts="visibilities", img_paths=vis_fig_paths
                     # )
                 except Exception as e:
+                    result["error"].append(target.target_id)
+                    result_reasons["slack_failed"].append(target.target_id)
                     logger.error(f"error in telegram messaging {e}")
+                    sending_failed = True
 
             if self.slack_messenger is not None:
+                messages = target.get_info_lines(link_formatter=format_link_as_markdown)
+                messages.extend(target.info_messages)
+                message_text = "\n".join(msg for msg in messages)
                 try:
                     self.slack_messenger.send_messages(
                         texts=message_text, img_paths=lc_fig_path
                     )
                 except Exception as e:
+                    result["error"].append(target.target_id)
+                    result_reasons["telegram_failed"].append(target.target_id)
                     logger.error(f"error in slack messaging, {e}")
-            sent.append(target_id)
-            time.sleep(0.5)
+                    sending_failed = True
 
-        logger.info(f"no updates to send for {len(no_updates)} targets")
-        logger.info(f"skipped messages for {len(skipped)} targets")
-        logger.info(f"sent messages for {len(sent)} targets")
-        return sent, skipped, no_updates
+            if not sending_failed:
+                target.last_message_time = t_ref
+
+            result["sent"].append(target_id)
+            time.sleep(0.3)
+
+        logger.info(f"sent messages for {len(result['sent'])}")
+        logger.info(f"skipped messages for {len(result['skipped'])}")
+        skipped_str = "reasons (and/or):\n" + "\n".join(
+            f"    {r_str}: {len(ids)}" for r_str, ids in result_reasons.items()
+        )
+        logger.info(skipped_str)
+
+        return result, dict(result_reasons)  # dict stops 'default' behaviour.
 
     def send_crash_reports(self, text: str = None):
         """

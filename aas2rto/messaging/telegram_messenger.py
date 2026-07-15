@@ -163,7 +163,10 @@ class TelegramMessenger:
             try:
                 sent = asyncio.run(
                     bot.send_message(
-                        chat_id=user, text=text, disable_web_page_preview=True
+                        chat_id=user,
+                        text=text,
+                        disable_web_page_preview=True,
+                        parse_mode="HTML",
                     )
                 )
                 sent_messages.append(sent)
@@ -192,19 +195,29 @@ class TelegramMessenger:
                 bot = self.get_bot()
                 try:
                     sent = asyncio.run(
-                        bot.send_media_group(chat_id=user, media=media_list)
+                        bot.send_media_group(
+                            chat_id=user,
+                            media=media_list,
+                            parse_mode="HTML",
+                        )
                     )
                     sent_messages.append(sent)
                 except ValueError:
                     pass  # Catch weird co-routine error in py3.9
             else:
+                # Cant use send_media_group() for one image.
                 for img_path in img_chunk:
                     with open(img_path, "rb") as f:
                         img = f.read()
                     bot = self.get_bot()
                     try:
                         sent = asyncio.run(
-                            bot.send_photo(chat_id=user, photo=img, caption=caption)
+                            bot.send_photo(
+                                chat_id=user,
+                                photo=img,
+                                caption=caption,
+                                parse_mode="HTML",
+                            )
                         )
                         sent_messages.append(sent)
                     except ValueError:
@@ -216,7 +229,7 @@ class TelegramMessenger:
         users=None,
         texts: list[str] = None,
         img_paths: list[Path] = None,
-        caption=None,
+        caption: str = None,
     ) -> tuple[list, list]:
         if isinstance(users, int):
             users = [users]
@@ -265,7 +278,7 @@ class TelegramMessenger:
                 exceptions.append(msg)
 
         if len(exceptions) > 0:
-            execption_str = "\nand\n".join(e for e in exceptions)
+            execption_str = "\n    and\n".join(e for e in exceptions)
             err_msg = "During message_users:\n\n" + execption_str
             for sudoer, user_label in self.sudoers.items():
                 try:

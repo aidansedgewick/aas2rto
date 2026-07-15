@@ -4,6 +4,7 @@ import copy
 import time
 import traceback
 import warnings
+from collections import defaultdict
 from logging import getLogger
 from pathlib import Path
 from typing import Any, Callable
@@ -49,15 +50,16 @@ class Target:
     target_data: dict[str, aas2rto.target_data.TargetData]
         A lookup of data from various sources.
         An entry for `fink` data, one for `atlas` data, one for `tns` data, etc...
-    source:
-        which data created this target? will be added into alt_ids. eg.
-        >>> t = Target("T101", 30.0, 30.0, source="src01")
-        >>> "src01" in t.alt_ids # True
     alt_ids: dict [str, str]
         Lookup to keep track of other names for this target.
         eg. ZTF24abcdef might also be called SN 24abc.
         So alt_ids might be: `{'tns': 'SN 24abc'}`
         It's useful to keep track of these to keep updating data from other surveys.
+    source:
+        Which data created this target? It will be added into alt_ids. eg.
+        Often it's easier to just track which data.
+        >>> t = Target("T101", 30.0, 30.0, source="src01")
+        >>> "src01" in t.alt_ids # True
     base_score: float, default=1.0
         The 'unmodified score'.
     target_of_opportunity: bool, default=False
@@ -122,10 +124,10 @@ class Target:
         # Is this target known by any other names?
         self.alt_ids: dict[str, str] = alt_ids or {}
         if source is not None:
-            self.alt_ids[source] = target_id
+            self.alt_ids[source] = str(target_id)
         else:
             if target_id not in self.alt_ids.values():
-                self.alt_ids["<unknown>"] = target_id
+                self.alt_ids["[unknown]"] = target_id
 
         # Keep track of what's going on
         self.creation_time: Time = t_ref
@@ -135,6 +137,7 @@ class Target:
         self.send_updates: bool = False
         self.info_messages: list[str] = []
         self.sudo_messages: list[str] = []
+        self.last_message_time = None
 
     # def update_coordinates(self, ra: float, dec: float):
     #     self.ra = ra
@@ -374,87 +377,92 @@ class Target:
 
     def get_info_string(
         self,
-        header_open: str = "",
-        header_close: str = "",
-        link_open: str = "",
-        link_close: str = "",
+        header_formatter: Callable = None,
+        link_formatter: Callable = None,
         t_ref: Time = None,
     ):
+        """The same as target.get_info_lines(), just joined with newline `\\n`"""
         info_lines = self.get_info_lines(
-            header_open=header_open,
-            header_close=header_close,
-            link_open=link_open,
-            link_close=link_close,
+            header_formatter=header_formatter,
+            link_formatter=link_formatter,
             t_ref=t_ref,
         )
         return "\n".join(info_lines)
 
     def get_info_lines(
         self,
-        header_open: str = "",
-        header_close: str = "",
-        link_open: str = "",
-        link_close: str = "",
+        header_formatter: Callable = None,
+        link_formatter: Callable = None,
         t_ref: Time = None,
     ):
         t_ref = t_ref or Time.now()
         t_ref_str = t_ref.strftime("%Y-%m-%d %H:%M")
 
+        header_formatter = header_formatter or no_format
+
         info_lines = [f"Target {self.target_id} at {t_ref_str}"]
 
-        target_id_lines = self.get_target_id_info_lines(
-            link_open=link_open, link_close=link_close
-        )
+        target_id_lines = self.get_target_id_info_lines(link_formatter=link_formatter)
         coordinate_lines = self.get_coordinate_info_lines()
         flag_lines = self.get_flag_lines()
         photometry_lines = self.get_photometry_info_lines()
 
-        info_lines.append(header_open + "Aliases and brokers:" + header_close)
+        info_lines.append(header_formatter("Aliases and brokers:"))
         info_lines.extend(target_id_lines)
-        info_lines.append(header_open + "Coordinates:" + header_close)
+        info_lines.append(header_formatter("Coordinates:"))
         info_lines.extend(coordinate_lines)
-        info_lines.append(header_open + "Flags:" + header_close)
+        info_lines.append(header_formatter("Flags:"))
         info_lines.extend(flag_lines)
-        info_lines.append(header_open + "Photometry:" + header_close)
+        info_lines.append(header_formatter("Photometry:"))
         info_lines.extend(photometry_lines)
         return info_lines
 
-    def get_target_id_info_lines(self, link_open: str = "", link_close: str = ""):
+    def get_target_id_info_lines(self, link_formatter: Callable = None):
         info_lines = []
 
-        for source in ("lsst", "ztf"):
-            source_id = self.alt_ids.get(source, None)
-            if source_id is not None:
-                fink_url = f"{source}.fink-portal.org/{source_id}"
-                lasair_url = f"lasair-{source}.lsst.ac.uk/objects/{source_id}"
-                if source == "lsst":
-                    # special case for alerce...
-                    alerce_url = f"lsst.alerce.online/object/{source_id}?survey=lsst"
-                else:
-                    alerce_url = f"alerce.online/object/{source_id}"
-                broker_lines = [
-                    f"    {source}-FINK: {link_open}{fink_url}{link_close}",
-                    f"    {source}-Lasair: {link_open}{lasair_url}{link_close}",
-                    f"    {source}-ALeRCE: {link_open}{alerce_url}{link_close}",
-                ]
-                info_lines.extend(broker_lines)
+        link_formatter = link_formatter or no_format
 
-        tns_name = self.alt_ids.get("tns", None)
-        if tns_name is not None:
-            tns_url = f"wis-tns.org/object/{tns_name}"
-            info_lines.append(f"    TNS: {link_open}{tns_url}{link_close}")
+        source_links = {}
+        lsst_id = self.alt_ids.get("broker_lsst", None)
+        if lsst_id is not None:
+            links = {
+                "FINK-LSST": f"lsst.fink-portal.org/{lsst_id}",
+                "Lasair-LSST": f"lasair.lsst.ac.uk/objects/{lsst_id}",
+                "ALeRCE-LSST": f"lsst.alerce.online/object/{lsst_id}?survey=lsst",
+            }
+            source_links.update(links)
+
+        ztf_id = self.alt_ids.get("ztf", None)
+        if ztf_id is not None:
+            links = {
+                "FINK-ZTF": f"ztf.fink-portal.org/{ztf_id}",
+                "Lasair-ZTF": f"lasair-ztf.lsst.ac.uk/objects/{ztf_id}",
+                "ALeRCE-ZTF": f"alerce.online/object/{ztf_id}",
+            }
+            source_links.update(links)
 
         yse_name = self.alt_ids.get("yse", None)
         if yse_name is not None:
-            yse_url = f"ziggy.ucolick.org/yse/transient_detail/{yse_name}"
-            info_lines.append(f"    YSE: {link_open}{yse_url}{link_close}")
+            yse_pz_link = f"ziggy.ucolick.org/yse/transient_detail/{yse_name}"
+            source_links["YSE-PZ"] = yse_pz_link
 
-        alt_rev = {}
+        tns_name = self.alt_ids.get("tns", None)
+        if tns_name is not None:
+            source_links["TNS name"] = f"wis-tns.org/object/{tns_name}"
+
+        for source_name, link in source_links.items():
+            formatted_link = link_formatter(link, text=link, prefix="https://")
+            info_lines.append(f"    {source_name}: {formatted_link}")
+
+        tns_direct_query = self.get_tns_coord_query_link()
+        formatted_link = link_formatter(
+            tns_direct_query, text="direct search"
+        )  # Link is long...
+        info_lines.append(f"    Direct TNS query: {formatted_link}")
+
+        alt_rev = defaultdict(list)
         for source, alt_name in self.alt_ids.items():
-            if alt_name not in alt_rev:
-                alt_rev[alt_name] = [source]
-            else:
-                alt_rev[alt_name].append(source)
+            alt_rev[alt_name].append(source)
 
         info_lines.append("alt names")
         for name, source_list in alt_rev.items():
@@ -462,6 +470,20 @@ class Target:
             info_lines.append(l)
 
         return info_lines
+
+    def get_tns_coord_query_link(self):
+        if self.coord is None:
+            return ""
+        sep = ":"  # ("%3A", "%3A") # actually colon separator is ok for links...
+        ra_str = self.coord.ra.to_string(
+            unit=u.hourangle, decimal=False, pad=True, sep=sep, precision=2
+        )
+        dec_str = self.coord.dec.to_string(
+            unit=u.deg, decimal=False, pad=True, sep=sep, precision=2
+        )
+
+        q_str = f"ra={ra_str}&decl={dec_str}&radius=10&coords_unit=arcsec&include_frb=1"
+        return f"wis-tns.org/search?{q_str}"
 
     def get_flag_lines(self):
         formatted_flags = []
@@ -562,3 +584,8 @@ class Target:
         with open(comments_file, "w+") as f:
             f.writelines([line + "\n" for line in lines])
         return lines
+
+
+def no_format(link: str, *args, **kwargs):
+    """Returns only the first arg, ignorre all other args/kwargs"""
+    return link

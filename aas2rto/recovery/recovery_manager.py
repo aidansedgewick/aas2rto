@@ -61,7 +61,10 @@ class RecoveryManager:
                 dec=target.coord.dec.deg,
                 base_score=target.base_score,
                 alt_ids=target.alt_ids,
+                creation_time=target.creation_time.iso,
+                last_message_time=getattr(target.last_message_time, "iso", "None"),
             )
+
             data[target_id] = target_info
 
         recovery_file = self.path_manager.get_current_recovery_file(t_ref=t_ref)
@@ -145,7 +148,7 @@ class RecoveryManager:
         logger.info(f"recover targets from\n    {recovery_file}")
         t_start = time.perf_counter()
         with open(recovery_file) as f:
-            known_targets = json.load(f)
+            known_targets: dict[str, dict] = json.load(f)
         t_end = time.perf_counter()
         logger.info(f"...load data from file in {t_end-t_start:.2f}sec")
 
@@ -157,7 +160,15 @@ class RecoveryManager:
             dec = target_config.pop("dec")
             target_config["target_id"] = str(target_config["target_id"])  # FORCE str.
             target_config["coord"] = SkyCoord(ra=ra, dec=dec, unit="deg")
+            creation_time = target_config.pop("creation_time", None)
+            last_message_time = target_config.pop("last_message_time", None)
+
             target = Target(**target_config)
+
+            if creation_time and last_message_time != "None":
+                target.creation_time = Time(creation_time, format="iso")
+            if last_message_time and last_message_time != "None":
+                target.last_message_time = Time(last_message_time, format="iso")
 
             recovered_targets.append(target)
             self.target_lookup.add_target(target)
