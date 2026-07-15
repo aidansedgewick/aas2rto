@@ -214,7 +214,7 @@ class Test__BuildModels:
         modeling_mgr.config["lazy_modeling"] = False
         tl = modeling_mgr.target_lookup
         modeling_mgr.build_target_models(mock_model, t_fixed)
-        tl.reset_updated_targets()  # targets AREN'T updates, should be modeled anyway.
+        tl.reset_updated_targets()  # targets NOT updated - but must be modeled anyway.
         t_later = t_fixed + 1.0 * u.day
 
         # Act
