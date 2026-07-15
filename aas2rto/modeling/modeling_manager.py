@@ -37,11 +37,6 @@ def modeling_wrapper(func: Callable, target: Target, t_ref: Time = None):
     return ModelingResult(target.target_id, model, success, reason)
 
 
-def pool_modeling_wrapper(args_kwargs):
-    args, kwargs = args_kwargs
-    return modeling_wrapper(*args, **kwargs)
-
-
 class ModelingManager:
 
     default_config = {

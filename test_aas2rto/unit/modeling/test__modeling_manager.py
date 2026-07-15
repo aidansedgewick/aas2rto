@@ -11,7 +11,6 @@ from aas2rto.modeling.modeling_manager import (
     ModelingManager,
     ModelingResult,
     modeling_wrapper,
-    pool_modeling_wrapper,
 )
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
