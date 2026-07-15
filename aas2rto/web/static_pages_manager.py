@@ -1,9 +1,15 @@
+import hashlib
+import json
 import os
+import requests
 import shutil
 import subprocess
 import time
 from logging import getLogger
 from pathlib import Path
+from typing import Protocol
+
+import tqdm
 
 import pandas as pd
 
@@ -15,6 +21,7 @@ from aas2rto import utils
 from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
+from aas2rto.utils import QueryTracker
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -23,14 +30,26 @@ def h2_header_formatter(text: str):
     return f"<h2>{text}</h2>"
 
 
+def _iter_files(site_base: Path):
+    for path in site_base.rglob("*"):
+        if path.is_file():
+            yield path
+
+
+class PublisherProtocol(Protocol):
+    def publish(self) -> None:
+        pass
+
+
 class StaticPagesManager:
 
     default_config = {
         "publish_interval": 1800.0,
         "git": None,
+        "vercel": None,
     }
-    REQUIRED_GIT_PARAMETERS = ("user_email", "remote_url", "remote_name")
-    EXPECTED_GIT_PARAMETERS = (*REQUIRED_GIT_PARAMETERS, "branch")
+    required_git_parameters = ("user_email", "remote_url", "remote_name")
+    expected_git_parameters = (*required_git_parameters, "branch")
 
     def __init__(
         self, config: dict, outputs_manager: OutputsManager, path_manager: PathManager
@@ -51,9 +70,19 @@ class StaticPagesManager:
         self.web_lists_path = self.web_base_path / "lists"
         self.web_target_path = self.web_base_path / "target"
 
+        self.publishers: dict[str, PublisherProtocol] = {}
+
+        # == Git things
         self.git_repo_status = None  # Mainly for testing
         self.process_git_config()
         self.prepare_git_repo()
+
+        vercel_config = self.config["vercel"]
+        if vercel_config:
+            manifest_filepath = self.path_manager.web_path / "vercel_manifest.json"
+            self.publishers["vercel"] = VercelPublisher(
+                vercel_config, self.web_base_path, manifest_filepath
+            )
 
         self.create_web_directories()  # Do this last - allow for possible clone.
 
@@ -61,6 +90,7 @@ class StaticPagesManager:
             loader=FileSystemLoader(self.path_manager.web_templates_path)
         )
         self.last_git_publish = 0.0
+        self.last_vercel_publish = 0.0
 
     def create_web_directories(self):
         self.web_base_path.mkdir(exist_ok=True, parents=True)
@@ -72,24 +102,25 @@ class StaticPagesManager:
         self.web_target_path.mkdir(exist_ok=True, parents=True)
 
     def process_git_config(self):
-        self.git_config = self.config.get("git", None)
+        self.git_config: dict = self.config.get("git", None)
         if self.git_config is None:
-            logger.info("Can't use git; no git config provided.")
+            logger.info("not using git publish: no git config provided")
             self.git_config = None
             return
 
-        utils.check_unexpected_config_keys(
-            self.git_config, self.EXPECTED_GIT_PARAMETERS, raise_exc=True
-        )
-        utils.check_missing_config_keys(
-            self.git_config, self.REQUIRED_GIT_PARAMETERS, raise_exc=True
-        )
         if self.git_config.get("branch", None) is None:
             self.git_config["branch"] == "main"
 
+        utils.check_unexpected_config_keys(
+            self.git_config, self.expected_git_parameters, raise_exc=True
+        )
+        utils.check_missing_config_keys(
+            self.git_config, self.required_git_parameters, raise_exc=True
+        )
+
     def prepare_git_repo(self):
         if self.git_config is None:
-            logger.info("No git repo. Will not prepare .git directory")
+            logger.info("no git config - will not prepare `.git` directory")
             return
 
         remote_name = self.git_config["remote_name"]
@@ -150,6 +181,21 @@ class StaticPagesManager:
         git_branch_cmd = f"git -C {self.web_base_path} branch -m '{branch}'"
         branch_output = subprocess.check_output(git_branch_cmd.split())
         self.git_repo_status = "new_init"
+
+    def process_vercel_config(self):
+        self.vercel_config: dict = self.config.get("vercel", None)
+        if self.vercel_config is None:
+            logger.info("not using direct vercel publish: no 'vercel' config provided")
+
+        if self.vercel_config.get("deployment", None) is None:
+            self.vercel_config["deployment"] = "production"
+
+        utils.check_unexpected_config_keys(
+            self.vercel_config, self.expected_vercel_parameters, raise_exc=True
+        )
+        utils.check_missing_config_keys(
+            self.vercel_config, self.required_vercel_parameters, raise_exc=True
+        )
 
     def _get_sci_ranked_page_path(self):
         return self.web_lists_path / "sci_ranked.html"
@@ -432,7 +478,7 @@ class StaticPagesManager:
         t_ref = t_ref or Time.now()
 
         if self.git_config is None:
-            logger.info("No git config. Skip attempting git commit.")
+            logger.info("no git config: skip attempting git commit")
 
         git_branch = self.git_config["branch"]
         remote_name = self.git_config["remote_name"]
@@ -468,9 +514,141 @@ class StaticPagesManager:
 
     def publish(self):
         self.publish_to_git()
+
+        for publisher_name, publisher in self.publishers.items():
+            publisher.publish()
         # Other publishers go here...
 
     def perform_all_tasks(self):
 
         self.build_webpages()
         self.publish()
+
+
+class VercelPublisher:
+    """Does not rely on npm vercel package to avoid dependencies."""
+
+    vercel_api = "https://api.vercel.com"
+
+    default_config = {
+        "project_token": None,
+        "project_name": None,
+        "deployment": "production",
+        "manifest_filename": "vercel_manifest",
+        "max_failed_uploads": 25,
+    }
+
+    def __init__(self, config: dict, site_base_path: Path, manifest_parent: Path):
+        self.config = self.default_config.copy()
+        self.config.update(config)
+        utils.check_unexpected_config_keys(
+            self.config,
+            self.default_config,
+            name="web.static_pages.vercel",
+            raise_exc=True,
+        )
+
+        if self.config["project_token"] is None:
+            raise ValueError(f"vercel publisher config missing 'project_token'")
+        if self.config["project_name"] is None:
+            raise ValueError(f"vercel publisher config missing 'project_name'")
+
+        self.site_base_path = Path(site_base_path)
+
+        manifest_filename = self.config["manifest_filename"]
+        self.manifest_filepath = manifest_parent / f"{manifest_filename}.json"
+
+        self.logger = getLogger("vercel_publisher")
+
+    def load_manifest(self) -> dict:
+        if self.manifest_filepath.exists():
+            with open(self.manifest_filepath, "r") as f:
+                return json.load(f)
+        return {}
+
+    def publish(self):
+        vercel_manifest = self.load_manifest()
+
+        skipped = 0
+        file_deploy_payloads: list[dict] = []
+        upload_payloads: list[dict] = []
+        for path in _iter_files(self.site_base_path):
+            file_data = path.read_bytes()
+            digest = hashlib.sha1(file_data).hexdigest()
+            rel_filepath = path.relative_to(self.site_base_path).as_posix()
+
+            # Track ALL files for deployment...
+            payload = {"file": rel_filepath, "sha": digest, "size": len(file_data)}
+            file_deploy_payloads.append(payload)
+
+            existing_digest = vercel_manifest.get(rel_filepath, "")
+            if digest == existing_digest:
+                skipped = skipped + 1
+                continue
+
+            # ...but only upload ones which are updated.
+            payload = {**payload, "data": file_data}
+            upload_payloads.append(payload)
+
+            # Update manifest digets AFTER successful upload
+
+        token = self.config["project_token"]
+        session_headers = {"Authorization": f"Bearer {token}"}
+
+        ##== Upload files and pages
+        logger.info("start")
+        qtracker = QueryTracker.start(
+            max_failed_queries=self.config["max_failed_uploads"]
+        )
+        self.logger.info(f"upload {len(upload_payloads)} files")
+        with requests.Session() as session:
+            session.headers.update(session_headers)
+            for payload in tqdm.tqdm(upload_payloads):
+                rel_filepath = payload["file"]
+                data = payload["data"]
+                upload_headers = {
+                    "x-vercel-digest": payload["sha"],
+                    "Content-Length": str(len(data)),
+                }
+                response = session.post(
+                    f"{self.vercel_api}/v2/files",
+                    params={},
+                    headers=upload_headers,
+                    data=data,
+                )
+                try:
+                    response.raise_for_status()
+                except requests.HTTPError as e:
+                    qtracker.track_failure(rel_filepath)
+                    continue
+
+                vercel_manifest[rel_filepath] = payload["sha"]
+                qtracker.track_success(rel_filepath)
+
+        qtracker.log_summary(name="vercel publish")
+
+        ##== Request deployment
+        self.logger.info("request deployment")
+        deployment_payload = {
+            "name": self.config["project_name"],
+            "project": self.config["project_name"],
+            "target": self.config["deployment"],
+            "files": file_deploy_payloads,
+        }
+        deployment_headers = {**session_headers, "Content-Type": "application/json"}
+        response = requests.post(
+            f"{self.vercel_api}/v13/deployments",
+            params={},
+            headers=deployment_headers,
+            json=deployment_payload,
+        )
+
+        try:
+            response.raise_for_status()
+            self.logger.info(f"deployment status {response.status_code}")
+        except requests.HTTPError as e:
+            msg = (
+                f"deployment failed: status {response.status_code}\n"
+                f"    {e}\n    {response.reason}"
+            )
+            self.logger.error(msg)
