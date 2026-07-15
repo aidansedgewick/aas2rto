@@ -99,7 +99,7 @@ class Test__ModelMgrInit:
         m_manager = ModelingManager(basic_config, tlookup, path_mgr)
 
         # Assert
-        assert set(m_manager.config.keys()) == set(["lazy_modeling", "ncpu"])
+        assert set(m_manager.config.keys()) == set(["lazy_modeling", "nworkers"])
 
     def test__bad_key_warns(
         self, basic_config: dict, tlookup: TargetLookup, path_mgr: PathManager
@@ -229,7 +229,7 @@ class Test__BuildModelsPool:
 
     def test__build_with_pool(self, modeling_mgr: ModelingManager, t_fixed: Time):
         # Arrange
-        modeling_mgr.config["ncpu"] = 1
+        modeling_mgr.config["nworkers"] = 2
 
         # Act
         modeling_mgr.build_target_models(mock_model, t_fixed)

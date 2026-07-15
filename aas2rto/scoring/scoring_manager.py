@@ -15,7 +15,6 @@ from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 
-
 logger = getLogger(__name__.split(".")[-1])
 
 
