@@ -119,7 +119,7 @@ class ModelingManager:
             result_list: list[ModelingResult] = []
             if self.config["nworkers"] == 1:
                 logger.info("build in serial")
-                for target in targets_to_model:
+                for target in tqdm.tqdm(targets_to_model, total=len(targets_to_model)):
                     result = modeling_wrapper(modeling_func, target, t_ref=t_ref)
                     result_list.append(result)
             else:
