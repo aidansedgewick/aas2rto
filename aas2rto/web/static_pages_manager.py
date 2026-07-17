@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -22,6 +24,8 @@ from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
 from aas2rto.utils import QueryTracker
+from aas2rto.web.publishers.git_publisher import GitPublisher
+from aas2rto.web.publishers.vercel_publisher import VercelPublisher
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -42,8 +46,6 @@ class StaticPagesManager:
         "git": None,
         "vercel": None,
     }
-    required_git_parameters = ("user_email", "remote_url", "remote_name")
-    expected_git_parameters = (*required_git_parameters, "branch")
 
     def __init__(
         self, config: dict, outputs_manager: OutputsManager, path_manager: PathManager
@@ -64,19 +66,7 @@ class StaticPagesManager:
         self.web_lists_path = self.web_base_path / "lists"
         self.web_target_path = self.web_base_path / "target"
 
-        self.publishers: dict[str, PublisherProtocol] = {}
-
-        # == Git things
-        self.git_repo_status = None  # Mainly for testing
-        self.process_git_config()
-        self.prepare_git_repo()
-
-        vercel_config = self.config["vercel"]
-        if vercel_config:
-            manifest_filepath = self.path_manager.web_path / "vercel_manifest.json"
-            self.publishers["vercel"] = VercelPublisher(
-                vercel_config, self.web_base_path, manifest_filepath
-            )
+        self.initialize_publishers()
 
         self.create_web_directories()  # Do this last - allow for possible clone.
 
@@ -95,101 +85,24 @@ class StaticPagesManager:
         self.web_target_path = self.web_base_path / "target"
         self.web_target_path.mkdir(exist_ok=True, parents=True)
 
-    def process_git_config(self):
-        self.git_config: dict = self.config.get("git", None)
-        if self.git_config is None:
-            logger.info("not using git publish: no git config provided")
-            self.git_config = None
-            return
+    def initialize_publishers(self):
+        self.publishers: dict[str, PublisherProtocol] = {}
 
-        if self.git_config.get("branch", None) is None:
-            self.git_config["branch"] == "main"
-
-        utils.check_unexpected_config_keys(
-            self.git_config, self.expected_git_parameters, raise_exc=True
-        )
-        utils.check_missing_config_keys(
-            self.git_config, self.required_git_parameters, raise_exc=True
-        )
-
-    def prepare_git_repo(self):
-        if self.git_config is None:
-            logger.info("no git config - will not prepare `.git` directory")
-            return
-
-        remote_name = self.git_config["remote_name"]
-        remote_url = self.git_config["remote_url"]
-
-        git_branch = self.git_config["branch"]
-
-        git_dir = self.web_base_path / ".git"
-        if not git_dir.exists():
-            try:
-                logger.info("first try to clone an existing repo (at depth=1)...")
-                self.clone_existing_repo()
-            except subprocess.CalledProcessError as e:
-                logger.error("no existing repo available")
-                self.init_new_git_repo()
+        git_config: dict = self.config.get("git", {})
+        use_git = git_config.get("use", True)
+        if git_config and use_git:
+            self.publishers["git"] = GitPublisher(git_config, self.web_base_path)
         else:
-            logger.info("'.git' already initialised - use existing")
-            self.git_repo_status = "existing"  # 'cloned' or 'new_init' set above...
+            logger.info("not using git publisher")
 
-        git_remote_cmd = f"git -C {self.web_base_path} remote -v"
-        remote_output = subprocess.check_output(git_remote_cmd.split()).decode("utf-8")
-        if not remote_output:
-            logger.info("set remote origin")
-            git_add_origin_cmd = (
-                f"git -C {self.web_base_path} remote add {remote_name} {remote_url}"
+        vercel_config: dict = self.config.get("vercel", {})
+        use_vercel = vercel_config.get("use", True)
+        if vercel_config and use_vercel:
+            self.publishers["vercel"] = VercelPublisher(
+                vercel_config, self.web_base_path
             )
-            add_origin_output = subprocess.check_output(
-                git_add_origin_cmd.split()
-            ).decode("utf-8")
-
-        git_branch_command = f"git -C {self.web_base_path} -M {git_branch}"
-
-    def clone_existing_repo(self):
-        remote_url = self.git_config["remote_url"]
-
-        git_clone_command = f"git clone --depth 1 {remote_url} {self.web_base_path}"
-        output = subprocess.check_output(git_clone_command.split())
-
-        git_dir = self.web_base_path / ".git"
-        if git_dir.exists():
-            logger.info("cloned - success!")
         else:
-            logger.warning("clone exited ok, but no cloned repo...")
-        self.git_repo_status = "cloned"
-
-    def init_new_git_repo(self):
-
-        user_email = self.git_config["user_email"]
-        branch = self.git_config["branch"]
-
-        git_init_cmd = f"git -C {self.web_base_path} init"
-        logger.info(f"initialise git repo in {self.web_base_path}:\n    {git_init_cmd}")
-        output = subprocess.check_output(git_init_cmd.split())
-
-        git_email_cmd = f"git -C {self.web_base_path} config user.email {user_email}"
-        email_output = subprocess.check_output(git_email_cmd.split())
-
-        git_branch_cmd = f"git -C {self.web_base_path} branch -m '{branch}'"
-        branch_output = subprocess.check_output(git_branch_cmd.split())
-        self.git_repo_status = "new_init"
-
-    def process_vercel_config(self):
-        self.vercel_config: dict = self.config.get("vercel", None)
-        if self.vercel_config is None:
-            logger.info("not using direct vercel publish: no 'vercel' config provided")
-
-        if self.vercel_config.get("deployment", None) is None:
-            self.vercel_config["deployment"] = "production"
-
-        utils.check_unexpected_config_keys(
-            self.vercel_config, self.expected_vercel_parameters, raise_exc=True
-        )
-        utils.check_missing_config_keys(
-            self.vercel_config, self.required_vercel_parameters, raise_exc=True
-        )
+            logger.info("not using vercel")
 
     def _get_sci_ranked_page_path(self):
         return self.web_lists_path / "sci_ranked.html"
@@ -425,90 +338,7 @@ class StaticPagesManager:
             with open(redirect_page_path, "w+") as f:
                 f.writelines(rendered_page)
 
-    def refresh_tmux_ssh_auth_sock(self):
-        """
-        In tmux, the env is not kept up to date (?) by default,
-        so need to reload the $SSH_AUTH_SOCK parameter, otherwise
-        git push will fail.
-        """
-
-        is_tmux_session = os.environ.get("TMUX", False)
-
-        if not is_tmux_session:
-            return
-
-        ssh_auth_sock_path = Path(os.environ["SSH_AUTH_SOCK"])
-        if ssh_auth_sock_path.exists():
-            logger.info("no need to update $SSH_AUTH_SOCK - still exists!")
-            return
-
-        logger.info("refresh $SSH_AUTH_SOCK...")
-        tmux_env_cmd = "tmux show-env -s"
-        tmux_env_lines = (
-            subprocess.check_output(tmux_env_cmd.split()).decode().split("\n")
-        )
-
-        for line in tmux_env_lines:
-            commands = line.split(";")
-            # the relevant line is something like:
-            # "SSH_AUTH_SOCK='/tmp/ssh_blah/agent.1234'; export SSH_AUTH_SOCK"
-            if commands[0].startswith("SSH_AUTH_SOCK"):
-                key, ssh_auth_sock_str = commands[0].split("=")
-                ssh_auth_sock = ssh_auth_sock_str.replace('"', "")  # no quotes
-                logger.info(f"choose {ssh_auth_sock}")
-
-        os.environ["SSH_AUTH_SOCK"] = ssh_auth_sock
-        logger.info(f"choose {ssh_auth_sock}")
-        logger.info(f"new env var: {os.environ['SSH_AUTH_SOCK']}")
-
-        ssh_auth_sock_path = Path(ssh_auth_sock)
-        if ssh_auth_sock_path.exists():
-            logger.info("newly set $SSH_AUTH_SOCK exists!")
-        else:
-            msg = "something went wrong - new $SSH_AUTH_SOCK does not exist..."
-            logger.warning(msg)
-
-    def publish_to_git(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
-
-        if self.git_config is None:
-            logger.info("no git config: skip attempting git commit")
-
-        git_branch = self.git_config["branch"]
-        remote_name = self.git_config["remote_name"]
-
-        commit_interval = self.config["publish_interval"]
-        elapsed = time.perf_counter() - self.last_git_publish
-        if elapsed < commit_interval:
-            msg = f"skip git publish: {elapsed:.1f}s<{commit_interval:.1f} required"
-            logger.info(msg)
-            return
-        self.last_git_publish = time.perf_counter()
-
-        git_add_cmd = f"git -C {self.web_base_path} add --all"
-        git_add_output = subprocess.check_output(git_add_cmd.split()).decode("utf-8")
-
-        git_commit_cmd = (
-            f"git -C {self.web_base_path} commit -m 'Update_{t_ref.isot}' --allow-empty"
-        )
-        try:
-            commit_output = subprocess.check_output(git_commit_cmd.split()).decode(
-                "utf-8"
-            )
-        except subprocess.CalledProcessError as e:
-            print(e)
-
-        self.refresh_tmux_ssh_auth_sock()
-
-        git_push_cmd = f"git -C {self.web_base_path} push --set-upstream {remote_name} {git_branch} --force"
-        try:
-            push_output = subprocess.check_output(git_push_cmd.split()).decode("utf-8")
-        except subprocess.CalledProcessError as e:
-            print(e)
-
     def publish(self):
-        self.publish_to_git()
-
         for publisher_name, publisher in self.publishers.items():
             publisher.publish()
         # Other publishers go here...

@@ -27,7 +27,7 @@ class VercelPublisher:
         "max_failed_uploads": 25,
     }
 
-    def __init__(self, config: dict, site_base_path: Path, manifest_parent: Path):
+    def __init__(self, config: dict, web_base_path: Path):
         self.config = self.default_config.copy()
         self.config.update(config)
         check_unexpected_config_keys(
@@ -42,10 +42,10 @@ class VercelPublisher:
         if self.config["project_name"] is None:
             raise ValueError(f"vercel publisher config missing 'project_name'")
 
-        self.site_base_path = Path(site_base_path)
+        self.web_base_path = Path(web_base_path)
 
         manifest_filename = self.config["manifest_filename"]
-        self.manifest_filepath = manifest_parent / f"{manifest_filename}.json"
+        self.manifest_filepath = self.web_base_path.parent / f"{manifest_filename}.json"
 
         self.logger = getLogger("vercel_publisher")
 
@@ -54,6 +54,11 @@ class VercelPublisher:
             with open(self.manifest_filepath, "r") as f:
                 return json.load(f)
         return {}
+
+    def save_manifest(self, manifest: dict[str, str]):
+        with open(self.manifest_filepath, "w+") as f:
+            json.dump(manifest, f)
+        return
 
     def publish(self):
         vercel_manifest = self.load_manifest()
