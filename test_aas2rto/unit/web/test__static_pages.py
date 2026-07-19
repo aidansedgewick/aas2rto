@@ -21,12 +21,8 @@ def empty_web_config():
 @pytest.fixture
 def static_pages_config():
     return {
-        "git": {
-            "user_email": "user@example.com",
-            "remote_url": "git@github.com/example/example",
-            "remote_name": "origin",
-            "branch": "some_branch",
-        },
+        "git": {"key": "test"},  # Need some keys to pass "if git_config" check
+        "vercel": {"token": "test"},  #
         "publish_interval": 3600.0,
     }
 
@@ -44,6 +40,30 @@ def prepared_outputs_mgr(outputs_mgr_with_plots: OutputsManager, t_fixed: Time):
     return outputs_mgr
 
 
+class MockPublisher:
+    def __init__(self, config, web_base_path):
+        self.published = False
+
+    def publish(self, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
+        self.published = True  # wow!
+
+
+@pytest.fixture(autouse=True)
+def patch_git_publisher(monkeypatch: pytest.MonkeyPatch):
+    # Patch at POINT OF USE.
+    monkeypatch.setattr("aas2rto.web.static_pages_manager.GitPublisher", MockPublisher)
+
+
+@pytest.fixture(autouse=True)
+def patch_vercel_publisher(monkeypatch: pytest.MonkeyPatch):
+    # Patch at POINT OF USE.
+    monkeypatch.setattr(
+        "aas2rto.web.static_pages_manager.VercelPublisher", MockPublisher
+    )
+
+
 @pytest.fixture
 def page_mgr(
     static_pages_config: dict,
@@ -52,6 +72,19 @@ def page_mgr(
 ) -> StaticPagesManager:
 
     return StaticPagesManager(static_pages_config, prepared_outputs_mgr, path_mgr)
+
+
+##===== Test fixtures
+
+
+class Test__Fixtures:
+    def test__publishers_patched(self, page_mgr: StaticPagesManager):
+        # Assert
+        assert isinstance(page_mgr.publishers["git"], MockPublisher)
+        assert isinstance(page_mgr.publishers["vercel"], MockPublisher)
+
+
+##===== Real tests start here!
 
 
 class Test__InitStaticPages:
@@ -63,7 +96,7 @@ class Test__InitStaticPages:
         sp_mgr = StaticPagesManager({}, prepared_outputs_mgr, path_mgr)
 
         # Assert
-        assert sp_mgr.git_config is None
+        assert set(sp_mgr.publishers) == set()
         exp_web_path = path_mgr.project_path / "web/static"
 
         assert sp_mgr.web_base_path == exp_web_path
@@ -81,10 +114,9 @@ class Test__InitStaticPages:
         sp_mgr = StaticPagesManager(static_pages_config, prepared_outputs_mgr, path_mgr)
 
         # Assert
-        isinstance(sp_mgr.git_config, dict)
-        assert set(sp_mgr.config.keys()) == set(["git", "publish_interval"])
+        assert set(sp_mgr.publishers) == set(["git", "vercel"])
 
-        assert sp_mgr.git_repo_status == "cloned"
+        assert set(sp_mgr.config.keys()) == set(["git", "vercel", "publish_interval"])
 
     def test__bad_config_key_raises(
         self,
@@ -101,70 +133,21 @@ class Test__InitStaticPages:
                 static_pages_config, prepared_outputs_mgr, path_mgr
             )
 
-    def test__missing_git_key_raises(
+    def test__respects_use_equals_false(
         self,
         static_pages_config: dict,
         prepared_outputs_mgr: OutputsManager,
         path_mgr: PathManager,
     ):
         # Arrange
-        static_pages_config["git"].pop("user_email")
+        static_pages_config["git"]["use"] = False
+        static_pages_config["vercel"]["use"] = False
 
         # Act
-        with pytest.raises(MissingKeysError):
-            mgr = StaticPagesManager(
-                static_pages_config, prepared_outputs_mgr, path_mgr
-            )
-
-    def test__unexpected_git_key_raises(
-        self,
-        static_pages_config: dict,
-        prepared_outputs_mgr: OutputsManager,
-        path_mgr: PathManager,
-    ):
-        # Arrange
-        static_pages_config["git"]["aaagh"] = "some text here"
-
-        # Act
-        with pytest.raises(UnexpectedKeysError):
-            mgr = StaticPagesManager(
-                static_pages_config, prepared_outputs_mgr, path_mgr
-            )
-
-    def test__call_init_new_repo(
-        self,
-        static_pages_config: dict,
-        prepared_outputs_mgr: OutputsManager,
-        path_mgr: PathManager,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        # Arrange
-        def cause_exception(*args, **kwargs):
-            raise subprocess.CalledProcessError(404, "clone")
-
-        monkeypatch.setattr(StaticPagesManager, "clone_existing_repo", cause_exception)
-
-        # Act
-        mgr = StaticPagesManager(static_pages_config, prepared_outputs_mgr, path_mgr)
+        sp_mgr = StaticPagesManager(static_pages_config, prepared_outputs_mgr, path_mgr)
 
         # Assert
-        assert mgr.git_repo_status == "new_init"
-
-    def test__use_existing_repo(
-        self,
-        static_pages_config: dict,
-        prepared_outputs_mgr: OutputsManager,
-        path_mgr: PathManager,
-    ):
-        # Arrange
-        git_dir = path_mgr.web_path / "static/.git"
-        git_dir.mkdir(exist_ok=True, parents=True)
-
-        # Act
-        mgr = StaticPagesManager(static_pages_config, prepared_outputs_mgr, path_mgr)
-
-        # Assert
-        assert mgr.git_repo_status == "existing"
+        assert set(sp_mgr.publishers) == set()
 
 
 class Test__BuildWebpageTarget:
@@ -254,21 +237,16 @@ class Test__BuildWebpageTarget:
         # also check redirect pages are written
 
 
-class Test__PublishToGit:
+class Test__Publish:
     def test__publish_to_git(
         self, page_mgr: StaticPagesManager, monkeypatch: pytest.MonkeyPatch
     ):
-        # Arrange
-        def refresh_pass(*args, **kwargs):
-            pass
-
-        monkeypatch.setattr(page_mgr, "refresh_tmux_ssh_auth_sock", refresh_pass)
-
         # Act
-        page_mgr.publish_to_git()  # subprocess.check_output auto-patched in conftest...
+        page_mgr.publish()
 
         # Assert
-        # effectively checking for typos here...
+        assert page_mgr.publishers["git"].published is True
+        assert page_mgr.publishers["vercel"].published is True
 
 
 class Test__PerformAllTasks:

@@ -30,12 +30,12 @@ class GitPublisher:
         self.config = config
 
         if self.config.get("branch", None) is None:
-            self.config["branch"] == "main"
+            self.config["branch"] = "main"
 
         deploy_key_path = self.config.get("deploy_key_path", None)
         if deploy_key_path is None:
             deploy_key_path = self.default_deploy_key_path
-        self.config["deploy_key_path"] = Path.expanduser(deploy_key_path)
+        self.config["deploy_key_path"] = Path(deploy_key_path).expanduser()
         if not self.config["deploy_key_path"].exists():
             msg = (
                 f"No deploy key found at {deploy_key_path}.\n"
@@ -135,6 +135,7 @@ class GitPublisher:
             logger.info(msg)
             return
 
+        logger.info("start git publish")
         self._git_add_all()
         self._git_commit()
         self._git_push()
