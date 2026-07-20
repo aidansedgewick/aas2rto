@@ -298,15 +298,14 @@ class StaticPagesManager:
             im_path = f"../{web_fig_path.relative_to(self.web_base_path)}"
             additional_path_list.append(im_path)
 
-        target_info_str = target.get_info_string(
+        target_info_lines = target.get_info_lines(
             header_formatter=h2_header_formatter,
             link_formatter=utils.format_link_as_html,
         )
 
-        target_info_str = target_info_str.replace("\n", "<br>")
         page_data = dict(
             target_id=target.target_id,
-            target_text=target_info_str,
+            target_info_lines=target_info_lines,
             lc_fig_path=rel_lc_path,
             vis_fig_path_list=rel_vis_paths,
             additional_fig_path_list=additional_path_list,
@@ -341,9 +340,8 @@ class StaticPagesManager:
     def publish(self):
         for publisher_name, publisher in self.publishers.items():
             publisher.publish()
-        # Other publishers go here...
 
-    def perform_all_tasks(self):
-
-        self.build_webpages()
+    def perform_all_tasks(self, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+        self.build_webpages(t_ref=t_ref)
         self.publish()

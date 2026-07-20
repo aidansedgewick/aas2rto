@@ -30,7 +30,7 @@ def static_pages_config():
 @pytest.fixture
 def prepared_outputs_mgr(outputs_mgr_with_plots: OutputsManager, t_fixed: Time):
     outputs_mgr = outputs_mgr_with_plots  # short name is nicer...
-    outputs_mgr.observatory_manager.apply_ephem_info(t_fixed)
+    outputs_mgr.observatory_manager.apply_ephem_info(t_fixed)  # Needed for vis-lists.
     outputs_mgr.build_ranked_target_lists(plots=False, write_list=False)
     outputs_mgr.build_visible_target_lists(plots=False, write_list=False)
     T00 = outputs_mgr.target_lookup["T00"]
@@ -154,6 +154,9 @@ class Test__BuildWebpageTarget:
     def test__build_target_webpage(self, page_mgr: StaticPagesManager):
         # Arrange
         T00 = page_mgr.outputs_manager.target_lookup["T00"]
+        T00.alt_ids["ztf"] = "ZTF00abc"
+        T00.alt_ids["broker_lsst"] = "1001"
+        T00.alt_ids["tns"] = "2000A"
 
         # Act
         page_mgr.build_webpage_for_target(T00)
@@ -162,6 +165,46 @@ class Test__BuildWebpageTarget:
         targets_path = page_mgr.path_manager.project_path / "web/static/target"
         main_exp_path = targets_path / "T00.html"
         assert main_exp_path.exists()
+
+        with open(main_exp_path) as f:
+            lines = [l.strip() for l in f.readlines()]
+        page_str = " ".join(lines)
+
+        fink_url = f"lsst.fink-portal.org/1001"
+        fink_str = f"FINK-LSST: <a href='https://{fink_url}'>{fink_url}</a>"
+        assert fink_str in page_str
+
+        lasair_url = "lasair.lsst.ac.uk/objects/1001"
+        lasair_str = f"Lasair-LSST: <a href='https://{lasair_url}'>{lasair_url}</a>"
+        assert lasair_str in page_str
+
+        alerce_url = "lsst.alerce.online/object/1001?survey=lsst"
+        alerce_str = f"ALeRCE-LSST: <a href='https://{alerce_url}'>{alerce_url}</a>"
+        assert alerce_str in page_str
+
+        fink_url = f"ztf.fink-portal.org/ZTF00abc"
+        fink_str = f"FINK-ZTF: <a href='https://{fink_url}'>{fink_url}</a>"
+        assert fink_str in page_str
+
+        lasair_url = "lasair-ztf.lsst.ac.uk/objects/ZTF00abc"
+        lasair_str = f"Lasair-ZTF: <a href='https://{lasair_url}'>{lasair_url}</a>"
+        assert lasair_str in page_str
+
+        alerce_url = "alerce.online/object/ZTF00abc"
+        alerce_str = f"ALeRCE-ZTF: <a href='https://{alerce_url}'>{alerce_url}</a>"
+        assert alerce_str in page_str
+
+        tns_url = "wis-tns.org/object/2000A"
+        tns_str = f"TNS name: <a href='https://{tns_url}'>{tns_url}</a>"
+        assert tns_str in page_str
+
+        direct_search_url = (
+            r"https://wis-tns.org/search?ra=12:00:00.00&decl=00:00:00.00&"
+            r"radius=10&coords_unit=arcsec&include_frb=1"
+        )
+        tns_str = f"Direct TNS query: <a href='{direct_search_url}'>direct search</a>"
+        assert tns_str in page_str
+
         # Redirect pages NOT written here - but in main "write_webpages loop"
 
     def test__build_redirect_pages(self, page_mgr: StaticPagesManager):
@@ -238,7 +281,7 @@ class Test__BuildWebpageTarget:
 
 
 class Test__Publish:
-    def test__publish_to_git(
+    def test__publish(
         self, page_mgr: StaticPagesManager, monkeypatch: pytest.MonkeyPatch
     ):
         # Act
