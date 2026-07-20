@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import shlex
 import subprocess
@@ -17,21 +18,25 @@ logger = getLogger("git_publisher")
 class GitPublisher:
 
     default_deploy_key_path = "~/.ssh/aas2rto_deploy_key"
+
+    default_config = {
+        "publish_interval": 1800.0,
+        "branch": "main",
+    }
     required_git_parameters = (
         "user_email",
         "remote_url",
         "remote_name",
         "deploy_key_path",
     )
-    expected_git_parameters = (*required_git_parameters, "branch")
+    expected_config_parameters = (*required_git_parameters, *default_config.keys())
 
     def __init__(self, config: dict, web_base_path: Path):
 
-        self.config = config
+        self.config = copy.deepcopy(self.default_config)
+        self.config.update(config)
 
-        if self.config.get("branch", None) is None:
-            self.config["branch"] = "main"
-
+        # Some checks on deploy key
         deploy_key_path = self.config.get("deploy_key_path", None)
         if deploy_key_path is None:
             deploy_key_path = self.default_deploy_key_path
@@ -48,7 +53,7 @@ class GitPublisher:
 
         check_unexpected_config_keys(
             self.config,
-            self.expected_git_parameters,
+            self.expected_config_parameters,
             name="web.static_pages.git",
             raise_exc=True,
         )
@@ -58,6 +63,7 @@ class GitPublisher:
 
         self.web_base_path = web_base_path
         self.git_repo_status = None  # Mainly for testing
+        self.last_publish_time = 0.0
         self.prepare_git_repo()
 
     def prepare_git_repo(self):
@@ -125,13 +131,12 @@ class GitPublisher:
         cmd = shlex.split(git_add_remote_cmd)
         return subprocess.check_output(cmd).decode("utf-8")
 
-    def publish_to_git(self, t_ref: Time = None):
-        t_ref = t_ref or Time.now()
+    def publish(self):
 
-        commit_interval = self.config["publish_interval"]
-        elapsed = time.perf_counter() - self.last_git_publish
-        if elapsed < commit_interval:
-            msg = f"skip git publish: {elapsed:.1f}s<{commit_interval:.1f} required"
+        publish_interval = self.config["publish_interval"]
+        elapsed = time.perf_counter() - self.last_publish_time
+        if elapsed < publish_interval:
+            msg = f"skip git publish: {elapsed:.1f}s<{publish_interval:.1f} required"
             logger.info(msg)
             return
 
@@ -140,7 +145,7 @@ class GitPublisher:
         self._git_commit()
         self._git_push()
 
-        self.last_git_publish = time.perf_counter()
+        self.last_publish_time = time.perf_counter()
 
     def _git_add_all(self):
         git_add_cmd = f"git -C {self.web_base_path} add --all"
