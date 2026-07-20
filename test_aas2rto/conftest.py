@@ -63,6 +63,7 @@ def remove_tmp_dirs(tmp_path: Path):
 def no_subprocess(monkeypatch: pytest.MonkeyPatch):
     # define HERE (main conftest.py), so that no subprocess commands ever run.
     def dummy_check_output(*args, **kwargs):
+        # logger printed as explanation if tests ever fail
         logger.info("subprocesses prevented in tests")
         return "".encode()
 

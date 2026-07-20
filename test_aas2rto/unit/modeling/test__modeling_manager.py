@@ -11,7 +11,6 @@ from aas2rto.modeling.modeling_manager import (
     ModelingManager,
     ModelingResult,
     modeling_wrapper,
-    pool_modeling_wrapper,
 )
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
@@ -99,7 +98,7 @@ class Test__ModelMgrInit:
         m_manager = ModelingManager(basic_config, tlookup, path_mgr)
 
         # Assert
-        assert set(m_manager.config.keys()) == set(["lazy_modeling", "ncpu"])
+        assert set(m_manager.config.keys()) == set(["lazy_modeling", "nworkers"])
 
     def test__bad_key_warns(
         self, basic_config: dict, tlookup: TargetLookup, path_mgr: PathManager
@@ -214,7 +213,7 @@ class Test__BuildModels:
         modeling_mgr.config["lazy_modeling"] = False
         tl = modeling_mgr.target_lookup
         modeling_mgr.build_target_models(mock_model, t_fixed)
-        tl.reset_updated_targets()  # targets AREN'T updates, should be modeled anyway.
+        tl.reset_updated_targets()  # targets NOT updated - but must be modeled anyway.
         t_later = t_fixed + 1.0 * u.day
 
         # Act
@@ -229,7 +228,7 @@ class Test__BuildModelsPool:
 
     def test__build_with_pool(self, modeling_mgr: ModelingManager, t_fixed: Time):
         # Arrange
-        modeling_mgr.config["ncpu"] = 1
+        modeling_mgr.config["nworkers"] = 2
 
         # Act
         modeling_mgr.build_target_models(mock_model, t_fixed)
