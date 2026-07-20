@@ -37,11 +37,6 @@ def modeling_wrapper(func: Callable, target: Target, t_ref: Time = None):
     return ModelingResult(target.target_id, model, success, reason)
 
 
-def pool_modeling_wrapper(args_kwargs):
-    args, kwargs = args_kwargs
-    return modeling_wrapper(*args, **kwargs)
-
-
 class ModelingManager:
 
     default_config = {
@@ -119,7 +114,7 @@ class ModelingManager:
             result_list: list[ModelingResult] = []
             if self.config["nworkers"] == 1:
                 logger.info("build in serial")
-                for target in targets_to_model:
+                for target in tqdm.tqdm(targets_to_model, total=len(targets_to_model)):
                     result = modeling_wrapper(modeling_func, target, t_ref=t_ref)
                     result_list.append(result)
             else:
