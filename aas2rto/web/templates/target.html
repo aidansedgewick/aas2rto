@@ -5,7 +5,9 @@
 
     <body>
         <h1>{{ target_id }}</h1>
-        {{ target_text }}
+        {% for line in target_info_lines %}
+            {{ line }}<br>
+        {% endfor %}
 
         <h2>Lightcurve</h2>
         <img src="{{ lc_fig_path }}"><br>

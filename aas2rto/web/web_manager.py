@@ -1,4 +1,5 @@
 from logging import getLogger
+from typing import Protocol
 
 from aas2rto import utils
 from aas2rto.outputs.outputs_manager import OutputsManager
@@ -10,6 +11,11 @@ logger = getLogger(__name__.split(".")[-1])
 WEB_MANAGER_CLS_LOOKUP = {
     "static_pages": StaticPagesManager,
 }
+
+
+class WebManagerProtocol(Protocol):
+    def perform_all_web_tasks(self) -> None:
+        pass
 
 
 class WebManager:
@@ -24,7 +30,7 @@ class WebManager:
         self.init_web_managers()
 
     def init_web_managers(self):
-        self.managers = {}
+        self.managers: dict[str, WebManagerProtocol] = {}
 
         utils.check_unexpected_config_keys(
             self.config, WEB_MANAGER_CLS_LOOKUP, name="web", raise_exc=True
@@ -35,9 +41,7 @@ class WebManager:
                 logger.info(f"{manager_name} has use={use} (False - like) - skip init!")
 
             mgr_cls = WEB_MANAGER_CLS_LOOKUP.get(manager_name)
-            manager = mgr_cls(
-                manager_config, self.outputs_manager, self.path_manager
-            )
+            manager = mgr_cls(manager_config, self.outputs_manager, self.path_manager)
             self.managers[manager_name] = manager
 
     def perform_all_web_tasks(self):
