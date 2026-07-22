@@ -25,70 +25,137 @@ def _get_file_payload(filepath: Path, rel_path: Path, with_data: bool = True):
     payload = {
         "file": str(rel_path),
         "sha": digest,
-        "size": str(len(file_data)),
+        "size": len(file_data),
     }
     if with_data:
         payload["data"] = file_data
     return payload
 
 
-def _upload_single_file(
-    payload: dict[str, str],
-    api_url=None,
-    session: requests.Session = None,
-    token: str = None,
-    attempt: int = 0,
-    max_attempts: int = 3,
-):
-    api_url = api_url or f"{VercelPublisher.vercel_api}/v2/files"
-    if session is None:
-        session = requests.Session()
-        if token is None:
-            msg = "Provide prepared 'requests.Session' object, or 'token' as str"
-            raise ValueError()
-        session_headers = {"Authorization": f"Bearer {token}"}
-        session.headers.update(session_headers)
+class VercelClient:
 
-    rel_path = payload["file"]
-    data = payload["data"]
-    upload_headers = {
-        "x-Vercel-Digest": payload["sha"],
-        "Content-Length": str(len(data)),
-    }
-    response: requests.Response = session.post(
-        f"{api_url}",
-        params={},
-        headers=upload_headers,
-        data=data,
-    )
+    vercel_api = "https://api.vercel.com"
 
-    try:
-        response.raise_for_status()
-    except requests.HTTPError as e:
-        if attempt < max_attempts:
+    def __init__(
+        self, project_token: str, project_name: str, deployment: str = "production"
+    ):
+        self.project_token = project_token
+        self.project_name = project_name
+        self.deployment = deployment
+        self.logger = getLogger("vercel_client")
+
+    def verify_project_exists(self):
+        headers = {
+            "Authorization": f"Bearer {self.project_token}",
+            "Content-Type": "application/json",
+        }
+        url = f"{self.vercel_api}/v9/projects/{self.project_name}"
+        response = requests.get(url, headers=headers)
+        try:
+            response.raise_for_status()
+            self.logger.info(f"project '{self.project_name}' verified")
+        except requests.HTTPError as e:
+            logger.error(e)
             msg = (
-                f"upload {rel_path}:\n"
-                f"    failed on attempt {attempt+1}/{max_attempts}"
+                f"project '{self.project_name}' verification failed!\n"
+                f"    \033[31;1mstatus {response.status_code}: {response.reason}\033[0m\n"
+                f"        - check the project name, or\n"
+                f"        - create the project at vercel.com/drop, or\n"
+                f"        - switch web.static_pages.vercel.use = False"
             )
-            logger.error(msg)
-            attempt_kws = dict(attempt=attempt + 1, max_attempts=max_attempts)
-            return _upload_single_file(
-                payload, api_url=api_url, session=session, token=token, **attempt_kws
+            self.logger.error(msg)
+            raise requests.HTTPError(msg)
+
+    def upload_single_file(
+        self,
+        payload: dict[str, str],
+        session: requests.Session = None,
+        attempt: int = 0,
+        max_attempts: int = 3,
+    ):
+        api_url = f"{self.vercel_api}/v2/files"
+        if session is None:
+
+            session = requests.Session()
+            session_headers = {"Authorization": f"Bearer {self.project_token}"}
+            session.headers.update(session_headers)
+
+        rel_path = payload["file"]
+        data = payload["data"]
+        upload_headers = {
+            "x-Vercel-Digest": payload["sha"],
+            "Content-Length": str(len(data)),
+        }
+        response: requests.Response = session.post(
+            f"{api_url}",
+            params={},
+            headers=upload_headers,
+            data=data,
+        )
+
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            if attempt < max_attempts:
+                msg = (
+                    f"upload {rel_path}:\n"
+                    f"    failed on attempt {attempt+1}/{max_attempts}"
+                )
+                logger.error(msg)
+                attempt_kws = dict(attempt=attempt + 1, max_attempts=max_attempts)
+                return self.upload_single_file(
+                    payload, api_url=api_url, session=session, **attempt_kws
+                )
+            else:
+                raise
+        return response
+
+    def deploy(
+        self,
+        files_array: list[dict],
+    ):
+        ##== Request deployment
+        self.logger.info("request deployment")
+        deployment_payload = {
+            "name": self.project_name,
+            "target": self.deployment,
+            "files": files_array,
+        }
+        deployment_headers = {
+            "Authorization": f"Bearer {self.project_token}",
+            "Content-Type": "application/json",
+        }
+
+        with requests.Session() as session:
+            session.headers.update(deployment_headers)
+            response: requests.Response = session.post(
+                f"{self.vercel_api}/v13/deployments", params={}, json=deployment_payload
             )
-    return response
+
+        ##== Check status
+        self.logger.info(f"deployment status {response.status_code}")
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            msg = (
+                f"deployment failed: status {response.status_code}\n"
+                f"    {e}\n    {response.reason}"
+            )
+            self.logger.error(msg)
+        return response
 
 
 class VercelPublisher:
     """Does not rely on npm vercel package to avoid dependencies."""
-
-    vercel_api = "https://api.vercel.com"
 
     default_config = {
         "project_token": None,
         "project_name": None,
         "deployment": "production",
         "manifest_filestem": "vercel_manifest",
+        "verify_project": True,
         "max_failed_uploads": 25,
+        "max_upload_attempts": 3,
         "publish_interval": 1800.0,
     }
 
@@ -111,6 +178,15 @@ class VercelPublisher:
 
         manifest_filename = self.config["manifest_filestem"]
         self.manifest_filepath = self.web_base_path.parent / f"{manifest_filename}.json"
+
+        self.vercel_client = VercelClient(
+            self.config["project_token"],
+            self.config["project_name"],
+            deployment=self.config["deployment"],
+        )
+        if self.config["verify_project"]:
+            self.vercel_client.verify_project_exists()
+
         self.last_publish_time = 0.0
 
         self.logger = getLogger("vercel_publisher")
@@ -137,6 +213,7 @@ class VercelPublisher:
 
         self.upload_modified_files()
         self.deploy()
+        self.last_publish_time = time.perf_counter()
 
     def get_upload_payloads(self, with_data: bool = True):
         vercel_manifest = self.load_manifest()
@@ -171,11 +248,12 @@ class VercelPublisher:
         with requests.Session() as session:
             session.headers.update(session_headers)
             for rel_path, payload in tqdm.tqdm(upload_payloads.items()):
-                response = _upload_single_file(
-                    payload, api_url=f"{self.vercel_api}/v2/files", session=session
-                )
                 try:
-                    response.raise_for_status()
+                    self.vercel_client.upload_single_file(
+                        payload,
+                        session=session,
+                        max_attempts=self.config["max_upload_attempts"],
+                    )
                 except requests.HTTPError as e:
                     qtracker.track_failed(rel_path)
                     continue
@@ -192,37 +270,13 @@ class VercelPublisher:
 
     def deploy(self):
 
-        ##== Decide files
         manifest = self.load_manifest()
-        files_array = [payload for rel_path, payload in manifest.items()]
 
-        ##== Request deployment
-        self.logger.info("request deployment")
-        deployment_payload = {
-            "name": self.config["project_name"],
-            "target": self.config["deployment"],
-            "files": files_array,
-        }
-        token = self.config["project_token"]
-        deployment_headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        }
+        files_array = []
+        for rel_path, payload in manifest.items():
+            clean_payload = payload.copy()
+            clean_payload["size"] = int(payload["size"])
+            files_array.append(clean_payload)
 
-        with requests.Session() as session:
-            session.headers.update(deployment_headers)
-            response: requests.Response = session.post(
-                f"{self.vercel_api}/v13/deployments", params={}, json=deployment_payload
-            )
-
-        ##== Check status
-        self.logger.info(f"deployment status {response.status_code}")
-        try:
-            response.raise_for_status()
-        except requests.HTTPError as e:
-            msg = (
-                f"deployment failed: status {response.status_code}\n"
-                f"    {e}\n    {response.reason}"
-            )
-            self.logger.error(msg)
-        return response
+        # Actual deployment
+        self.vercel_client.deploy(files_array)

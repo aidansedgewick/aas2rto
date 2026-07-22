@@ -89,14 +89,14 @@ class StaticPagesManager:
         self.publishers: dict[str, PublisherProtocol] = {}
 
         git_config: dict = self.config["git"] or {}  # .get(None, {}) gives 'None'...
-        use_git = git_config.get("use", True)  # ...so this line failes.
+        use_git = git_config.pop("use", True)  # ...so this line failes.
         if git_config and use_git:
             self.publishers["git"] = GitPublisher(git_config, self.web_base_path)
         else:
             logger.info("not using git publisher")
 
         vercel_config: dict = self.config["vercel"] or {}
-        use_vercel = vercel_config.get("use", True)
+        use_vercel = vercel_config.pop("use", True)
         if vercel_config and use_vercel:
             self.publishers["vercel"] = VercelPublisher(
                 vercel_config, self.web_base_path
