@@ -43,8 +43,10 @@ class StaticPagesManager:
 
     default_config = {
         "publish_interval": 1800.0,
+        "minimum_score": 0.0,
         "git": None,
         "vercel": None,
+        "redirects": False,
     }
 
     def __init__(
@@ -137,8 +139,15 @@ class StaticPagesManager:
         self.build_obs_ranked_pages(t_ref=t_ref)
         self.build_obs_visible_pages(t_ref=t_ref)
 
+        targets_skipped = []
         target_pages_built = 0
         for target_id, target in self.outputs_manager.target_lookup.items():
+
+            last_science_score = target.get_latest_science_score()
+            if last_science_score < self.config["minimum_score"]:
+                targets_skipped.append(target_id)
+                continue
+
             target_page_path = self._get_target_page_path(target_id)
 
             page_age = utils.calc_file_age(target_page_path, t_ref=t_ref)  # in DAYS
@@ -146,8 +155,13 @@ class StaticPagesManager:
 
             if not target_page_path.exists() or target.updated or page_old:
                 self.build_webpage_for_target(target, t_ref=t_ref)
-                self.build_redirect_pages_for_target(target)
+
+                if self.config["redirects"]:
+                    self.build_redirect_pages_for_target(target)
                 target_pages_built = target_pages_built + 1
+
+        logger.info(f"skip web pages for {len(targets_skipped)} targets with low score")
+
         if target_pages_built > 0:
             logger.info(f"built target pages for {target_pages_built}")
 
@@ -155,8 +169,17 @@ class StaticPagesManager:
         t_ref = t_ref or Time.now()
         t_str = t_ref.strftime("%H:%M %a, %d %b %Y")
 
+        rank_history_fig_path = self.path_manager.outputs_path / "rank_histories.png"
+        web_fig_path = self.web_im_path / f"{rank_history_fig_path.name}"
+        if rank_history_fig_path.exists():
+            shutil.copy2(rank_history_fig_path, web_fig_path)
+            im_path = f"../{web_fig_path.relative_to(self.web_base_path)}"
+        else:
+            im_path = None
+
         page_data = dict(
             science_ranked_url=self._get_sci_ranked_list_url(),
+            rank_history_fig_path=im_path,
             obs_ranked_url_lookup={},
             obs_visible_url_lookup={},
             update_time_str=t_str,

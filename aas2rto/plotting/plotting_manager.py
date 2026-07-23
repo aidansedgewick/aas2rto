@@ -27,6 +27,7 @@ class PlottingManager:
         "lazy_plotting": True,
         "minimum_rank": 20,
         "rank_lookback": 7.0,
+        "max_file_upload": 100,
     }
 
     def __init__(
@@ -164,7 +165,7 @@ class PlottingManager:
             self.target_lookup, t_ref=t_ref, return_plotter=True
         )
         fig = plotter.fig
-        fig_path = self.path_manager.scratch_path / "rank_histories.png"
+        fig_path = self.path_manager.outputs_path / "rank_histories.png"
         fig.savefig(fig_path)
         plt.close(fig)
 

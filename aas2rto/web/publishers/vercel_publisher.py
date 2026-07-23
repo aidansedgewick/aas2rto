@@ -103,9 +103,7 @@ class VercelClient:
                 )
                 logger.error(msg)
                 attempt_kws = dict(attempt=attempt + 1, max_attempts=max_attempts)
-                return self.upload_single_file(
-                    payload, api_url=api_url, session=session, **attempt_kws
-                )
+                return self.upload_single_file(payload, session=session, **attempt_kws)
             else:
                 raise
         return response
@@ -154,7 +152,7 @@ class VercelPublisher:
         "deployment": "production",
         "manifest_filestem": "vercel_manifest",
         "verify_project": True,
-        "max_failed_uploads": 25,
+        "max_failed_uploads": 5,
         "max_upload_attempts": 3,
         "publish_interval": 1800.0,
     }
@@ -204,6 +202,8 @@ class VercelPublisher:
 
     def publish(self):
 
+        self.upload_modified_files()  # Better to upload few files each loop.
+
         publish_interval = self.config["publish_interval"]
         elapsed = time.perf_counter() - self.last_publish_time
         if elapsed < publish_interval:
@@ -211,7 +211,6 @@ class VercelPublisher:
             logger.info(msg)
             return
 
-        self.upload_modified_files()
         self.deploy()
         self.last_publish_time = time.perf_counter()
 
@@ -248,6 +247,9 @@ class VercelPublisher:
         with requests.Session() as session:
             session.headers.update(session_headers)
             for rel_path, payload in tqdm.tqdm(upload_payloads.items()):
+                if not qtracker.safe_to_query():
+                    break
+
                 try:
                     self.vercel_client.upload_single_file(
                         payload,
