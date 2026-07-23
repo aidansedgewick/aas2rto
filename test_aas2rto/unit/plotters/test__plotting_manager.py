@@ -247,7 +247,7 @@ class Test__PlotTargetRankHist:
         self, plotting_mgr: PlottingManager, mod_tl: TargetLookup, t_fixed: Time
     ):
         # Arrange
-        plots_path = plotting_mgr.path_manager.scratch_path
+        outputs_path = plotting_mgr.path_manager.outputs_path
         plotting_mgr.target_lookup = mod_tl
 
         # Act
@@ -257,7 +257,7 @@ class Test__PlotTargetRankHist:
         assert set(plotted) == set(["T00", "T01"])
         assert set(skipped) == set()
 
-        exp_path = plots_path / "rank_histories.png"
+        exp_path = outputs_path / "rank_histories.png"
         assert exp_path.exists()
 
 

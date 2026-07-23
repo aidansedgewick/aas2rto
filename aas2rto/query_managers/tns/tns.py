@@ -184,7 +184,7 @@ class TNSQueryManager(BaseQueryManager):
             delta_filepath = self.get_hourly_delta_filepath(t_delta)
             if delta_filepath.exists():
                 continue
-            self.logger.info(f"query for {delta_filepath}")
+            self.logger.info(f"query for {delta_filepath.name}")
             df = self.tns_client.get_tns_hourly_delta(hour)
             if df is None:
                 continue

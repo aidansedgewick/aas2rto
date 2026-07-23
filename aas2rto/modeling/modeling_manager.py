@@ -56,6 +56,7 @@ class ModelingManager:
             self.config,
             expected=self.default_config.keys(),
             name="modeling_manager",
+            raise_exc=True,
         )
 
         self.target_lookup = target_lookup

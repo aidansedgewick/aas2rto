@@ -160,7 +160,7 @@ class FinkZTFQueryManager(FinkBaseQueryManager):
 
         if row_data is not None:
             band = row_data["fid"]
-            band_label = ZTF_BAND_LABEL_LOOKUP[band]
+            band_label = ZTF_BAND_LABEL_LOOKUP.get(band, "[unknown]")
             mjd = Time(row_data["jd"], format="jd").mjd
             meta = {"band": band, "band_label": band_label, "mjd": mjd}
         else:
@@ -216,7 +216,6 @@ def process_fink_ztf_alert(
                 continue
             cutout = readstamp(cutout_data, return_type="array")
             cutouts[imtype.lower()] = cutout
-        print(f"alert saving with {cutouts.keys()}")
 
         band = alert["fid"]
         band_label = ZTF_BAND_LABEL_LOOKUP.get(band, f"ZTF-{band}")

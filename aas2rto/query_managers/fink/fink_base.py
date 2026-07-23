@@ -611,7 +611,6 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
                     with open(cutout_filepath, "wb+") as f:
                         pickle.dump(cutouts, f)
-                    print(f"dump to {cutout_filepath}")
                     qtracker.track_success(f"{fink_id}-{alert_id}")
 
         qtracker.log_summary(name=f"{self.name}_cutouts")
