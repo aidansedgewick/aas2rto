@@ -46,7 +46,7 @@ class StaticPagesManager:
         "minimum_score": 0.0,
         "git": None,
         "vercel": None,
-        "redirects": False,
+        "redirects": True,
     }
 
     def __init__(

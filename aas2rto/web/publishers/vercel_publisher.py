@@ -50,7 +50,10 @@ class VercelClient:
             "Content-Type": "application/json",
         }
         url = f"{self.vercel_api}/v9/projects/{self.project_name}"
-        response = requests.get(url, headers=headers)
+        with requests.Session() as session:
+            session.headers.update(headers)
+            response = session.get(url, headers=headers)
+
         try:
             response.raise_for_status()
             self.logger.info(f"project '{self.project_name}' verified")
@@ -281,4 +284,4 @@ class VercelPublisher:
             files_array.append(clean_payload)
 
         # Actual deployment
-        self.vercel_client.deploy(files_array)
+        return self.vercel_client.deploy(files_array)
