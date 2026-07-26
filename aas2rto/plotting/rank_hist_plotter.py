@@ -115,8 +115,9 @@ class RankHistoryPlotter:
 
             zorder = max(self.minimum_rank + 10 - rank_idx, 1)
             adjustment = np.random.uniform(-0.1, 0.1, 1)
-            xdat = np.concat([recent_history["mjd"].values, [t_ref.mjd]])  # points NOW
-            ydat = np.concat([recent_history["ranking"].values, [last_rank]])
+
+            xdat = np.concatenate([recent_history["mjd"].values, [t_ref.mjd]])  # +NOW
+            ydat = np.concatenate([recent_history["ranking"].values, [last_rank]])
 
             lines = self.ax.step(
                 xdat,
