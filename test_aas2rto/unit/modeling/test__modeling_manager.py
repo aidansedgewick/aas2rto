@@ -6,7 +6,7 @@ import numpy as np
 from astropy import units as u
 from astropy.time import Time
 
-from aas2rto.exc import UnexpectedKeysWarning
+from aas2rto.exc import UnexpectedKeysError
 from aas2rto.modeling.modeling_manager import (
     ModelingManager,
     ModelingResult,
@@ -107,7 +107,7 @@ class Test__ModelMgrInit:
         basic_config["bad_key"] = 100.0
 
         # Act
-        with pytest.warns(UnexpectedKeysWarning):
+        with pytest.raises(UnexpectedKeysError):
             m_manager = ModelingManager(basic_config, tlookup, path_mgr)
 
 

@@ -116,7 +116,9 @@ class Test__InitStaticPages:
         # Assert
         assert set(sp_mgr.publishers) == set(["git", "vercel"])
 
-        assert set(sp_mgr.config.keys()) == set(["git", "vercel", "publish_interval"])
+        assert set(sp_mgr.config.keys()) == set(
+            ["git", "vercel", "publish_interval", "minimum_score", "redirects"]
+        )
 
     def test__bad_config_key_raises(
         self,

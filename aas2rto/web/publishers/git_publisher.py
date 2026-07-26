@@ -168,7 +168,7 @@ class GitPublisher:
     def _git_push(self):
         git_branch = self.config["branch"]
         remote_name = self.config["remote_name"]
-        deploy_key_path = self.config["deploy_key_filepath"]
+        deploy_key_path = self.config["deploy_key_path"]
 
         env = os.environ.copy()
         env["GIT_SSH_COMMAND"] = f"ssh -i {deploy_key_path} -o IdentitiesOnly=yes"

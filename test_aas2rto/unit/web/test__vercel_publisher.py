@@ -27,7 +27,7 @@ class MockResponse(requests.Response):
     pass
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def patch_requests_post(monkeypatch: pytest.MonkeyPatch):
     def mock_post(*args, data: bytes = None, **kwargs):
         resp = MockResponse()
@@ -45,12 +45,28 @@ def patch_requests_post(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(requests.Session, "post", mock_post)
 
 
+@pytest.fixture(autouse=True)
+def patch_requests_get(monkeypatch: pytest.MonkeyPatch):
+    def mock_get(self, url: str, **kwargs):
+        resp = MockResponse()
+        resp.status_code = 200
+        resp.reason = "ok"
+        if "fail" in url:
+            resp.status_code = 404
+            resp.reason = "Fail requested"
+
+        return resp
+
+    monkeypatch.setattr(requests.Session, "get", mock_get)
+
+
 @pytest.fixture
 def patched_publisher(
-    vercel_config: dict, web_base_path: Path, patch_requests_post: None
+    vercel_config: dict,
+    web_base_path: Path,
 ):
     publisher = VercelPublisher(vercel_config, web_base_path)
-    publisher.vercel_api = "https://blah.com"  # NEVER contact vercel API
+    publisher.vercel_client.vercel_api = "https://example.com"  # NEVER contact real api
     return publisher
 
 
@@ -172,7 +188,7 @@ class Test__GetUploads:
         assert set(file01_payload.keys()) == set(["file", "sha", "size", "data"])
         assert isinstance(file01_payload["file"], str)
         assert isinstance(file01_payload["sha"], str)
-        assert isinstance(file01_payload["size"], str)
+        assert isinstance(file01_payload["size"], int)
         assert isinstance(file01_payload["data"], bytes)
 
     def test__skip_unmodified(

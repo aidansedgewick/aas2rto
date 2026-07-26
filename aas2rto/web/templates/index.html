@@ -10,6 +10,10 @@
 
         <a href="{{ science_ranked_url }}">Science ranked targets</a>
 
+        {% if rank_history_fig_path is not none %}
+            <br><img src="{{ rank_history_fig_path }}"><br><br>
+        {% endif %}
+
         <h2>Observatory ranked lists</h2>
 
         {% for obs_name, url in obs_ranked_url_lookup.items() %}
