@@ -25,12 +25,18 @@ jobs:
       uses: actions/setup-python@v2
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install dependencies
+    - name: Install PyPI dependencies
       run: |
         python3 -m pip install --upgrade pip
         python3 -m pip install setuptools # for py3.12
         python3 -m pip install flake8 pytest pytest-cov numpy
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Clone and install dustmaps
+      run: |
+        # Use new version on GH to fix dustmaps download
+        python3 -m pip uninstall dustmaps -y
+        git clone https://github.com/gregreen/dustmaps.git
+        python3 -m pip install -e dustmaps/
     - name: Prime astronomy downloads
       run: |
         python3 scripts/init_sfd_maps.py --reset-config
