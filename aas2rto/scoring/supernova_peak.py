@@ -347,6 +347,8 @@ class SupernovaPeakScore:
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
             tns_type_str = tns_data.parameters.get("type", "")
+            if tns_type_str == "nan":
+                tns_type_str = ""
             known_redshift = float(tns_data.parameters.get("redshift", "nan"))
             if np.isfinite(known_redshift):
                 tns_redshift_str = f"{known_redshift:.4f}"

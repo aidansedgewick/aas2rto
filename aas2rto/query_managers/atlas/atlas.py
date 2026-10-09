@@ -468,12 +468,24 @@ class AtlasQueryManager(LightcurveQueryManager):
             return
 
         # Check queries that already exist on server
-        self.recover_existing_queries()
+        try:
+            self.recover_existing_queries()
+        except requests.ConnectionError as e:
+            self.logger.error(f"{type(e).__name__}: {e}")
+            return e
 
-        self.retry_throttled_queries()
+        try:
+            self.retry_throttled_queries()
+        except requests.ConnectionError as e:
+            self.logger.error(f"{type(e).__name__}: {e}")
+            return e
 
         query_candidates = self.select_lightcurves_to_query(t_ref=t_ref)
-        self.submit_new_queries(query_candidates)
+        try:
+            self.submit_new_queries(query_candidates)
+        except requests.ConnectionError as e:
+            self.logger.error(f"{type(e).__name__}: {e}")
+            return e
 
         self.load_target_lightcurves(t_ref=t_ref, only_flag_updated=False)
         # flag_only_exisitng=False means new LCs make the target updated.
