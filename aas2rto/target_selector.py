@@ -54,6 +54,7 @@ VALID_SKIP_TASKS = (
     "qm_tasks",
     "obs_info",
     "pre_check",
+    "ephem_info",
     "modeling",
     "evaluate",
     "ranking",
@@ -365,9 +366,11 @@ class TargetSelector:
         t1 = time.perf_counter()
         self.load_targets_of_opportunity(t_ref=t_ref)
         if not "qm_tasks" in skip_tasks:
-            self.primary_query_manager.perform_all_query_manager_tasks(
+            crash_reports = self.primary_query_manager.perform_all_query_manager_tasks(
                 iteration=iteration, t_ref=t_ref
             )
+            if crash_reports:
+                self.messaging_manager.send_crash_reports(crash_reports)
         else:
             logger.info("skip query manager tasks")
         perf_times["qm_tasks"] = time.perf_counter() - t1
@@ -462,13 +465,19 @@ class TargetSelector:
 
         # ============================ Plotting ============================ #
         t1 = time.perf_counter()
+
         if not "plotting" in skip_tasks:
             self.plotting_manager.plot_all_target_lightcurves(
                 plotting_function=lc_plotting_function, t_ref=t_ref
             )
             self.plotting_manager.plot_all_target_visibilities(t_ref=t_ref)
 
-            # self.plotting_manager.plot_rank_histories(t_ref=t_ref)
+            try:
+                self.plotting_manager.plot_rank_histories(t_ref=t_ref)
+            except Exception as e:
+                print(traceback.format_exc())
+                print(e)
+
             if extra_plotting_functions is not None:
                 for plotting_func in extra_plotting_functions:
                     self.plotting_manager.plot_additional_target_figures(
@@ -659,6 +668,8 @@ class TargetSelector:
         logger.info("sending startup message")
         self.messaging_manager.send_sudo_messages(texts=msg)
 
+        utils.print_ascii_banner()
+
         # ========================= loop indefinitely ======================== #
         iteration_idx = 0
         while True:
@@ -671,7 +682,7 @@ class TargetSelector:
                 # If many targets are recovered, 100s of messages could be sent...
                 loop_skip_tasks.append("messaging")
                 loop_skip_tasks.append("write_targets")
-                loop_skip_tasks.append("web")
+                # loop_skip_tasks.append("web")
                 # loop_skip_tasks.append("plotting")
 
             try:

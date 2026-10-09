@@ -85,6 +85,7 @@ class PrimaryQueryManager:
         t_ref = t_ref or Time.now()
 
         logger.info("begin query manager tasks")
+        crash_reports = []
         for qm_name, qm in self.query_managers.items():
             t_start = time.perf_counter()
             logger.info(f"begin {qm_name} tasks")
@@ -92,6 +93,8 @@ class PrimaryQueryManager:
             if isinstance(query_result, Exception):
                 msg = f"EXCEPTION IN {qm_name} [caught, so no crash]\n{query_result}"
                 warnings.warn(UserWarning(msg))
+                crash_reports.append(msg)
                 # self.send_crash_reports(text=text)
             t_end = time.perf_counter()
             logger.info(f"{qm_name} tasks in {t_end-t_start:.1f} sec")
+        return crash_reports
