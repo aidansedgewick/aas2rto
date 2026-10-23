@@ -5,7 +5,9 @@ import pandas as pd
 
 from astropy.table import Table
 
-from aas2rto.query_managers.atlas.atlas_client import AtlasClient, AtlasClientWarning
+from aas2rto.query_managers.atlas.atlas_client import (
+    AtlasClient, AtlasClientWarning, AtlasTaskResult, AtlasTaskStatus
+)
 
 
 # Monkeypatch of AtlasClient is in test_aa2rto/unit/query_managers/atlas/conftest.py
@@ -211,51 +213,61 @@ class Test__IterateExisting:
 class Test__RecoverTaskData:
     def test__success_pandas(self, atlas_client: AtlasClient):
         # Act
-        status, lc = atlas_client.recover_task_data("T_ready_00", return_type="pandas")
+        result = atlas_client.recover_task_data("T_ready_00", return_type="pandas")
 
         # Assert
-        assert status == 200
-        assert isinstance(lc, pd.DataFrame)
-        assert not lc.empty
+        assert isinstance(result, AtlasTaskResult)
+        assert result.task_status == AtlasTaskStatus.RETURNED_WITH_DATA
+        assert result.http_code == 200
+        assert isinstance(result.lightcurve, pd.DataFrame)
+        assert not result.lightcurve.empty
 
     def test__success_astropy(self, atlas_client: AtlasClient):
         # Act
-        status, lc = atlas_client.recover_task_data("T_ready_00", return_type="astropy")
+        result = atlas_client.recover_task_data("T_ready_00", return_type="astropy")
 
         # Assert
-        assert status == 200
-        assert isinstance(lc, Table)
-        assert len(lc) > 0
+        assert isinstance(result, AtlasTaskResult)
+        assert result.task_status == AtlasTaskStatus.RETURNED_WITH_DATA
+        assert result.http_code == 200
+        assert isinstance(result.lightcurve, Table)
+        assert len(result.lightcurve) > 0
 
     def test__still_waiting(self, atlas_client: AtlasClient):
         # Act
-        status, lc = atlas_client.recover_task_data("T00", return_type="pandas")
+        result = atlas_client.recover_task_data("T00", return_type="pandas")
 
         # Assert
-        assert status == 201
-        assert lc is None
+        assert isinstance(result, AtlasTaskResult)
+        assert result.task_status== AtlasTaskStatus.SUBMITTED_NOT_FINISHED
+        assert result.http_code == 200
+        assert result.lightcurve is None
 
     def test__no_data_pandas(self, atlas_client: AtlasClient):
         # Act
-        status, lc = atlas_client.recover_task_data("T_no_data", return_type="pandas")
+        result = atlas_client.recover_task_data("T_no_data", return_type="pandas")
 
         # Assert
-        assert status == 200
-        assert isinstance(lc, pd.DataFrame)
-        assert lc.empty
+        assert isinstance(result, AtlasTaskResult)
+        assert result.task_status == AtlasTaskStatus.RETURNED_WITHOUT_DATA
+        assert result.http_code == 200
+        assert isinstance(result.lightcurve, pd.DataFrame)
+        assert result.lightcurve.empty
 
     def test__no_data_astropy(self, atlas_client: AtlasClient):
         # Act
-        status, lc = atlas_client.recover_task_data("T_no_data", return_type="astropy")
+        result = atlas_client.recover_task_data("T_no_data", return_type="astropy")
 
         # Asset
-        assert status == 200
-        assert isinstance(lc, Table)
-        assert len(lc) == 0
+        assert isinstance(result, AtlasTaskResult)
+        assert result.task_status == AtlasTaskStatus.RETURNED_WITHOUT_DATA
+        assert result.http_code == 200
+        assert isinstance(result.lightcurve, Table)
+        assert len(result.lightcurve) == 0
 
     def test__bad_return_type_raises(self, atlas_client: AtlasClient):
         # Act
         with pytest.raises(ValueError):
-            status, lc = atlas_client.recover_task_data(
+            result = atlas_client.recover_task_data(
                 "T_ready_00", return_type="blah"
             )

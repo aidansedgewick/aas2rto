@@ -125,6 +125,9 @@ class TNSQueryManager(BaseQueryManager):
             tns_results = TNSClient.get_empty_delta_results(return_type="pandas")
         self.tns_results = tns_results
 
+    def collect_full_tns_results(self, t_ref: Time = None):
+        df = self.tns_client.get_full_tns_archive()
+
     def collect_missing_daily_deltas(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
@@ -133,9 +136,16 @@ class TNSQueryManager(BaseQueryManager):
 
         for ii in range(1, int(delta_lookback) + 1):
             t_delta = t_ref - TimeDelta(24 * ii * u.hour)
+
             delta_filepath = self.get_daily_delta_filepath(t_delta)
             if delta_filepath.exists():
                 continue
+
+            if ii == 1 and t_ref.ymdhms.hour < 1:
+                # Yesterday's delta might not be created exactly at midnight, so wait...
+                logger.info("WAIT until 01:00 to dl yesterday's delta.")
+                continue
+
             self.logger.info(f"query for {delta_filepath.name}")
             df = self.tns_client.get_tns_daily_delta(t_delta)
             if df is not None:
@@ -162,7 +172,7 @@ class TNSQueryManager(BaseQueryManager):
         # Remove any hourly deltas from yday, day before, etc.
         relevant_stem = self.get_daily_delta_filepath(t_ref).stem
         for filepath in existing_hourly_deltas:
-            if relevant_stem in filepath.name:
+            if relevant_stem in filepath.name: # if today's date in filestem, keep it
                 continue  # it's still relevant
             self.logger.info(f"unlink {filepath.name}")
             filepath.unlink()  # Otherwise it's old, and we'll have the daily one.
@@ -176,16 +186,29 @@ class TNSQueryManager(BaseQueryManager):
 
         ref_dt = t_ref.datetime
         curr_hour = ref_dt.hour
-        t_floor_data = dict(year=ref_dt.year, month=ref_dt.month, day=ref_dt.day)
-        t_floor = Time(t_floor_data)
+        t_midnight_data = dict(year=ref_dt.year, month=ref_dt.month, day=ref_dt.day)
+        t_midnight = Time(t_midnight_data)
         new_deltas = []
-        for hour in range(curr_hour + 1):
-            t_delta = t_floor + hour * u.hour
+        for ii_hour in range(1, curr_hour + 1):
+            # If it's eg. 6:30am, this generates 1, 2, 3, 4, 5, 6
+            # for downloading files 1h: 0-1am, 2h: 1-2am, ..., 6h: 5-6am.
+            t_delta = t_midnight + ii_hour * u.hour
             delta_filepath = self.get_hourly_delta_filepath(t_delta)
             if delta_filepath.exists():
                 continue
+
+            if ii_hour == curr_hour and ref_dt.minute < 15:
+                # DON'T get the latest one exactly on the hour
+                # Wait at least 15min - it might not yet be uploaded.
+                msg = (
+                    f"Wait until 15m past hour to get latest delta:\n"
+                    f"    {delta_filepath.stem}"
+                )
+                logger.info(msg)
+                continue
+
             self.logger.info(f"query for {delta_filepath.name}")
-            df = self.tns_client.get_tns_hourly_delta(hour)
+            df = self.tns_client.get_tns_hourly_delta(ii_hour)
             if df is None:
                 continue
             df.to_csv(delta_filepath, index=False)
@@ -225,7 +248,7 @@ class TNSQueryManager(BaseQueryManager):
         combined.sort_values(["name", "lastmodified"], inplace=True)
         combined.drop_duplicates("name", keep="last")
         combined_results_filepath = self.get_combined_results_filepath()
-        combined.to_csv(combined_results_filepath)
+        combined.to_csv(combined_results_filepath, index=False)
         self.tns_results = combined
 
     def match_on_coordinates(
@@ -279,6 +302,7 @@ class TNSQueryManager(BaseQueryManager):
         ):
             target_id = target_candidate_target_ids[idx1]
             tns_parameters = self.tns_results.iloc[idx2].to_dict()
+            tns_type = tns_parameters.get("type")
             self.update_tns_target_data(target_id, tns_parameters, skysep=skysep)
         return
 

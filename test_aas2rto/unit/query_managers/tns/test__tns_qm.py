@@ -181,7 +181,7 @@ class Test__PerformAllTasks:
 
         # Assert
         # Did we collect all the missing deltas?
-        exp_tstamps = ["2023-02-24", "2023-02-23", "2023-02-25_00h", "2023-02-25_01h"]
+        exp_tstamps = ["2023-02-24", "2023-02-23", "2023-02-25_01h"] # There is no 0h
         exp_filestems = [f"tns_delta_{x}" for x in exp_tstamps]
         found_filestems = [
             f.stem for f in tns_qm.paths_lookup["query_results"].glob("tns_delta*")

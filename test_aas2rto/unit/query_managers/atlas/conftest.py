@@ -163,7 +163,7 @@ def mock_task_response(url: str, headers: dict):
         status_code = AtlasClient.QUERY_BAD_REQUEST
     else:
         data = {"finishtimestamp": None, "comment": f"{target_id}:test"}
-        status_code = AtlasClient.QUERY_SUBMITTED
+        status_code = AtlasClient.QUERY_EXISTS # Server returns 200 even when done!
     return MockGetResponse(
         url, headers=headers, json_data=data, status_code=status_code
     )

@@ -40,9 +40,15 @@ def get_target_summary_data(target):
         mag_last = f"{mag_val:.2f}"
         t_last = Time(detections["mjd"].iloc[-1], format="mjd")
         tstamp_last = t_last.strftime("%y-%m-%d %H:%H")
+
+        has_atlas = ""
+        if "source" in detections.columns:
+            if "atlas" in detections["source"]:
+                has_atlas = "y"
     else:
         mag_last = "-"
         tstamp_last = "-"
+        has_atlas = ""
 
     data = dict(
         target_id=target.target_id,
@@ -52,6 +58,7 @@ def get_target_summary_data(target):
         dec_deg=f"{target.coord.dec.deg:+09.5f}",
         mag_last=mag_last,
         stamp_last=tstamp_last,
+        has_atlas=has_atlas
     )
     data.update(target.flags)  # ALL flags should be set in scoring...
     return data

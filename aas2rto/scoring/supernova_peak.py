@@ -346,7 +346,7 @@ class SupernovaPeakScore:
         tns_redshift_str = ""
         tns_data = target.target_data.get("tns", None)
         if tns_data is not None:
-            tns_type_str = tns_data.parameters.get("type", "")
+            tns_type_str = str(tns_data.parameters.get("type", "")) # MUST str format.
             if tns_type_str == "nan":
                 tns_type_str = ""
             known_redshift = float(tns_data.parameters.get("redshift", "nan"))
@@ -360,7 +360,10 @@ class SupernovaPeakScore:
         model = target.models.get("sncosmo_salt", None)
         if model is None:
             scoring_comments.append("no 'sncosmo_salt' model to score")
-
+            
+        target.flags["likely_cv"] = ""
+        target.flags["CV_pen"] = ""
+        target.flags["peak_dt"] = "<n/a>"
         if model is not None:
             sncosmo_model = copy.deepcopy(model)
             # Use a COPY so we can update the parameters to median of samples, etc.
@@ -457,10 +460,13 @@ class SupernovaPeakScore:
             ###===== Penalty for likely CVs?
             cv_penalty, cv_comms = calc_cv_prob_penalty(detections, upperlimits, model)
 
-            target.flags["likely_cv"] = ""
             if cv_penalty < 0.99:
                 target.flags["likely_cv"] = "!!"
-            factors["cv_penalty"] = cv_penalty
+                target.flags["CV_pen"] = cv_penalty
+            if tns_type_str and tns_type_str != "CV":
+                cv_comms.append(f"IGNORE CV-pen as confirmed {tns_type_str}")
+            else:
+                factors["cv_penalty"] = cv_penalty
             scoring_comments.extend(cv_comms)
 
             ###===== Blue colour?
