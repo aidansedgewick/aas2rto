@@ -14,6 +14,8 @@ from aas2rto.lightcurve_compilers import prepare_atlas_data
 from aas2rto.query_managers.atlas.atlas import (
     AtlasCredentialError,
     AtlasQueryManager,
+    AtlasTaskResult,
+    AtlasTaskStatus,
     process_atlas_lightcurve,
 )
 from aas2rto.query_managers.atlas.atlas_client import AtlasClient
@@ -177,44 +179,50 @@ class Test__RecoverQueryData:
     def test__recover_query_data(self, atlas_qm: AtlasQueryManager):
         # Act
         mock_url = "http://atlas.mock/T_ready00"
-        status, lc = atlas_qm.recover_query_data("T_ready00", mock_url)
+        result = atlas_qm.recover_query_data("T_ready00", mock_url)
 
         # Assert
-        assert status == 200
-        assert isinstance(lc, pd.DataFrame)
-        assert len(lc) == 12  # from test__aas2rto/conftest.py
+        assert isinstance(result, AtlasTaskResult)
+        assert result.task_status == AtlasTaskStatus.RETURNED_WITH_DATA
+        assert result.http_code == 200
+        assert isinstance(result.lightcurve, pd.DataFrame)
+        assert len(result.lightcurve) == 12  # from test__aas2rto/conftest.py
 
         exp_lc_path = atlas_qm.get_lightcurve_filepath("T_ready00")
         assert exp_lc_path.exists()
 
     def test__recover_no_data(self, atlas_qm: AtlasQueryManager):
         # Act
-        status, lc = atlas_qm.recover_query_data("T_no_data", "T_no_data")
+        result = atlas_qm.recover_query_data("T_no_data", "T_no_data")
 
         # Assert
-        assert status == 200
+        assert isinstance(result, AtlasTaskResult)
+        assert result.task_status == AtlasTaskStatus.RETURNED_WITHOUT_DATA
+        assert result.http_code == 200
         exp_path = atlas_qm.get_lightcurve_filepath("T_no_data")
         assert exp_path.exists()
 
-        assert isinstance(lc, pd.DataFrame)
-        assert lc.empty
+        assert isinstance(result.lightcurve, pd.DataFrame)
+        assert result.lightcurve.empty
 
     def test__empty_no_overwrite_existing(
         self, atlas_qm: AtlasQueryManager, atlas_lc: pd.DataFrame
     ):
         # Arrange
         lc_filepath = atlas_qm.get_lightcurve_filepath("T_no_data")
-        atlas_lc.to_csv(lc_filepath, index=False)
+        atlas_lc.to_csv(lc_filepath, index=False) # So can check empty LC no overwrite
 
         # Act
-        status, lc = atlas_qm.recover_query_data("T_no_data", "T_no_data")
+        result = atlas_qm.recover_query_data("T_no_data", "T_no_data")
 
         # Assert
-        assert status == 200
-        assert len(lc) == 12  # read and return the existing non-empty
+        assert isinstance(result, AtlasTaskResult)
+        assert result.task_status == AtlasTaskStatus.RETURNED_WITHOUT_DATA
+        assert result.http_code == 200
+        assert len(result.lightcurve) == 0  # returned is empty...
 
         loaded_lc = pd.read_csv(lc_filepath)
-        assert len(loaded_lc) == 12  # the file was not overwritten by the empty one.
+        assert len(loaded_lc) == 12  # ...but file was not overwritten by empty LC
 
 
 class Test__RecoverExistingQueries:
@@ -228,7 +236,7 @@ class Test__RecoverExistingQueries:
         finished, ongoing, errors = atlas_qm.recover_existing_queries()
 
         # Assert
-        assert set(finished) == set(["T_ready00", "T_no_data00"])
+        assert set(finished) == set(["T_ready00", "T_no_data00", "T_bad_query00"])
         # We skipped T901 bc. it has another project_identifier
         assert set(ongoing) == set(["T00", "T01"])
         assert set(errors) == set(["T_bad_query00"])
@@ -245,7 +253,7 @@ class Test__RecoverExistingQueries:
         finished, ongoing, errors = atlas_qm.recover_existing_queries()
 
         # Assert
-        exp_targets = ["T_ready00", "T_no_data00"]
+        exp_targets = ["T_ready00", "T_no_data00", "T_bad_query00"] # 'bad': also done!!
         assert set(finished) == set(exp_targets)
         assert set(ongoing) == set(["T00"])  # break before return T01 from pg2
         # We skipped T901 bc. it has another project_identifier
@@ -267,7 +275,7 @@ class Test__SelectQueryCandidates:
 
         # Assert
         assert set(candidates) == set(["T00"])
-        # T00 has detections, not too old, no existing LC, has a valid score
+        # T00:: has detections, not too old, no existing LC, has a valid score
 
     def test__select_old_lc(
         self, write_atlas_lc: NoReturn, atlas_qm: AtlasQueryManager, t_write: Time
@@ -384,14 +392,14 @@ class Test__SubmitQueryAndHelpers:
         assert resp.__class__.__name__ == "MockPostResponse"
         assert resp.status_code == 201
 
-    def test__submit_thottles(self, atlas_qm: AtlasQueryManager, t_fixed: Time):
-        # Arrange
-        T00 = atlas_qm.target_lookup["T00"]
+    # def test__submit_thottles(self, atlas_qm: AtlasQueryManager, t_fixed: Time):
+    #     # Arrange
+    #     T00 = atlas_qm.target_lookup["T00"]
 
-        # Act
-        resp = atlas_qm.submit_query(T00)
+    #     # Act
+    #     resp = atlas_qm.submit_query(T00)
 
-        # Arrange
+    #     # Arrange
 
 
 class Test__SubmitQueryies:

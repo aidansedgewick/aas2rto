@@ -1,9 +1,13 @@
+from __future__ import annotations # Must be first import
+
+import enum
 import getpass
 import io
 import requests
 import time
 import warnings
 from collections.abc import Iterator
+from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
@@ -16,6 +20,23 @@ logger = getLogger(__name__.split(".")[-1])
 
 class AtlasClientWarning(UserWarning):
     pass
+
+class AtlasTaskStatus(enum.Enum):
+    SUBMITTED_NOT_FINISHED = enum.auto()
+    RETURNED_WITH_DATA = enum.auto()
+    RETURNED_WITHOUT_DATA = enum.auto()
+    RETURNED_WITH_ERROR = enum.auto()
+
+    @property
+    def is_finished(self) -> bool:
+        return self is not AtlasTaskStatus.SUBMITTED_NOT_FINISHED
+
+@dataclass(frozen=True)
+class AtlasTaskResult:
+    task_status: AtlasTaskStatus
+    http_code: int
+    lightcurve: pd.DataFrame | Table | dict | None = None
+    error_message: str | None = None
 
 
 class AtlasClient:
@@ -39,7 +60,7 @@ class AtlasClient:
     )
 
     # these are the normal http response codes...
-    QUERY_EXISTS = 200
+    QUERY_EXISTS = 200 # Does NOT imply that query is finished!
     QUERY_SUBMITTED = 201
     QUERY_BAD_REQUEST = 400
     QUERY_THROTTLED = 429
@@ -178,12 +199,11 @@ class AtlasClient:
         return_type: str = None,
         timeout: float = None,
         delete_finished=False,
-    ) -> tuple[int, Any]:
+    ) -> AtlasTaskResult:
         """
         Returns
         -------
-        status_code : int
-        lightcurve : Any (depends on input return_type)
+        task_result : aas2rto.query_managers.atlas.atlas_client.AtlasTaskResult
         """
         self.check_return_type(return_type)
 
@@ -196,34 +216,48 @@ class AtlasClient:
             # Is the query finished?
             finishtimestamp = query_data.get("finishtimestamp", None)
             if finishtimestamp is None:
-                return query_response.status_code, None
+                # Query is not finished! BUT status_code is still probably 200
+                return AtlasTaskResult(
+                    task_status=AtlasTaskStatus.SUBMITTED_NOT_FINISHED, 
+                    http_code=query_response.status_code
+                )
 
+            # If query is finished, get the data
             result_url = query_data.get("result_url", None)
             if result_url is None:
                 # If there is finish_tstamp but no result_url, there must be an error.
                 lightcurve = self.get_empty_lightcurve(return_type=return_type)
-                error_msg = query_data.get("error_msg", None)
+                error_message = query_data.get("error_msg", None)
                 result_str = task_url.split("/")[-1]
                 comment = query_data.get("comment", "")
-                status_code = query_response.status_code
-                msg = f"For {result_str} ('{comment}'):\n    {status_code}: {error_msg}"
-                if error_msg == "No data returned":
+                msg = (
+                    f"For {result_str} ('{comment}'):\n"
+                    f"    {query_response.status_code}: {error_message}"
+                )
+                if error_message == "No data returned":
                     logger.debug(msg)
-                    status = self.QUERY_EXISTS
+                    task_status = AtlasTaskStatus.RETURNED_WITHOUT_DATA
                     # Overrule resp.status_code - we don't count 'empty' as an error!
                 else:
                     logger.warning(msg)
-                    status = query_response.status_code
+                    task_status = AtlasTaskStatus.RETURNED_WITH_ERROR
             else:
                 # There's a result_url - download and return it!
+                error_message = None
+                task_status = AtlasTaskStatus.RETURNED_WITH_DATA
                 lightcurve_response = s.get(result_url, headers=self.headers)
                 lightcurve = self.process_task_data(
                     lightcurve_response.text, return_type=return_type
                 )
-                status = query_response.status_code
+        task_result = AtlasTaskResult(
+            task_status=task_status,
+            http_code=query_response.status_code,
+            error_message=error_message,
+            lightcurve=lightcurve
+        )
         if delete_finished:
             self.delete_tasks(task_url)
-        return status, lightcurve
+        return task_result
 
     def delete_tasks(self, task_url_list: str):
         if isinstance(task_url_list, str):

@@ -632,6 +632,9 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
             if fink_data is None:
                 continue
 
+            if fink_data.lightcurve is None:
+                continue
+
             if self.alert_id_key not in fink_data.lightcurve:
                 highlight = f"'{self.alert_id_key}' not in {self.name}_data.lightcurve"
                 msg = f"{target_id}: for {self.name} \033[33;1m{highlight}\033[0m"

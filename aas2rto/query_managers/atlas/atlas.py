@@ -12,7 +12,9 @@ from astropy.time import Time
 from aas2rto import utils
 from aas2rto.exc import UnknownTargetWarning
 from aas2rto.query_managers.registry import qm_registry
-from aas2rto.query_managers.atlas.atlas_client import AtlasClient
+from aas2rto.query_managers.atlas.atlas_client import (
+    AtlasClient, AtlasTaskResult, AtlasTaskStatus
+)
 from aas2rto.query_managers.base import LightcurveQueryManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
@@ -129,31 +131,41 @@ class AtlasQueryManager(LightcurveQueryManager):
         self.atlas_client = AtlasClient(self.token)
 
     def recover_query_data(
-        self, target_id: str, task_url: str, timeout: float = None, t_ref: Time = None
+        self,
+        target_id: str,
+        task_url: str,
+        timeout: float = None,
+        save_lightcurve: bool = True,
+        t_ref: Time = None,
     ):
         """
         Does NOT add lightcurves to target.
         """
         t_ref = t_ref or Time.now()
 
-        status, unprocessed_lightcurve = self.atlas_client.recover_task_data(
+        task_result = self.atlas_client.recover_task_data(
             task_url,
             return_type="pandas",
             timeout=timeout,
             delete_finished=False,  # NO - delete them all in one go.
         )
-        if unprocessed_lightcurve is None:
-            return status, unprocessed_lightcurve
 
-        lightcurve = process_atlas_lightcurve(unprocessed_lightcurve)
+        if task_result.task_status is AtlasTaskStatus.SUBMITTED_NOT_FINISHED:
+            return task_result
 
-        lightcurve_filepath = self.get_lightcurve_filepath(target_id)
-        if len(lightcurve) == 0:
-            if lightcurve_filepath.exists():
+        if task_result.lightcurve is None:
+            status = task_result.task_status
+            logger.error(f"Unexpected state: task status {status} but LC is None")
+            return task_result
+
+        lightcurve = process_atlas_lightcurve(task_result.lightcurve)
+        if save_lightcurve:
+            lightcurve_filepath = self.get_lightcurve_filepath(target_id)
+            if len(lightcurve) == 0 and lightcurve_filepath.exists():
                 lightcurve = pd.read_csv(lightcurve_filepath)
-                # We may as well just re-write the existing lightcurve.
-        lightcurve.to_csv(lightcurve_filepath, index=False)
-        return status, lightcurve
+                # We may as well just re-write existing LC to update the timestamp
+            lightcurve.to_csv(lightcurve_filepath, index=False)
+        return task_result
 
     def recover_existing_queries(
         self, t_ref: Time = None, delete_finished_queries: bool = True
@@ -170,11 +182,11 @@ class AtlasQueryManager(LightcurveQueryManager):
         finished_task_urls = []
 
         start_time = time.perf_counter()
-        for task_result in self.atlas_client.iterate_existing_queries(
+        for task in self.atlas_client.iterate_existing_queries(
             max_query_time=max_query_time
         ):
             # Is this task relevant to us?
-            query_comment: str = task_result.get("comment", None)
+            query_comment: str = task.get("comment", None)
             if query_comment is None:
                 # This must be a query put by hand in the webform... Don't delete it!
                 continue
@@ -190,26 +202,28 @@ class AtlasQueryManager(LightcurveQueryManager):
                 continue
 
             # Is the query in progress, or finished?
-            task_url = task_result.get("url", None)
+            task_url = task.get("url", None)
             if task_url is not None:
                 try:
-                    status, lc = self.recover_query_data(target_id, task_url)
+                    task_result = self.recover_query_data(target_id, task_url)
                 except requests.exceptions.ReadTimeout as e:
                     self.logger.error("Timeout: break")
                     break
             else:
                 self.logger.info(f"no task_url (key 'url') for {target_id}")
 
-            if status == AtlasClient.QUERY_SUBMITTED:
+            if task_result.task_status == AtlasTaskStatus.SUBMITTED_NOT_FINISHED:
                 self.submitted_queries[target_id] = task_url
                 ongoing_queries.append(target_id)
-            elif status == AtlasClient.QUERY_EXISTS:
-                self.submitted_queries.pop(target_id, None)
-                finished_task_urls.append(task_url)
-                finished_queries.append(target_id)
-            elif status == AtlasClient.QUERY_BAD_REQUEST:
-                self.submitted_queries.pop(target_id, None)
-                error_queries.append(target_id)
+            else:
+                if not task_result.task_status.is_finished:
+                    logger.error("Uncertain state")
+                else:
+                    self.submitted_queries.pop(target_id, None)
+                    finished_task_urls.append(task_url)
+                    finished_queries.append(target_id)
+                if task_result.task_status is AtlasTaskStatus.RETURNED_WITH_ERROR:
+                    error_queries.append(target_id)
 
         if delete_finished_queries:
             self.atlas_client.delete_tasks(finished_task_urls)
@@ -465,6 +479,7 @@ class AtlasQueryManager(LightcurveQueryManager):
         if iteration == 0:
             self.logger.info("Skip atlas queries on iter0: only load existing")
             self.load_target_lightcurves(t_ref=t_ref, only_flag_updated=False)
+            # self.recover_existing_queries()
             return
 
         # Check queries that already exist on server

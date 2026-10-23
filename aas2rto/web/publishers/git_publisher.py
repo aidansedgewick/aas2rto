@@ -157,7 +157,7 @@ class GitPublisher:
 
         # git commit: easier to use commit msg with no space and use easy "split()"
         git_commit_cmd = (
-            f"git -C {self.web_base_path} commit -m 'Update_{t_ref.isot}' --allow-empty"
+            f"git -C {self.web_base_path} commit -m 'Update {t_ref.isot}' --allow-empty"
         )
         try:
             cmd = shlex.split(git_commit_cmd)
