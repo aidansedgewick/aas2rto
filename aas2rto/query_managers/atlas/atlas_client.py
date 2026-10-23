@@ -1,3 +1,5 @@
+from __future__ import annotations # Must be first import
+
 import enum
 import getpass
 import io
@@ -33,7 +35,7 @@ class AtlasTaskStatus(enum.Enum):
 class AtlasTaskResult:
     task_status: AtlasTaskStatus
     http_code: int
-    lightcurve: Any | None = None
+    lightcurve: pd.DataFrame | Table | dict | None = None
     error_message: str | None = None
 
 
