@@ -64,7 +64,7 @@ def no_subprocess(monkeypatch: pytest.MonkeyPatch):
     # define HERE (main conftest.py), so that no subprocess commands ever run.
     def dummy_check_output(*args, **kwargs):
         # logger printed as explanation if tests ever fail
-        logger.info("subprocesses prevented in tests")
+        logger.info("subprocesses prevented in tests by fixture in conftest!")
         return "".encode()
 
     monkeypatch.setattr(subprocess, "check_output", dummy_check_output)

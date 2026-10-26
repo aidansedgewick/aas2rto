@@ -180,3 +180,6 @@ class GitPublisher:
             push_output = subprocess.check_output(cmd).decode("utf-8")
         except subprocess.CalledProcessError as e:
             print(e)
+
+    def perform_all_publisher_tasks(self):
+        self.publish()

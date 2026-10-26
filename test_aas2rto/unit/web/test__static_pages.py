@@ -43,8 +43,9 @@ def prepared_outputs_mgr(outputs_mgr_with_plots: OutputsManager, t_fixed: Time):
 class MockPublisher:
     def __init__(self, config, web_base_path):
         self.published = False
+        self.config = {}
 
-    def publish(self, t_ref: Time = None):
+    def perform_all_publisher_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
         self.published = True  # wow!
@@ -287,7 +288,7 @@ class Test__Publish:
         self, page_mgr: StaticPagesManager, monkeypatch: pytest.MonkeyPatch
     ):
         # Act
-        page_mgr.publish()
+        page_mgr.perform_all_tasks()
 
         # Assert
         assert page_mgr.publishers["git"].published is True
