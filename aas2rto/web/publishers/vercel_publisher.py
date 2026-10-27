@@ -81,14 +81,13 @@ class VercelClient:
         session: requests.Session = None,
         attempt: int = 0,
         max_attempts: int = 3,
-    ):
+    ) -> requests.Response:
         api_url = f"{self.vercel_api}/v2/files"
-        is_local_session = session is None
+        is_local_session = session is None # Ensure session close if not from kwarg
         if session is None:
             session = requests.Session()
             session_headers = {"Authorization": f"Bearer {self.project_token}"}
             session.headers.update(session_headers)
-            close_session = True # Make sure session is close if not passed as ctx mgr.
 
         rel_path = payload["file"]
         data = payload["data"]
@@ -154,7 +153,7 @@ class VercelClient:
             self.logger.error(msg)
         return response
 
-    def get_deployment_history(self, limit: int=100):
+    def get_deployment_history(self, limit: int=100) -> list[dict]:
         self.logger.info("get vercel deployments")
 
         url = f"{self.vercel_api}/v7/deployments"
@@ -190,15 +189,15 @@ class VercelClient:
         self.logger.info(f"Got {len(deployment_records)} deployment records total")
         return deployment_records
 
-    def delete_deployment(self, deployment_id: int, session: requests.Session = None):
+    def delete_deployment(
+        self, deployment_id: int, session: requests.Session = None
+    ) -> None:
         url = f"{self.vercel_api}/v13/deployments/{deployment_id}"
 
-        logger.info(f"about to del at {url}")
-        is_local_session = session is None # Close sess later if not passed as ctx mgr
+        is_local_session = session is None # Ensure session close if not from kwarg
         if session is None:
             session = requests.Session()
             session.headers.update(self.default_headers)
-            close_session = True 
 
         response: requests.Response = session.delete(url)
         if is_local_session:
@@ -271,7 +270,7 @@ class VercelPublisher:
             json.dump(manifest, f)
         return
 
-    def publish(self):
+    def publish(self) -> None:
 
         self.upload_modified_files()  # Better to upload few files each loop.
 
@@ -285,7 +284,7 @@ class VercelPublisher:
         self.deploy()
         self.last_publish_time = time.perf_counter()
 
-    def deploy(self):
+    def deploy(self) -> requests.Response:
 
         manifest = self.load_manifest()
 
@@ -355,7 +354,7 @@ class VercelPublisher:
         self.write_manifest(manifest)
         return qtracker.success, qtracker.missing, qtracker.failed
 
-    def cleanup_old_deployments(self, force: bool=False):
+    def cleanup_old_deployments(self, force: bool=False) -> tuple[list, list]:
         self.logger.info("start deployment clean-up")
 
         cleanup_interval = self.config["cleanup_interval"]
@@ -366,7 +365,12 @@ class VercelPublisher:
             logger.info(msg)
             return
         
-        deployment_records = self.vercel_client.get_deployment_history()
+        try:
+            deployment_records = self.vercel_client.get_deployment_history()
+        except requests.HTTPError as e:
+            msg = f"Can't get deployment history:\n    {type(e)}: {e}"
+            logger.error(msg)
+            return 
         n_deployments = self.config["max_deployments"]
 
         deployment_records.sort(key=lambda dpl: dpl["created"]) 
