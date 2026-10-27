@@ -65,6 +65,7 @@ def no_subprocess(monkeypatch: pytest.MonkeyPatch):
     def dummy_check_output(*args, **kwargs):
         # logger printed as explanation if tests ever fail
         logger.info("subprocesses prevented in tests by fixture in conftest!")
+        logger.info(f"args: {args}")
         return "".encode()
 
     monkeypatch.setattr(subprocess, "check_output", dummy_check_output)

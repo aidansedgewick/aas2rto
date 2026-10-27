@@ -29,7 +29,32 @@ def web_base_path(tmp_path: Path):
 
 @pytest.fixture
 def patched_publisher(git_config: dict, web_base_path: Path):
+    # Remember os.check_output() is patched in top-level conftest.py,
+    # so no actual git-commands are run.
     return GitPublisher(git_config, web_base_path)
+
+
+class Test__PatchedGitCommands:
+    def test__git_add(self, patched_publisher: GitPublisher):
+        # Act
+        output = patched_publisher._git_add_all()
+
+        # Assert
+        assert output == ""
+
+    def test__git_commit(self, patched_publisher: GitPublisher):
+        # Act
+        output = patched_publisher._git_commit()
+
+        # Assert
+        assert output == ""
+
+    def test__git_push(self, patched_publisher: GitPublisher):
+        # Act
+        output = patched_publisher._git_push()
+
+        # Assert
+        assert output == ""
 
 
 class Test__InitPublisher:
@@ -105,3 +130,21 @@ class Test__InitPublisher:
         # Act
         with pytest.raises(MissingKeysError):
             publisher = GitPublisher(git_config, web_base_path)
+
+
+class Test__Publish:
+    def test__publish(self, patched_publisher: GitPublisher):
+        # Act
+        has_published = patched_publisher.publish()
+
+        # Assert
+        assert has_published
+
+    def test__publish_wait_for_interval(self, patched_publisher: GitPublisher):
+        # Arrange
+        publish_first = patched_publisher.publish()
+        assert publish_first
+
+        # Act
+        publish_second = patched_publisher.publish()
+        assert not publish_second

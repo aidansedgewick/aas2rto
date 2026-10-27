@@ -134,28 +134,33 @@ class GitPublisher:
     def publish(self):
 
         publish_interval = self.config["publish_interval"]
-        elapsed = time.perf_counter() - self.last_publish_time
+        elapsed = time.time() - self.last_publish_time
         if elapsed < publish_interval:
             msg = f"skip git publish: {elapsed:.1f}s<{publish_interval:.1f} required"
             logger.info(msg)
-            return
+            return False
 
         logger.info("start git publish")
         self._git_add_all()
         self._git_commit()
         self._git_push()
 
-        self.last_publish_time = time.perf_counter()
+        self.last_publish_time = time.time()  # NOT perf_counter, resets to 0 at boot.
+        return True
 
     def _git_add_all(self):
         git_add_cmd = f"git -C {self.web_base_path} add --all"
         cmd = shlex.split(git_add_cmd)
-        git_add_output = subprocess.check_output(cmd).decode("utf-8")
+        try:
+            git_add_output = subprocess.check_output(cmd).decode("utf-8")
+        except subprocess.CalledProcessError as e:
+            print(e)
+        return git_add_output
 
     def _git_commit(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
 
-        # git commit: easier to use commit msg with no space and use easy "split()"
+        # use shlex to allow space inside commit msg
         git_commit_cmd = (
             f"git -C {self.web_base_path} commit -m 'Update {t_ref.isot}' --allow-empty"
         )
@@ -164,6 +169,7 @@ class GitPublisher:
             commit_output = subprocess.check_output(cmd).decode("utf-8")
         except subprocess.CalledProcessError as e:
             print(e)
+        return commit_output
 
     def _git_push(self):
         git_branch = self.config["branch"]
@@ -180,6 +186,7 @@ class GitPublisher:
             push_output = subprocess.check_output(cmd).decode("utf-8")
         except subprocess.CalledProcessError as e:
             print(e)
+        return push_output
 
     def perform_all_publisher_tasks(self):
         self.publish()
