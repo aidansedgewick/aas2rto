@@ -161,31 +161,37 @@ class QueryTracker:
     def safe_to_query(self):
         # Is it sensible to conitnue with queries, or is everything failing?
         if self.n_failed_queries >= self.max_failed_queries:
-            logger.warning(f"Too many failed queries ({self.n_failed})")
+            logger.warning(f"Too many failures ({self.n_failed})")
             return False
 
         t_elapsed = time.perf_counter() - self.t_start
         if t_elapsed > self.max_query_time:
             msg = (
-                f"Queries taking too long "
+                f"QueryTracker timeout: "
                 f"({t_elapsed:.1f}s > max {self.max_query_time:.1f}s)"
             )
             logger.warning(msg)
             return False
         return True
 
-    def log_summary(self, name: str = ""):
+    def log_summary(
+        self, name: str = "", tasks_str: str="queries", data_str: str="objects", **kwargs
+    ):
+        """
+        All kwargs here are just for extra description in log messages.
+        Unknown kwargs are ignorred.
+        """
         msg = (
-            f"{name} query summary:\n"
-            f"    {self.n_success_queries} succesful queries ({self.n_success} objects)"
+            f"{name} summary:\n"
+            f"    {self.n_success_queries} succesful {tasks_str} ({self.n_success} {data_str})"
         )
         if self.n_missing > 0:
-            msg = msg + f"\n    {self.n_missing} objects missing/returned no data"
+            msg = msg + f"\n    {self.n_missing} {data_str} missing/returned no data"
 
         if self.n_failed_queries > 0:
             fail_msg = (
-                f"\n    {self.n_failed_queries} failed queries "
-                f"({self.n_failed} objects)"
+                f"\n    {self.n_failed_queries} failed {tasks_str} "
+                f"({self.n_failed} {data_str})"
             )
             msg = msg + fail_msg
         logger.info(msg)

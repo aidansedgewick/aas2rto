@@ -4,8 +4,13 @@ import pytest
 import requests
 from pathlib import Path
 
+from astropy.time import Time
+
 from aas2rto.exc import MissingKeysError, UnexpectedKeysError
-from aas2rto.web.publishers.vercel_publisher import VercelPublisher
+from aas2rto.web.publishers.vercel_publisher import (
+    VercelPublisher,
+    VercelProjectVerificationError,
+)
 
 
 @pytest.fixture
@@ -24,7 +29,7 @@ def vercel_config():
 
 
 class MockResponse(requests.Response):
-    pass
+    pass # To test that MockResponse is returned instead of 'real' req.Response...
 
 
 @pytest.fixture(autouse=True)
@@ -37,7 +42,7 @@ def patch_requests_post(monkeypatch: pytest.MonkeyPatch):
             data_str = data.decode() if isinstance(data, bytes) else str(data)
             if "fail" in data_str:
                 resp.status_code = 400
-                resp.reason = "Fail requested"
+                resp.reason = "Failure requested"
             resp._content = data
 
         return resp
@@ -53,12 +58,25 @@ def patch_requests_get(monkeypatch: pytest.MonkeyPatch):
         resp.reason = "ok"
         if "fail" in url:
             resp.status_code = 404
-            resp.reason = "Fail requested"
+            resp.reason = "Failure requested"
 
         return resp
 
     monkeypatch.setattr(requests.Session, "get", mock_get)
 
+@pytest.fixture(autouse=True)
+def patch_requests_delete(monkeypatch: pytest.MonkeyPatch):
+    def mock_delete(self, url: str, **kwargs):
+        resp = MockResponse()
+        resp.status_code = 200
+        resp.reason = "ok"
+        if "fail" in url:
+            resp.status_code = 404
+            resp.reason = "Failure requested"
+        
+        return resp
+    
+    monkeypatch.setattr(requests.Session, "delete", mock_delete)
 
 @pytest.fixture
 def patched_publisher(
@@ -130,6 +148,16 @@ class Test__VercelInit:
 
         # Act
         with pytest.raises(MissingKeysError):
+            vp = VercelPublisher(vercel_config, web_base_path)
+
+    def test__verification_fail_raises(
+        self, vercel_config: dict, web_base_path: Path
+    ):
+        # Arrange
+        vercel_config["project_name"] = "please_fail"
+
+        # Act
+        with pytest.raises(VercelProjectVerificationError):
             vp = VercelPublisher(vercel_config, web_base_path)
 
 
@@ -312,6 +340,66 @@ class Test__Deployment:
 
         # Assert
         resp.status_code == 200  # Not really sure how to test this one.
+
+
+class Test__DeleteOldDeployments:
+
+    def test__keep_only_latest(
+        self,
+        patched_publisher: VercelPublisher,
+        monkeypatch: pytest.MonkeyPatch,
+        t_fixed: Time,
+    ):
+        # Arrage
+        def mock_deployments():
+            t0_unixms = t_fixed.unix * 1000.0
+            dt = 30.0 * 60.0 * 1000.0 # 30 min * 60 sec * 1000ms
+            dpls = [
+                {"uid": f"dpl_{ii:03d}", "created": (t0_unixms + ii * dt)}
+                for ii in range(5)
+            ]
+            return dpls
+    
+        monkeypatch.setattr(
+            patched_publisher.vercel_client, "get_deployment_history", mock_deployments
+        )
+        patched_publisher.config["max_deployments"] == 3
+
+        # Act
+        success, failed = patched_publisher.cleanup_old_deployments()
+
+        # Assert
+        assert set(success) == set([f"dpl_000", "dpl_001"]) # The oldest!
+        assert set(failed) == set()
+
+    def test__quit_after_failures(
+        self,
+        patched_publisher: VercelPublisher,
+        monkeypatch: pytest.MonkeyPatch,
+        t_fixed: Time,
+    ):
+        # Arrage
+        def mock_deployments():
+            t0_unixms = t_fixed.unix * 1000.0
+            dt = 30.0 * 60.0 * 1000.0 # 30 min * 60 sec * 1000ms
+            dpls = [
+                {"uid": f"dpl_fail_{ii:03}", "created": (t0_unixms + ii * dt)}
+                for ii in range(10)
+            ]
+            return dpls
+    
+        monkeypatch.setattr(
+            patched_publisher.vercel_client, "get_deployment_history", mock_deployments
+        )
+        patched_publisher.config["max_failed_cleanups"] = 2
+
+        # Act
+        success, failed = patched_publisher.cleanup_old_deployments()
+
+        # Assert
+        assert set(success) == set()
+        assert set(failed) == set(["dpl_fail_000", "dpl_fail_001"])
+
 
 
 class Test__Publish:

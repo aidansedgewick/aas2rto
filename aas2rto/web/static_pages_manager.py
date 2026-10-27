@@ -38,6 +38,9 @@ class PublisherProtocol(Protocol):
     def publish(self) -> None:
         pass
 
+    def perform_all_publisher_tasks(self) -> None:
+        pass
+
 
 class StaticPagesManager:
 
@@ -52,7 +55,6 @@ class StaticPagesManager:
     def __init__(
         self, config: dict, outputs_manager: OutputsManager, path_manager: PathManager
     ):
-        logger.info("init static pages manager")
         self.config = self.default_config.copy()
         self.config.update(config)
         utils.check_unexpected_config_keys(
@@ -68,13 +70,18 @@ class StaticPagesManager:
         self.web_lists_path = self.web_base_path / "lists"
         self.web_target_path = self.web_base_path / "target"
 
+
+        self.logger = getLogger("static_pages")
+        self.logger.info("init static pages manager")
+
         self.initialize_publishers()
 
         self.create_web_directories()  # Do this last - allow for possible clone.
 
         self.web_environment = Environment(
             loader=FileSystemLoader(self.path_manager.web_templates_path)
-        )
+        ) # jinja2 setup.
+
         self.last_git_publish = 0.0
         self.last_vercel_publish = 0.0
 
@@ -92,19 +99,32 @@ class StaticPagesManager:
 
         git_config: dict = self.config["git"] or {}  # .get(None, {}) gives 'None'...
         use_git = git_config.pop("use", True)  # ...so this line failes.
+        git_publisher = None
         if git_config and use_git:
-            self.publishers["git"] = GitPublisher(git_config, self.web_base_path)
+            git_publisher = GitPublisher(git_config, self.web_base_path)
+            self.publishers["git"] = git_publisher
         else:
-            logger.info("not using git publisher")
+            self.logger.info("not using git publisher")
 
         vercel_config: dict = self.config["vercel"] or {}
         use_vercel = vercel_config.pop("use", True)
+        vercel_publisher = None
         if vercel_config and use_vercel:
-            self.publishers["vercel"] = VercelPublisher(
-                vercel_config, self.web_base_path
-            )
+            vercel_publisher = VercelPublisher(vercel_config, self.web_base_path)
+            self.publishers["vercel"] = vercel_publisher
         else:
-            logger.info("not using vercel")
+            self.logger.info("not using vercel")
+
+        if git_publisher and vercel_publisher:
+            if vercel_publisher.config.get("use_direct_deployment", False):
+                msg = (
+                    "Static pages config:\n"
+                    "    - \033[33;1mgit_publisher\033[0m\n"
+                    "           AND\n"
+                    "    - \033[33[1mdirect_deployments with vercel_publisher\033[0m\n"
+                    "Is this correct?"
+                )
+                self.logger.error(msg)
 
     def _get_sci_ranked_page_path(self):
         return self.web_lists_path / "sci_ranked.html"
@@ -160,10 +180,12 @@ class StaticPagesManager:
                     self.build_redirect_pages_for_target(target)
                 target_pages_built = target_pages_built + 1
 
-        logger.info(f"skip web pages for {len(targets_skipped)} targets with low score")
+        self.logger.info(
+            f"skip web pages for {len(targets_skipped)} targets with low score"
+        )
 
         if target_pages_built > 0:
-            logger.info(f"built target pages for {target_pages_built}")
+            self.logger.info(f"built target pages for {target_pages_built}")
 
     def build_index_page(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -360,11 +382,14 @@ class StaticPagesManager:
             with open(redirect_page_path, "w+") as f:
                 f.writelines(rendered_page)
 
-    def publish(self):
-        for publisher_name, publisher in self.publishers.items():
-            publisher.publish()
+    # def publish(self):
+    #     for publisher_name, publisher in self.publishers.items():
+    #         publisher.publish()
 
     def perform_all_tasks(self, t_ref: Time = None):
         t_ref = t_ref or Time.now()
         self.build_webpages(t_ref=t_ref)
-        self.publish()
+        # self.publish()
+
+        for publisher_name, publisher in self.publishers.items():
+            publisher.perform_all_publisher_tasks()
