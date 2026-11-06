@@ -64,7 +64,7 @@ class VercelClient:
             response.raise_for_status()
             self.logger.info(f"project '{self.project_name}' verified")
         except requests.HTTPError as e:
-            logger.error(e)
+            self.logger.error(e)
             msg = (
                 f"project '{self.project_name}' verification failed!\n"
                 f"    \033[31;1mstatus {response.status_code}: {response.reason}\033[0m\n"
@@ -112,7 +112,7 @@ class VercelClient:
                     f"upload {rel_path}:\n"
                     f"    failed on attempt {attempt+1}/{max_attempts}"
                 )
-                logger.error(msg)
+                self.logger.error(msg)
                 attempt_kws = dict(attempt=attempt + 1, max_attempts=max_attempts)
                 return self.upload_single_file(payload, session=session, **attempt_kws)
             else:
@@ -203,7 +203,7 @@ class VercelClient:
         if is_local_session:
             session.close()
 
-        logger.info(f"get response {response} {response.reason}")
+        self.logger.debug(f"get response {response} {response.reason}")
 
         response.raise_for_status()
 
@@ -278,7 +278,7 @@ class VercelPublisher:
         elapsed = time.time() - self.last_publish_time
         if elapsed < publish_interval:
             msg = f"skip vercel publish: {elapsed:.1f}s<{publish_interval:.1f} required"
-            logger.info(msg)
+            self.logger.info(msg)
             return
 
         self.deploy()
@@ -360,17 +360,17 @@ class VercelPublisher:
         elapsed = time.time() - self.last_deployment_cleanup  # perf_c resets on boot!
 
         if elapsed < cleanup_interval and not force:
-            msg = f"skip clean-up: {elapsed:.1f}s (<{cleanup_interval}s) since last"
-            logger.info(msg)
+            msg = f"skip: {elapsed:.1f}s (<{cleanup_interval}s) since last"
+            self.logger.info(msg)
             return [], []
 
-        logger.info(f"elapsed {elapsed}")
+        self.logger.info(f"{elapsed:.1f}s since last clean-up")
 
         try:
             deployment_records = self.vercel_client.get_deployment_history()
         except requests.HTTPError as e:
             msg = f"Can't get deployment history:\n    {type(e)}: {e}"
-            logger.error(msg)
+            self.logger.error(msg)
             return [], []
         n_deployments = self.config["max_deployments"]
 
@@ -395,8 +395,9 @@ class VercelPublisher:
             try:
                 self.vercel_client.delete_deployment(deployment_id)
                 qtracker.track_success(deployment_id)
-                logger.info(f"tracking success {deployment_id}")
             except requests.HTTPError as e:
+                msg = f"clearing {deployment_id} failed\n    {type(e)}: {e}"
+                self.logger.debug(msg)
                 qtracker.track_failed(deployment_id)
 
         qtracker.log_summary(

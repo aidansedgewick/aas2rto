@@ -70,7 +70,6 @@ class StaticPagesManager:
         self.web_lists_path = self.web_base_path / "lists"
         self.web_target_path = self.web_base_path / "target"
 
-
         self.logger = getLogger("static_pages")
         self.logger.info("init static pages manager")
 
@@ -80,7 +79,7 @@ class StaticPagesManager:
 
         self.web_environment = Environment(
             loader=FileSystemLoader(self.path_manager.web_templates_path)
-        ) # jinja2 setup.
+        )  # jinja2 setup.
 
         self.last_git_publish = 0.0
         self.last_vercel_publish = 0.0
