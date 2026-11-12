@@ -8,7 +8,8 @@ from logging import getLogger
 from pathlib import Path
 
 from aas2rto.exc import MissingKeysError
-from aas2rto.utils import QueryTracker, check_unexpected_config_keys
+from aas2rto.utils.config import check_unexpected_config_keys
+from aas2rto.utils.transport import RequestTracker
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -322,7 +323,7 @@ class VercelPublisher:
         token = self.config["project_token"]
         session_headers = {"Authorization": f"Bearer {token}"}
 
-        qtracker = QueryTracker.start(
+        qtracker = RequestTracker.start(
             max_failed_queries=self.config["max_failed_uploads"]
         )
         self.logger.info(f"vercel upload {len(upload_payloads)} files")
@@ -377,7 +378,7 @@ class VercelPublisher:
         deployment_records.sort(key=lambda dpl: dpl["created"])
         deployments_to_clear = deployment_records[:-n_deployments]
 
-        qtracker = QueryTracker.start(
+        qtracker = RequestTracker.start(
             max_failed_queries=self.config["max_failed_cleanups"], max_query_time=60.0
         )
         self.logger.info(f"attempt to clear {len(deployments_to_clear)} deployments")

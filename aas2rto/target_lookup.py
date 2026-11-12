@@ -10,10 +10,10 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, search_around_sky
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.exc import NotATargetError, DuplicateDataWarning
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
+from aas2rto.utils.config import check_missing_config_keys, check_unexpected_config_keys
 
 logger = getLogger("target_lookup")
 
@@ -210,14 +210,14 @@ class TargetLookup:
         target_filepath = Path(target_filepath)
         with open(target_filepath, "r") as f:
             target_config = yaml.load(f, Loader=yaml.FullLoader)
-        utils.check_missing_config_keys(
+        check_missing_config_keys(
             target_config,
             self.REQUIRED_TARGET_CONFIG_KEYS,
             name=target_filepath.stem,
             raise_exc=True,
         )
 
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             target_config,
             self.EXPECTED_TARGET_CONFIG_KEYS,
             name=target_filepath.stem,

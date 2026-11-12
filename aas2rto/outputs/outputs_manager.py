@@ -12,13 +12,14 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto import utils
 from aas2rto.exc import MissingEphemInfoWarning, UnknownTargetWarning
 from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting.visibility_plotter import plot_visibility
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.utils.common import get_observatory_name
+from aas2rto.utils.config import check_unexpected_config_keys
 
 import matplotlib.pyplot as plt
 
@@ -58,7 +59,7 @@ def get_target_summary_data(target):
         dec_deg=f"{target.coord.dec.deg:+09.5f}",
         mag_last=mag_last,
         stamp_last=tstamp_last,
-        has_atlas=has_atlas
+        has_atlas=has_atlas,
     )
     data.update(target.flags)  # ALL flags should be set in scoring...
     return data
@@ -82,7 +83,7 @@ class OutputsManager:
     ):
         self.config = self.default_config.copy()
         self.config.update(outputs_config)
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.config.keys(), self.default_config, name="outputs"
         )
         self._apply_units_to_config()
@@ -217,7 +218,7 @@ class OutputsManager:
 
         t_ref = t_ref or Time.now()
 
-        obs_name = utils.get_observatory_name(observatory)
+        obs_name = get_observatory_name(observatory)
         list_name = f"obs_{obs_name}"
         plots_path = self.path_manager.get_output_plots_path(f"obs_{obs_name}")
 
@@ -282,7 +283,7 @@ class OutputsManager:
     ) -> pd.DataFrame:
 
         t_ref = t_ref or Time.now()
-        obs_name = utils.get_observatory_name(observatory)
+        obs_name = get_observatory_name(observatory)
         logger.info(f"write visible targets at {obs_name}")
 
         minimum_score = self.config["minimum_score"]

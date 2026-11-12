@@ -9,11 +9,12 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto import utils
 from aas2rto.exc import MissingEphemInfoWarning
 from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.path_manager import PathManager
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.utils.common import get_observatory_name
+from aas2rto.utils.config import check_unexpected_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -33,9 +34,7 @@ class ObservatoryManager:
 
         self.config = self.default_config.copy()
         self.config.update(config)
-        utils.check_unexpected_config_keys(
-            self.config, self.default_config, "obs_manager"
-        )
+        check_unexpected_config_keys(self.config, self.default_config, "obs_manager")
         self.sites_config = self.config["sites"]
         self._apply_units_to_config()
 
@@ -87,7 +86,7 @@ class ObservatoryManager:
         dt = self.config["dt"]
         horizon = self.config["horizon"]
 
-        obs_name = utils.get_observatory_name(observatory)
+        obs_name = get_observatory_name(observatory)
         t_str = t.strftime("%y-%m-%d %H:%M")
         msg = f"gen. ephem_info for {obs_name}\n   starting from {t_str}"
         if human_time:

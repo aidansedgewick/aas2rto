@@ -10,7 +10,7 @@ from pathlib import Path
 
 from astropy.time import Time
 
-from aas2rto.utils import check_unexpected_config_keys, check_missing_config_keys
+from aas2rto.utils.config import check_unexpected_config_keys, check_missing_config_keys
 
 logger = getLogger("git_publisher")
 

@@ -12,7 +12,6 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.exc import MissingCoordinatesError
 from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.fink.fink_base import (
@@ -24,6 +23,7 @@ from aas2rto.query_managers.fink.fink_portal_client import (
     readstamp,
 )
 from aas2rto.target import Target
+from aas2rto.utils.config import check_missing_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -127,7 +127,7 @@ def process_fink_lsst_alert(
     alert["nDiaSources"] = object_data["nDiaSources"]
 
     extra_data = {k: data[k] for k in EXTRA_FINK_LSST_ALERT_KEYS if k in data}
-    utils.check_missing_config_keys(
+    check_missing_config_keys(
         data, EXTRA_FINK_LSST_ALERT_KEYS, name=f"fink_lsst.{topic}.{fink_id}.{alert_id}"
     )
     alert.update(extra_data)

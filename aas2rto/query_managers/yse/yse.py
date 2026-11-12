@@ -7,12 +7,13 @@ import pandas as pd
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.base import LightcurveQueryManager
 from aas2rto.query_managers.yse.yse_client import YSEClient, YSEClientError
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.utils.config import check_missing_config_keys, check_unexpected_config_keys
+from aas2rto.utils.files import calc_file_age
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -117,10 +118,10 @@ class YSEQueryManager(LightcurveQueryManager):
                 "    credentials: {username: <>, password: <>}"  # NOT an f-string
             )
         name = "query_managers.yse.credentials"
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             credentials, self.required_credential_keys, name=name, raise_exc=True
         )
-        utils.check_missing_config_keys(
+        check_missing_config_keys(
             credentials, self.required_credential_keys, name=name, raise_exc=True
         )
         username = credentials["username"]
@@ -144,10 +145,8 @@ class YSEQueryManager(LightcurveQueryManager):
 
             name = f"query_managers.yse.explorer_queries.{query_name}"
             exp_keys = self.required_explorer_query_keys
-            utils.check_missing_config_keys(
-                query_config, exp_keys, name=name, raise_exc=True
-            )
-            utils.check_unexpected_config_keys(
+            check_missing_config_keys(query_config, exp_keys, name=name, raise_exc=True)
+            check_unexpected_config_keys(
                 query_config, exp_keys, name=name, raise_exc=True
             )
 
@@ -183,7 +182,7 @@ class YSEQueryManager(LightcurveQueryManager):
 
             ##== Decide if we need to make the query
             query_results_filepath = self.get_query_results_filepath(query_name)
-            file_age = utils.calc_file_age(query_results_filepath, t_ref)
+            file_age = calc_file_age(query_results_filepath, t_ref)
             if file_age < interval:
                 self.logger.info(f"{query_name} has results {file_age:.1f}d old - skip")
                 continue
@@ -288,7 +287,7 @@ class YSEQueryManager(LightcurveQueryManager):
     #             continue  # There's no yse_id associated with this target.
 
     #         lightcurve_filepath = self.get_lightcurve_filepath(yse_id)
-    #         file_age = utils.calc_file_age(lightcurve_filepath, t_ref=t_ref)
+    #         file_age = calc_file_age(lightcurve_filepath, t_ref=t_ref)
     #         if file_age > max_age:
     #             to_query.append(yse_id)
 

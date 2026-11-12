@@ -19,13 +19,14 @@ from jinja2 import Environment, FileSystemLoader
 
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
-from aas2rto.utils import QueryTracker
 from aas2rto.web.publishers.git_publisher import GitPublisher
 from aas2rto.web.publishers.vercel_publisher import VercelPublisher
+from aas2rto.utils.config import check_unexpected_config_keys
+from aas2rto.utils.common import format_link_as_html
+from aas2rto.utils.files import calc_file_age
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -57,7 +58,7 @@ class StaticPagesManager:
     ):
         self.config = self.default_config.copy()
         self.config.update(config)
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.config, self.default_config, name="web.static_pages", raise_exc=True
         )
 
@@ -169,7 +170,7 @@ class StaticPagesManager:
 
             target_page_path = self._get_target_page_path(target_id)
 
-            page_age = utils.calc_file_age(target_page_path, t_ref=t_ref)  # in DAYS
+            page_age = calc_file_age(target_page_path, t_ref=t_ref)  # in DAYS
             page_old = page_age > 1.0
 
             if not target_page_path.exists() or target.updated or page_old:
@@ -344,7 +345,7 @@ class StaticPagesManager:
 
         target_info_lines = target.get_info_lines(
             header_formatter=h2_header_formatter,
-            link_formatter=utils.format_link_as_html,
+            link_formatter=format_link_as_html,
         )
 
         page_data = dict(

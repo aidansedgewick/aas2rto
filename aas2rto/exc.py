@@ -1,58 +1,123 @@
-# Exceptions
+###==================== Exceptions ====================###
+
+# === Base exceptions
 
 
-class BadKafkaConfigError(Exception):
+class ConfigError(Exception):
+    """Inherits from Exception.
+    All config-related Exceptions should inherit from this class"""
+
     pass
 
 
-class MissingCoordinatesError(Exception):
+class TargetError(Exception):
     pass
 
 
-class MissingDateError(Exception):
+# === Config exceptions
+
+
+class BadKafkaConfigError(ConfigError):
     pass
 
 
-class MissingKeysError(Exception):
+class MissingKeysError(ConfigError):
     pass
 
 
-class MissingRequiredConfigKeyError(Exception):
+class MissingRequiredConfigKeyError(ConfigError):
     pass
 
 
-class MissingTargetIdError(Exception):
+class UnexpectedKeysError(ConfigError):
     pass
 
 
-class NotATargetError(Exception):
+# === Target exceptions
+
+
+class MissingCoordinatesError(TargetError):
     pass
 
 
-class UnexpectedKeysError(Exception):
+class MissingDateError(TargetError):
     pass
+
+
+class MissingTargetIdError(TargetError):
+    pass
+
+
+class NotATargetError(TargetError):
+    pass
+
+
+# === Misc exceptions
 
 
 class UnknownQueryManagerError(Exception):
     pass
 
 
-# Warnings
+### ==================== Warnings ==================== ###
+
+# === Base warnings
 
 
-class DuplicateDataWarning(UserWarning):
+class ConfigWarning(UserWarning):
     pass
 
 
-class InvalidEphemWarning(UserWarning):
+class TargetWarning(UserWarning):
     pass
+
+
+# === Config warnings
+
+
+class MissingKeysWarning(ConfigWarning):
+    pass
+
+
+class UnexpectedKeysWarning(ConfigWarning):
+    pass
+
+
+# === Target/data warnings
+
+
+class DuplicateDataWarning(TargetWarning):
+    pass
+
+
+class InvalidEphemWarning(TargetWarning):
+    pass
+
+
+class MissingEphemInfoWarning(TargetWarning):
+    pass
+
+
+class MissingCompiledLightcurveWarning(TargetWarning):
+    pass
+
+
+class SettingLightcurveDirectlyWarning(TargetWarning):
+    pass
+
+
+class UnknownPhotometryTagWarning(TargetWarning):
+    pass
+
+
+class UnknownTargetWarning(TargetWarning):
+    pass
+
+
+# === Misc warnings
 
 
 class MissingColumnWarning(UserWarning):
-    pass
-
-
-class MissingEphemInfoWarning(UserWarning):
     pass
 
 
@@ -60,33 +125,9 @@ class MissingFileWarning(UserWarning):
     pass
 
 
-class MissingKeysWarning(UserWarning):
-    pass
-
-
 class MissingMediaWarning(UserWarning):
     pass
 
 
-class MissingCompiledLightcurveWarning(UserWarning):
-    pass
-
-
-class SettingLightcurveDirectlyWarning(UserWarning):
-    pass
-
-
-class UnexpectedKeysWarning(UserWarning):
-    pass
-
-
 class UnknownObservatoryWarning(UserWarning):
-    pass
-
-
-class UnknownPhotometryTagWarning(UserWarning):
-    pass
-
-
-class UnknownTargetWarning(UserWarning):
     pass

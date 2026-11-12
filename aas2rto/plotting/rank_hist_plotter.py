@@ -9,7 +9,6 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto import utils
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 

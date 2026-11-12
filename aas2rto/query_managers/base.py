@@ -17,7 +17,8 @@ from aas2rto.exc import UnknownTargetWarning
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
-from aas2rto.utils import calc_file_age, clear_stale_files, check_unexpected_config_keys
+from aas2rto.utils.config import check_unexpected_config_keys
+from aas2rto.utils.files import calc_file_age, clear_stale_files
 
 logger = getLogger("base_qm")
 

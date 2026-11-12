@@ -10,10 +10,10 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto import utils
 from aas2rto.observatory.ephem_info import EphemInfo
 from aas2rto.exc import InvalidEphemWarning
 from aas2rto.target import Target
+from aas2rto.utils.common import get_observatory_name
 
 logger = getLogger("default_obs_scoring")
 
@@ -187,7 +187,7 @@ class DefaultObservatoryScoring:
             raise TypeError(
                 "observatory must be of type `astroplan.Observer`, not `None`"
             )
-        obs_name = utils.get_observatory_name(observatory)
+        obs_name = get_observatory_name(observatory)
 
         target_id = target.target_id
 

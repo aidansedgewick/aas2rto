@@ -10,8 +10,8 @@ try:
 except Exception as e:
     slack_sdk = None
 
-from aas2rto import utils
 from aas2rto.exc import MissingRequiredConfigKeyError
+from aas2rto.utils.config import check_missing_config_keys, check_unexpected_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -21,7 +21,7 @@ class SlackMessenger:
 
     def __init__(self, slack_config: dict):
         self.slack_config = slack_config
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.slack_config, self.expected_kwargs, name="slack_config"
         )
 
@@ -31,7 +31,7 @@ class SlackMessenger:
             logger.error(msg)
             raise ModuleNotFoundError(msg)
 
-        missing_config_keys = utils.check_missing_config_keys(
+        missing_config_keys = check_missing_config_keys(
             self.slack_config, self.expected_kwargs, name="slack_config", warn=False
         )
         if missing_config_keys:

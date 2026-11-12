@@ -29,13 +29,10 @@ from aas2rto.query_managers.base import LightcurveQueryManager, KafkaQueryManage
 from aas2rto.query_managers.fink.fink_portal_client import FinkBasePortalClient
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
-from aas2rto.utils import (
-    QueryTracker,
-    calc_file_age,
-    check_missing_config_keys,
-    check_unexpected_config_keys,
-    chunk_list,
-)
+from aas2rto.utils.common import chunk_list
+from aas2rto.utils.config import check_missing_config_keys, check_unexpected_config_keys
+from aas2rto.utils.files import calc_file_age
+from aas2rto.utils.transport import RequestTracker
 
 try:
     import fink_client
@@ -474,7 +471,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
         self.logger.info(f"attempt to query {len(fink_id_list)} LCs")
 
         chunk_results = []
-        qtracker = QueryTracker.start(
+        qtracker = RequestTracker.start(
             max_query_time=self.config["max_query_time"],
             max_failed_queries=self.config["max_failed_queries"],
         )
@@ -564,7 +561,7 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
         self.logger.info("start cutout queries")
 
-        qtracker = QueryTracker.start(
+        qtracker = RequestTracker.start(
             max_query_time=self.config["max_query_time"],
             max_failed_queries=self.config["max_failed_queries"],
         )
