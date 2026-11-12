@@ -43,6 +43,7 @@ from aas2rto.target_lookup import TargetLookup
 from aas2rto.web.web_manager import WebManager
 
 from aas2rto.utils.config import check_unexpected_config_keys
+from aas2rto.utils.logging import setup_initial_logging, setup_file_logging
 from aas2rto.utils.stdout import print_ascii_banner, print_header
 
 from aas2rto import paths
@@ -107,10 +108,21 @@ class TargetSelector:
         "write_comments": True,
         "delete_opp_target_configs": True,
         "quit_on_exc": False,
+        "log_filename": "out.log",
+        "log_stream_level": logging.INFO,
+        "log_file_level": logging.DEBUG,
     }
     # expected_messenger_keys = ("telegram", "slack", "web")
 
-    def __init__(self, aas2rto_config: dict, create_paths: bool = True):
+    def __init__(
+        self,
+        aas2rto_config: dict,
+        create_paths: bool = True,
+        logging_setup: bool = True,
+    ):
+        if logging_setup:
+            setup_initial_logging()
+
         # Check config sections
         check_unexpected_config_keys(
             aas2rto_config,
@@ -149,6 +161,15 @@ class TargetSelector:
 
         # Initialise PathManager next - others Managers depend on it.
         self.path_manager = PathManager(self.paths_config, create_paths=create_paths)
+
+        # Can now fully setup the logs.
+        if logging_setup:
+            setup_file_logging(
+                self.path_manager.logs_path,
+                filename=self.selector_config["log_filename"],
+                stream_level=self.selector_config["log_stream_level"],
+                file_level=self.selector_config["log_file_level"],
+            )
 
         # Initialise ObservatoryManager next - others depend on obs_manager and path_manager
         self.observatory_manager = ObservatoryManager(
@@ -198,12 +219,16 @@ class TargetSelector:
         )
 
     @classmethod
-    def from_config(cls, config_path: Path, create_paths: bool = True):
+    def from_config(
+        cls, config_path: Path, create_paths: bool = True, logging_setup: bool = True
+    ):
         config_path = Path(config_path)
 
         with open(config_path, "r") as f:
             selector_config = yaml.load(f, Loader=yaml.FullLoader)
-        selector = cls(selector_config, create_paths=create_paths)
+        selector = cls(
+            selector_config, create_paths=create_paths, logging_setup=logging_setup
+        )
         return selector
 
     def load_targets_of_opportunity(self, t_ref: Time = None):
