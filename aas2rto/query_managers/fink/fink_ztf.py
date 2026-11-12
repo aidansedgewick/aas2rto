@@ -17,7 +17,6 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.exc import MissingCoordinatesError
 from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.fink.fink_base import (
@@ -29,6 +28,7 @@ from aas2rto.query_managers.fink.fink_portal_client import (
     readstamp,
 )
 from aas2rto.target import Target
+from aas2rto.utils.config import check_missing_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -199,7 +199,7 @@ def process_fink_ztf_alert(
     alert[ZTF_ALERT_ID_KEY] = alert_id  # the long ~20 digit ID number.
 
     extra_data = {k: data[k] for k in EXTRA_FINK_ZTF_ALERT_KEYS if k in data}
-    utils.check_missing_config_keys(
+    check_missing_config_keys(
         data, EXTRA_FINK_ZTF_ALERT_KEYS, name=f"fink_ztf.{topic}.{fink_id}.{alert_id}"
     )
     alert.update(extra_data)

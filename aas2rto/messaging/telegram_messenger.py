@@ -12,8 +12,9 @@ from pathlib import Path
 
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.exc import MissingKeysError, MissingMediaWarning
+from aas2rto.utils.common import chunk_list
+from aas2rto.utils.config import check_unexpected_config_keys
 
 try:
     import telegram
@@ -34,7 +35,7 @@ class TelegramMessenger:
 
     def __init__(self, telegram_config: dict):
         self.telegram_config = telegram_config
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.telegram_config,
             self.expected_kwargs,
             name="telegram_config",
@@ -182,9 +183,7 @@ class TelegramMessenger:
         if isinstance(img_paths, str) or isinstance(img_paths, Path):
             img_paths = [Path(img_paths)]
 
-        for img_chunk in utils.chunk_list(
-            img_paths, chunk_size=self.MAX_MEDIA_GROUP_SIZE
-        ):
+        for img_chunk in chunk_list(img_paths, chunk_size=self.MAX_MEDIA_GROUP_SIZE):
             if len(img_chunk) >= self.MIN_MEDIA_GROUP_SIZE:
                 media_list = []
                 for img_path in img_chunk:

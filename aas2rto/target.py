@@ -29,7 +29,7 @@ from astroplan.plots import plot_altitude
 from aas2rto.exc import MissingDateError, UnknownObservatoryWarning
 from aas2rto.target_data import TargetData
 from aas2rto.observatory.ephem_info import EphemInfo
-from aas2rto.utils import get_observatory_name
+from aas2rto.utils.common import get_observatory_name
 
 logger = getLogger(__name__.split(".")[-1])
 

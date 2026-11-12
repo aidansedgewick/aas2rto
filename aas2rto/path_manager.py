@@ -4,7 +4,7 @@ from pathlib import Path
 from astropy.time import Time
 
 from aas2rto import paths
-from aas2rto import utils
+from aas2rto.utils.config import check_unexpected_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -29,7 +29,7 @@ class PathManager:
 
         self.config = self.default_config.copy()
         self.config.update(config.copy())
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.config, self.default_config, name="path_manager", raise_exc=True
         )
 

@@ -1,10 +1,10 @@
 from logging import getLogger
 from typing import Protocol
 
-from aas2rto import utils
 from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 from aas2rto.web.static_pages_manager import StaticPagesManager
+from aas2rto.utils.config import check_unexpected_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -32,7 +32,7 @@ class WebManager:
     def init_web_managers(self):
         self.managers: dict[str, WebManagerProtocol] = {}
 
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.config, WEB_MANAGER_CLS_LOOKUP, name="web", raise_exc=True
         )
         for manager_name, manager_config in self.config.items():

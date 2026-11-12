@@ -10,12 +10,12 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, search_around_sky
 from astropy.time import Time, TimeDelta
 
-from aas2rto import utils
 from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.query_managers.tns.tns_client import TNSClient, TNSClientError
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.utils.config import check_missing_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -71,7 +71,7 @@ class TNSQueryManager(BaseQueryManager):
                 " {}'uid': <your user_id> and 'user': <your username>"
             )
 
-        utils.check_missing_config_keys(
+        check_missing_config_keys(
             credential_config,
             self.required_credential_keys,
             name="query_managers.tns.credentials",
@@ -172,7 +172,7 @@ class TNSQueryManager(BaseQueryManager):
         # Remove any hourly deltas from yday, day before, etc.
         relevant_stem = self.get_daily_delta_filepath(t_ref).stem
         for filepath in existing_hourly_deltas:
-            if relevant_stem in filepath.name: # if today's date in filestem, keep it
+            if relevant_stem in filepath.name:  # if today's date in filestem, keep it
                 continue  # it's still relevant
             self.logger.info(f"unlink {filepath.name}")
             filepath.unlink()  # Otherwise it's old, and we'll have the daily one.

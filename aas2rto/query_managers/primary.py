@@ -5,13 +5,12 @@ from pathlib import Path
 
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.exc import UnknownQueryManagerError
 from aas2rto.path_manager import PathManager
 from aas2rto.query_managers.base import BaseQueryManager
 from aas2rto.target_lookup import TargetLookup
-
 from aas2rto.query_managers.registry import qm_registry  # qm_reg. is a SINGLETON
+from aas2rto.utils.config import check_unexpected_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -26,7 +25,7 @@ class PrimaryQueryManager:
     ):
 
         self.config = config
-        unknown_qm_configs = utils.check_unexpected_config_keys(
+        unknown_qm_configs = check_unexpected_config_keys(
             self.config.keys(),
             qm_registry.all(),
             warn=False,

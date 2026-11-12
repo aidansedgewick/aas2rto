@@ -22,7 +22,6 @@ from astropy.visualization import ZScaleInterval
 from astroplan import FixedTarget, Observer
 from astroplan.plots import plot_altitude
 
-from aas2rto import utils
 from aas2rto.exc import (
     MissingColumnWarning,
     MissingCompiledLightcurveWarning,

@@ -9,16 +9,18 @@ import pandas as pd
 
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.exc import UnknownTargetWarning
 from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.atlas.atlas_client import (
-    AtlasClient, AtlasTaskResult, AtlasTaskStatus
+    AtlasClient,
+    AtlasTaskResult,
+    AtlasTaskStatus,
 )
 from aas2rto.query_managers.base import LightcurveQueryManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
-from aas2rto.utils import QueryTracker
+from aas2rto.utils.files import calc_file_age
+from aas2rto.utils.transport import RequestTracker
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -263,7 +265,7 @@ class AtlasQueryManager(LightcurveQueryManager):
                 low_score = low_score + 1
                 continue
             lightcurve_filepath = self.get_lightcurve_filepath(target_id)
-            lightcurve_file_age = utils.calc_file_age(lightcurve_filepath, t_ref)
+            lightcurve_file_age = calc_file_age(lightcurve_filepath, t_ref)
             if lightcurve_file_age < update_interval:
                 recently_updated = recently_updated + 1
                 continue
@@ -356,7 +358,7 @@ class AtlasQueryManager(LightcurveQueryManager):
 
         max_query_time = self.config["max_query_time"]
         # No 'max_failed_queries' here break after ONE failure.
-        qtracker = QueryTracker.start(max_query_time=max_query_time)
+        qtracker = RequestTracker.start(max_query_time=max_query_time)
         for target_id in target_id_list:
             if not qtracker.safe_to_query():
                 break

@@ -9,10 +9,10 @@ import tqdm
 
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.utils.config import check_unexpected_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -52,7 +52,7 @@ class ModelingManager:
     ):
         self.config = self.default_config.copy()
         self.config.update(modeling_config)
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.config,
             expected=self.default_config.keys(),
             name="modeling_manager",

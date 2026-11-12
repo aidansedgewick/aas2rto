@@ -15,7 +15,10 @@ from aas2rto.plotting.rank_hist_plotter import plot_rank_histories
 from aas2rto.plotting.visibility_plotter import plot_visibility
 
 from aas2rto.target_lookup import TargetLookup
-from aas2rto import utils
+
+from aas2rto.utils.files import calc_file_age
+from aas2rto.utils.config import check_unexpected_config_keys
+from aas2rto.utils.common import get_observatory_name
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -39,7 +42,7 @@ class PlottingManager:
     ):
         self.config = self.default_config.copy()
         self.config.update(plotting_config)
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.config,
             expected=self.default_config.keys(),
             name="plotting_manager",
@@ -77,7 +80,7 @@ class PlottingManager:
         for target_id, target in self.target_lookup.items():
             fig_path = self.path_manager.get_lightcurve_plot_path(target_id)
             target.lc_fig_path = fig_path  # useful to attach fig path to target
-            fig_age = utils.calc_file_age(fig_path, t_ref, allow_missing=True)
+            fig_age = calc_file_age(fig_path, t_ref, allow_missing=True)
             if lazy_plotting and (fig_age < interval) and (not target.updated):
                 skipped.append(target_id)
                 msg = f"skip {target_id} lc: age {fig_age:.2f} < {interval:.2f}"
@@ -123,7 +126,7 @@ class PlottingManager:
     ):
         t_ref = t_ref or Time.now()
 
-        obs_name = utils.get_observatory_name(observatory)
+        obs_name = get_observatory_name(observatory)
         if observatory is None:
             return
         logger.info(f"visibility plots for {obs_name}")
@@ -140,7 +143,7 @@ class PlottingManager:
         for target_id, target in self.target_lookup.items():
             fig_path = self.path_manager.get_visibility_plot_path(target_id, obs_name)
             target.vis_fig_paths[obs_name] = fig_path
-            fig_age = utils.calc_file_age(fig_path, t_ref, allow_missing=True)
+            fig_age = calc_file_age(fig_path, t_ref, allow_missing=True)
             if lazy_plotting and (fig_age < interval):
                 msg = f"skip {target_id} {obs_name} vis: age {fig_age:.2f} < {interval:.2f}"
                 logger.debug(msg)
@@ -198,7 +201,7 @@ class PlottingManager:
         failed = []
         for target_id, target in self.target_lookup.items():
             fig_path = output_dir / f"{target_id}.png"
-            fig_age = utils.calc_file_age(fig_path, t_ref, allow_missing=True)
+            fig_age = calc_file_age(fig_path, t_ref, allow_missing=True)
             if lazy_plotting and (fig_age < interval) and not target.updated:
                 skipped.append(target_id)
                 msg = (

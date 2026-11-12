@@ -72,7 +72,7 @@ class RequestTracker:
         t_elapsed = time.perf_counter() - self.t_start
         if t_elapsed > self.max_query_time:
             msg = (
-                f"QueryTracker timeout: "
+                f"Tracker timeout: "
                 f"({t_elapsed:.1f}s > max {self.max_query_time:.1f}s)"
             )
             logger.warning(msg)

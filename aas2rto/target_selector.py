@@ -26,7 +26,6 @@ from astropy.time import Time
 from astroplan import Observer
 from astroplan.plots import plot_altitude
 
-from aas2rto import utils
 from aas2rto.lightcurve_compilers import DefaultLightcurveCompiler
 from aas2rto.messaging.messaging_manager import MessagingManager
 from aas2rto.modeling.modeling_manager import ModelingManager
@@ -42,6 +41,9 @@ from aas2rto.scoring.scoring_manager import ScoringManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.web.web_manager import WebManager
+
+from aas2rto.utils.config import check_unexpected_config_keys
+from aas2rto.utils.stdout import print_ascii_banner, print_header
 
 from aas2rto import paths
 
@@ -110,7 +112,7 @@ class TargetSelector:
 
     def __init__(self, aas2rto_config: dict, create_paths: bool = True):
         # Check config sections
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             aas2rto_config,
             self.expected_config_keys,
             name="selector_config",
@@ -122,7 +124,7 @@ class TargetSelector:
         self.selector_config = self.default_selector_config.copy()
         selector_config = aas2rto_config.get("selector", {})
         self.selector_config.update(selector_config)
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.selector_config,
             self.default_selector_config,
             name="selector",
@@ -340,7 +342,7 @@ class TargetSelector:
         t_ref = t_ref or Time.now()
 
         t_str = t_ref.strftime("%Y-%m-%d %H:%M:%S")
-        utils.print_header(f"iteration at {t_str}")
+        print_header(f"iteration at {t_str}")
         perf_times = {}
 
         # ================= Get some parameters from config ================= #
@@ -355,7 +357,7 @@ class TargetSelector:
         config_skip_tasks = self.selector_config.get("skip_tasks", [])
         skip_tasks = skip_tasks or []
         skip_tasks = skip_tasks + config_skip_tasks
-        invalid_skip_tasks = utils.check_unexpected_config_keys(
+        invalid_skip_tasks = check_unexpected_config_keys(
             skip_tasks,
             VALID_SKIP_TASKS,
             name="perform_iteration.skip_tasks",
@@ -668,7 +670,7 @@ class TargetSelector:
         logger.info("sending startup message")
         self.messaging_manager.send_sudo_messages(texts=msg)
 
-        utils.print_ascii_banner()
+        print_ascii_banner()
 
         # ========================= loop indefinitely ======================== #
         iteration_idx = 0

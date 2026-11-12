@@ -8,12 +8,12 @@ from astropy.time import Time
 
 from astroplan import Observer
 
-from aas2rto import utils
 from aas2rto.observatory.observatory_manager import ObservatoryManager
 from aas2rto.path_manager import PathManager
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.utils.config import check_unexpected_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -137,7 +137,7 @@ class ScoringManager:
     ):
         self.config = self.default_scoring_config.copy()
         self.config.update(config)
-        utils.check_unexpected_config_keys(
+        check_unexpected_config_keys(
             self.config, self.default_scoring_config, name="scoring_manager"
         )
 

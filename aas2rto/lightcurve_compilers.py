@@ -10,7 +10,6 @@ import pandas as pd
 
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 

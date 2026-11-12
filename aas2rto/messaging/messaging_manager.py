@@ -9,7 +9,7 @@ from astropy.time import Time
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
-from aas2rto.utils import format_link_as_html, format_link_as_markdown
+from aas2rto.utils.common import format_link_as_html, format_link_as_markdown
 
 from aas2rto.messaging.telegram_messenger import TelegramMessenger
 from aas2rto.messaging.slack_messenger import SlackMessenger

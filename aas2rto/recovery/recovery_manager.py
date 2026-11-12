@@ -12,11 +12,11 @@ import pandas as pd
 from astropy.coordinates import SkyCoord
 from astropy.time import Time
 
-from aas2rto import utils
 from aas2rto.exc import MissingFileWarning
 from aas2rto.path_manager import PathManager
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
+from aas2rto.utils.config import check_unexpected_config_keys
 
 logger = getLogger(__name__.split(".")[-1])
 
@@ -39,9 +39,7 @@ class RecoveryManager:
     ):
         self.config = self.default_config.copy()
         self.config.update(recovery_config)
-        utils.check_unexpected_config_keys(
-            self.config, self.default_config, name="recovery"
-        )
+        check_unexpected_config_keys(self.config, self.default_config, name="recovery")
 
         self.target_lookup = target_lookup
         self.path_manager = path_manager
