@@ -1,21 +1,6 @@
 from __future__ import annotations
 
-import shutil
-import time
-import warnings
-from logging import getLogger
-from typing import Any
-
-from pathlib import Path
-
-import numpy as np
-
-from astropy.coordinates import EarthLocation
-from astropy.time import Time
-
 from astroplan import Observer
-
-logger = getLogger("aas2rto_utils")
 
 
 def chunk_list(l, chunk_size=100):
