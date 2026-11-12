@@ -10,7 +10,7 @@ from aas2rto.exc import (
     UnexpectedKeysWarning,
 )
 
-logger = getLogger("config")
+logger = getLogger("config_utils")
 
 
 def check_config_keys(
