@@ -1,10 +1,9 @@
 from pathlib import Path
 
+BASE_PATH = Path(__file__).parent.parent
 
-base_path = Path(__file__).parent.parent
+CONFIG_PATH = BASE_PATH / "config"
 
-config_path = base_path / "config"
+WKDIR = Path.cwd()
 
-wkdir = Path.cwd()
-
-test_path = base_path / "test_aas2rto"
+TEST_PATH = BASE_PATH / "test_aas2rto"

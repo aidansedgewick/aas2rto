@@ -34,12 +34,13 @@ class Test__PathManagerInit:
 
         expected_keys = [
             "base",
-            "project",
+            "comments",
             "data",
+            "logs",
             "outputs",
             "opp_targets",
+            "project",
             "scratch",
-            "comments",
             "rejected_targets",
             "recovery",
             "web",

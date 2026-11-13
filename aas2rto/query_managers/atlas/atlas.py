@@ -439,7 +439,7 @@ class AtlasQueryManager(LightcurveQueryManager):
                     break
 
         if lightcurve_filepath is None:
-            self.logger.debug(f"{target_id} is missing lightcurve")
+            # self.logger.debug(f"{target_id} is missing lightcurve")
             return None
         lightcurve = pd.read_csv(lightcurve_filepath)
         if lightcurve.empty:

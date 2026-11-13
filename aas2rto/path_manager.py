@@ -11,12 +11,13 @@ logger = getLogger(__name__.split(".")[-1])
 
 class PathManager:
 
-    default_base_path = paths.wkdir
+    default_base_path = paths.WKDIR
 
     default_data_dir = "data"
     default_outputs_dir = "outputs"
     default_opp_targets_dir = "opp_targets"
     default_scratch_dir = "scratch"
+    default_logs_path = "logs"
 
     default_config = {
         "base_path": default_base_path,
@@ -36,7 +37,7 @@ class PathManager:
         self.paths_config = self.config["paths"]
         self.process_paths(create_paths=create_paths)
 
-        self.web_templates_path = paths.base_path / "aas2rto/web/templates"
+        self.web_templates_path = paths.BASE_PATH / "aas2rto/web/templates"
 
     def process_paths(self, create_paths=True):
         base_path = self.config["base_path"]
@@ -95,6 +96,10 @@ class PathManager:
         if "scratch" not in self.lookup:
             self.lookup["scratch"] = self.project_path / "scratch"
         self.scratch_path = self.lookup["scratch"]
+
+        if "logs" not in self.lookup:
+            self.lookup["logs"] = self.project_path / "logs"
+        self.logs_path = self.lookup["logs"]
 
         if "comments" not in self.lookup:
             self.lookup["comments"] = self.project_path / "comments"
