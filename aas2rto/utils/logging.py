@@ -1,4 +1,5 @@
 import logging
+import logging.config
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
 
@@ -23,29 +24,25 @@ AAS2RTO_FILTER_CONFIG = {
     "project_root": paths.BASE_PATH,
 }
 
-SIMPLE_FORMATTER = "%(asctime)s %(name)s %(levelname)s: %(message)s"
+SIMPLE_FORMATTER = {
+    "format": "%(asctime)s %(name)s %(levelname)s: %(message)s",
+    "datefmt": "%Y-%m-%d %H:%M:%S",
+}
 
 
-def _get_init_logging_config():
+def _get_stream_logging_config(stream_level=logging.INFO):
+    CONSOLE_HANDLER = {
+        "class": logging.StreamHandler,
+        "level": stream_level,
+        "formatter": "simple",
+        "filters": ["aas2rto_filter"],
+    }
     return {
         "version": 1,
         "disable_existing_loggers": False,
-        "filters": {
-            "aas2rto_filter": AAS2RTO_FILTER_CONFIG,
-        },
-        "formatters": {
-            "simple": {
-                "format": SIMPLE_FORMATTER,
-            }
-        },
-        "handlers": {
-            "console": {
-                "class": logging.StreamHandler,
-                "level": logging.DEBUG,
-                "formatter": "simple",
-                "filters": ["aas2rto_filter"],
-            },
-        },
+        "filters": {"aas2rto_filter": AAS2RTO_FILTER_CONFIG},
+        "formatters": {"simple": SIMPLE_FORMATTER},
+        "handlers": {"console": CONSOLE_HANDLER},
         "root": {
             "level": logging.DEBUG,
             "handers": ["console"],
@@ -54,10 +51,46 @@ def _get_init_logging_config():
 
 
 def _get_file_logging_config(
-    log_path: Path, filepath: str = log.out, stream_level=logging.INFO
+    log_path: Path,
+    filename: str = "log.out",
+    stream_level=logging.INFO,
+    debug_file: bool = False,
 ):
-    log_filepath = log_path / filepath
-    debug_log_filepath = log_path / "debug" / filepath
+    log_filepath = Path(log_path) / filename
+    debug_log_filepath = Path(log_path) / "debug" / filename
+
+    CONSOLE_HANDLER = {
+        "class": logging.StreamHandler,
+        "level": stream_level,
+        "formatter": "simple",
+        "filters": ["aas2rto_filter"],
+    }
+    INFO_FILE_HANDLER = {
+        "class": TimedRotatingFileHandler,
+        "filename": log_filepath,
+        "level": logging.INFO,
+        "formatter": "simple",
+        "backupCount": 21,
+        "filters": ["aas2rto_filter"],
+        "when": "midnight",
+    }
+    DEBUG_FILE_HANDLER = {
+        "class": TimedRotatingFileHandler,
+        "filename": debug_log_filepath,
+        "level": logging.DEBUG,
+        "backupCount": 3,
+        "formatter": "simple",
+        "filters": ["aas2rto_filter"],
+        "when": "midnight",
+    }
+
+    HANDLERS_CONFIG = {
+        "console": CONSOLE_HANDLER,
+        "info_file": INFO_FILE_HANDLER,
+    }
+    if debug_file:
+        debug_log_filepath.parent.mkdir(exist_ok=True)
+        HANDLERS_CONFIG["debug_file"] = DEBUG_FILE_HANDLER
 
     return {
         "version": 1,
@@ -65,47 +98,17 @@ def _get_file_logging_config(
         "filters": {
             "aas2rto_filter": AAS2RTO_FILTER_CONFIG,
         },
-        "formatters": {
-            "simple": {
-                "format": SIMPLE_FORMATTER,
-                "datefmt": "%Y-%m-%d %H:%M:%S",
-            }
-        },
-        "handlers": {
-            "console": {
-                "class": logging.StreamHandler,
-                "level": stream_level,
-                "formatter": "simple",
-                "filters": ["aas2rto_filter"],
-            },
-            "info_file": {
-                "class": TimedRotatingFileHandler,
-                "filename": log_filepath,
-                "level": logging.INFO,
-                "formatter": "simple",
-                "filters": ["aas2rto_filter"],
-                "when": "midnight",
-            },
-            "debug_file": {
-                "class": TimedRotatingFileHandler,
-                "filename": debug_log_filepath,
-                "level": logging.DEBUG,
-                "backupCount": 3,
-                "formatter": "simple",
-                "filters": ["aas2rto_filter"],
-                "when": "midnight",
-            },
-        },
+        "formatters": {"simple": SIMPLE_FORMATTER},
+        "handlers": HANDLERS_CONFIG,
         "root": {
             "level": logging.DEBUG,
-            "handlers": ["console", "info_file", "debug_file"],
+            "handlers": list(HANDLERS_CONFIG.keys()),
         },
     }
 
 
-def setup_initial_logging():
-    logging_config = _get_init_logging_config()
-    print("set loggers!")
+def setup_stream_logging(stream_level=logging.INFO):
+    logging_config = _get_stream_logging_config(stream_level=stream_level)
     logging.config.dictConfig(logging_config)
     logger.info("here's a log")
 
@@ -114,14 +117,13 @@ def setup_file_logging(
     logs_path: Path,
     filename: str = "out.log",
     stream_level=logging.INFO,
-    file_level=logging.DEBUG,
+    debug_file: bool = True,
 ):
     logs_path = Path(logs_path)
-    log_filepath = logs_path / filename
 
-    logger.info(f"logs now written to:\n{log_filepath}")
+    logger.info(f"logs now written to:\n{logs_path}")
 
     logging_config = _get_file_logging_config(
-        log_filepath, stream_level=stream_level, file_level=file_level
+        logs_path, filename=filename, stream_level=stream_level, debug_file=debug_file
     )
     logging.config.dictConfig(logging_config)

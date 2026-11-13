@@ -1,7 +1,7 @@
 import copy
+import logging
 import pytest
 import subprocess
-from logging import getLogger
 from pathlib import Path
 from typing import Dict, List
 
@@ -33,7 +33,9 @@ from aas2rto.target import Target
 from aas2rto.target_data import TargetData
 from aas2rto.target_lookup import TargetLookup
 
-logger = getLogger("unit/conftest")
+from aas2rto.utils.logging import setup_stream_logging
+
+logger = logging.getLogger("unit/conftest")
 
 
 def remove_empty_filetree(dirpath: Path, depth=0, max_depth=6):
@@ -45,6 +47,18 @@ def remove_empty_filetree(dirpath: Path, depth=0, max_depth=6):
     dirpath_is_empty = not list(dirpath.iterdir())
     if dirpath_is_empty:
         dirpath.rmdir()
+
+
+@pytest.fixture(autouse=True)
+def setup_logging():
+    # Arrange
+    setup_stream_logging()
+
+    yield  # Test is run here
+
+    # Cleanup
+    logging.shutdown()
+    # setup_stream_logging() # Not really necessary since autouse...
 
 
 @pytest.fixture()  # do NOT auto use here. Often want to check empty dirs 'by hand'...

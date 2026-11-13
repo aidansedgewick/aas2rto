@@ -6,8 +6,6 @@ import yaml
 from aas2rto.target import Target, TargetData
 from aas2rto.target_selector import TargetSelector
 
-from aas2rto import paths
-
 # default_logging_config = paths.CONFIG_PATH / "logging/default_logging.yaml"
 # if default_logging_config.exists():
 #     with open(default_logging_config, "rt") as f:

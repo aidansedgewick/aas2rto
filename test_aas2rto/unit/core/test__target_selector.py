@@ -67,7 +67,10 @@ class ExampleQueryManager:
 
 @pytest.fixture
 def empty_aas2rto_config(tmp_path: Path):
-    return {"paths": {"base_path": tmp_path}}
+    return {
+        "selector": {"use_default_loggers": False},
+        "paths": {"base_path": tmp_path},
+    }
 
 
 @pytest.fixture
@@ -77,6 +80,7 @@ def basic_tselector(
     # Can't use premade 'tlookup', as tselector creates target_lookup in __init__
 
     ts = TargetSelector(empty_aas2rto_config)
+    # DON'T use file loggers.
 
     basic_target.target_data["fink_ztf"] = ztf_td
     ts.target_lookup.add_target(basic_target)
@@ -89,7 +93,7 @@ def iter_tselector(
 ):
     # Can't use premade 'tlookup', as tselector creates target_lookup in __init__
 
-    ts = TargetSelector(empty_aas2rto_config)
+    ts = TargetSelector(empty_aas2rto_config)  # test logs later
 
     qm = ExampleQueryManager(ts.target_lookup)
     ts.primary_query_manager.query_managers["example_qm"] = qm
@@ -133,6 +137,51 @@ class Test__SelectorInit:
         # Act
         with pytest.raises(UnexpectedKeysError):
             selector = TargetSelector(empty_aas2rto_config)
+
+
+class Test__SelectorLogSetup:
+
+    def test__init_no_logger_setup(self, empty_aas2rto_config: dict, tmp_path: Path):
+        # Act
+        empty_aas2rto_config["selector"] = {"use_default_loggers": False}
+        ts = TargetSelector(empty_aas2rto_config)
+
+        # but REMEMBER: console logger is still set up in conftest (top level)
+
+        exp_log_file = tmp_path / "projects/default/logs/out.log"
+        exp_debug_file = tmp_path / "projects/default/logs/debug/out.log"
+        assert not exp_log_file.exists()
+        assert not exp_debug_file.exists()
+
+    def test__init_with_loggers_no_debug(
+        self, empty_aas2rto_config: dict, tmp_path: Path
+    ):
+        # Act
+        empty_aas2rto_config["selector"] = {
+            "use_default_loggers": True,
+            "log_debug_file": False,
+        }
+        ts = TargetSelector(empty_aas2rto_config)
+
+        exp_log_file = tmp_path / "projects/default/logs/out.log"
+        exp_debug_file = tmp_path / "projects/default/logs/debug/out.log"
+        assert exp_log_file.exists()
+        assert not exp_debug_file.exists()
+
+    def test__init_with_loggers_with_debug(
+        self, empty_aas2rto_config: dict, tmp_path: Path
+    ):
+        # Act
+        empty_aas2rto_config["selector"] = {
+            "use_default_loggers": True,
+            "log_debug_file": True,
+        }
+        ts = TargetSelector(empty_aas2rto_config)
+
+        exp_log_file = tmp_path / "projects/default/logs/out.log"
+        exp_debug_file = tmp_path / "projects/default/logs/debug/out.log"
+        assert exp_log_file.exists()
+        assert exp_debug_file.exists()
 
 
 class Test__FromConfig:
