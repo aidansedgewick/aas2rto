@@ -33,7 +33,7 @@ SIMPLE_FORMATTER = {
 def _get_logging_config(
     logs_path: Path = None,
     filename: str = "log.out",
-    use_file_logger: bool = False,
+    use_file_logger: bool = True,
     stream_level=logging.INFO,
     debug_file: bool = False,
 ):
@@ -48,6 +48,8 @@ def _get_logging_config(
     handlers_config = {"console": console_handler}
 
     if use_file_logger:
+        if logs_path is None:
+            raise ValueError("Must provide 'logs_path' if use_file_logger=True")
 
         log_filepath = Path(logs_path) / filename
         debug_log_filepath = Path(logs_path) / "debug" / filename
@@ -91,7 +93,8 @@ def _get_logging_config(
 
 def setup_stream_logging(stream_level=logging.INFO):
     logging_config = _get_logging_config(
-        stream_level=stream_level, use_file_logger=False
+        stream_level=stream_level,
+        use_file_logger=False,
     )
     logging.config.dictConfig(logging_config)
 
@@ -109,6 +112,7 @@ def setup_file_logging(
     logging_config = _get_logging_config(
         logs_path=logs_path,
         filename=filename,
+        use_file_logger=True,
         stream_level=stream_level,
         debug_file=debug_file,
     )
