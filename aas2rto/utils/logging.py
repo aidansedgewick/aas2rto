@@ -1,7 +1,8 @@
 import logging
 import logging.config
 from pathlib import Path
-from logging.handlers import TimedRotatingFileHandler
+
+# from logging.handlers import TimedRotatingFileHandler # use str for py311 support
 
 from aas2rto import paths
 
@@ -39,7 +40,7 @@ def _get_logging_config(
 ):
 
     console_handler = {
-        "class": logging.StreamHandler,
+        "class": "logging.StreamHandler",  # use str for py311
         "level": stream_level,
         "formatter": "simple",
         "filters": ["aas2rto_filter"],
@@ -55,7 +56,7 @@ def _get_logging_config(
         debug_log_filepath = Path(logs_path) / "debug" / filename
 
         info_file_handler = {
-            "class": TimedRotatingFileHandler,
+            "class": "logging.handlers.TimedRotatingFileHandler",  # use str for py311
             "filename": log_filepath,
             "level": logging.INFO,
             "formatter": "simple",
@@ -64,7 +65,7 @@ def _get_logging_config(
             "when": "midnight",
         }
         debug_file_handler = {
-            "class": TimedRotatingFileHandler,
+            "class": "logging.handlers.TimedRotatingFileHandler",  # use str for py311
             "filename": debug_log_filepath,
             "level": logging.DEBUG,
             "backupCount": 3,
