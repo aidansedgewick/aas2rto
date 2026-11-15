@@ -115,6 +115,7 @@ class TargetSelector:
     # expected_messenger_keys = ("telegram", "slack", "web")
 
     def __init__(self, aas2rto_config: dict, create_paths: bool = True):
+        # Quick hack to get logging started - do it properly later.
         log_setup = aas2rto_config.get("selector", {}).get("use_default_loggers", True)
         if log_setup:
             setup_stream_logging()
@@ -128,7 +129,7 @@ class TargetSelector:
         )
         self.aas2rto_config = aas2rto_config
 
-        # Top level section
+        # Get config for this class
         self.selector_config = self.default_selector_config.copy()
         selector_config = aas2rto_config.get("selector", {})
         self.selector_config.update(selector_config)
@@ -139,7 +140,7 @@ class TargetSelector:
             raise_exc=True,
         )
 
-        # Unpack configs
+        # Unpack all other configs
         self.paths_config = aas2rto_config.get("paths", {})
         self.observatories_config = aas2rto_config.get("observatories", {})
 

@@ -17,6 +17,10 @@ logger = getLogger(__name__.split(".")[-1])
 
 class PrimaryQueryManager:
 
+    default_primary_config = {
+        "run_concurrent": False,
+    }
+
     def __init__(
         self,
         config: dict,
@@ -24,10 +28,22 @@ class PrimaryQueryManager:
         path_manager: PathManager,
     ):
 
-        self.config = config
+        # First pop the dict for configuring the PRIMARY (ie. this class)
+        primary_config = config.pop("primary", {})
+        self.primary_config = self.default_primary_config.copy()
+        self.primary_config.update(primary_config)
+        check_unexpected_config_keys(
+            self.primary_config,
+            self.default_primary_config,
+            name="primary_qm",
+            raise_exc=True,
+        )
+
+        # Now set check that all the QMs we have are correct
+        self.qm_configs = config  # Everything else is for QMs to be initialised.
         unknown_qm_configs = check_unexpected_config_keys(
-            self.config.keys(),
-            qm_registry.all(),
+            self.qm_configs.keys(),
+            self.expected_config_keys,
             warn=False,
             name="query_managers",
         )
@@ -50,7 +66,7 @@ class PrimaryQueryManager:
 
     def initialize_query_managers(self):
         self.qm_order: list = []
-        for qm_name, qm_config in self.config.items():
+        for qm_name, qm_config in self.qm_config.items():
 
             if qm_config is None:
                 continue
@@ -81,9 +97,21 @@ class PrimaryQueryManager:
             used in the perform_all_tasks() call.
         """
 
+        if self.primary_config["run_concurrent"]:
+            self.perform_qm_tasks_concurrently(iteration, t_ref=t_ref)
+        else:
+            self.perform_qm_tasks_in_serial(iteration, t_ref=t_ref)
+
+    def perform_qm_tasks_concurrently(self, iteration: int, t_ref: Time = None):
+        raise NotImplementedError()
         t_ref = t_ref or Time.now()
 
-        logger.info("begin query manager tasks")
+        logger.info("perform query manager tasks with concurrent strategy")
+
+    def perform_qm_tasks_in_serial(self, iteration: int, t_ref: Time = None):
+        t_ref = t_ref or Time.now()
+
+        logger.info("begin serial query manager tasks")
         crash_reports = []
         for qm_name, qm in self.query_managers.items():
             t_start = time.perf_counter()

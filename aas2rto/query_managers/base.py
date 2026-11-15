@@ -43,6 +43,7 @@ class BaseQueryManager(abc.ABC):
 
     default_config: dict = None
     required_directories: tuple[str] = ()
+    can_run_concurrently: bool = False
 
     @property
     @abc.abstractmethod
@@ -64,17 +65,34 @@ class BaseQueryManager(abc.ABC):
             existing data
         """
 
+    def __init_subclass__(cls):
+        super().__init_subclass__()
+        cls._validate_concurrency_flag()
+        cls._validate_default_config()
+
+    @classmethod
+    def _validate_concurrency_flag(cls):
+        flag_value = cls.can_run_concurrently
+        if not (flag_value, bool):
+            raise TypeError(
+                f"{cls.__name__}.can_run_concurrently must be a bool, "
+                f"got {flag_value} (type {type(flag_value).__name__})"
+            )
+
+    @classmethod
+    def _validate_default_config(cls):
+        if not isinstance(cls.default_config, dict):
+            msg = (
+                f"{cls.name}.default_config should be type 'dict', "
+                f"not '{type(cls.default_config)}'"
+            )
+            raise TypeError(msg)
+
     def __init__(self, config: dict, target_lookup: TargetLookup, parent_path: Path):
         # Check the config
         if not self.default_config:
             self.config = config
         else:
-            if not isinstance(self.default_config, dict):
-                msg = (
-                    f"{self.name}.default_config should be type 'dict', "
-                    f"not {type(self.default_config)}"
-                )
-                raise TypeError(msg)
             self.config = self.default_config.copy()
             self.config.update(config)
             check_unexpected_config_keys(
@@ -139,7 +157,7 @@ class BaseQueryManager(abc.ABC):
         for dir_name in list(directories):
             path = self.data_path / dir_name
             self.paths_lookup[dir_name] = path
-            setattr(self, f"{dir_name}_path", path)
+            setattr(self, f"{dir_name}_path", path)  # This might be a bad thing...
 
         if create_paths:
             self._create_paths()
@@ -235,7 +253,7 @@ class LightcurveQueryManager(BaseQueryManager, abc.ABC):
         """
         Which lightcurves should be re-queried?
 
-        Check the age of each file.
+        Check the age of each file. Can be over-ridden (see eg. ATLAS QM)
         """
 
         t_ref = t_ref or Time.now()
@@ -249,7 +267,7 @@ class LightcurveQueryManager(BaseQueryManager, abc.ABC):
             relevant_id = self.get_relevant_id_from_target(target)
             if relevant_id is None:
                 no_relevant_id.append(target_id)
-                continue  # There is no relevant ID to ask FINK for lightcurve
+                continue  # There is no relevant ID to ask eg. FINK for lightcurve
             lightcurve_filepath = self.get_lightcurve_filepath(relevant_id)
             lc_age = calc_file_age(lightcurve_filepath, t_ref=t_ref)
             if lc_age > max_age:
