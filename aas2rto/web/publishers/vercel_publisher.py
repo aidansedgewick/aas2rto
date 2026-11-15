@@ -216,7 +216,7 @@ class VercelPublisher:
         "project_token": None,
         "project_name": None,
         "use_direct_deployment": False,
-        "deployment": "production",
+        "deployment_name": "production",
         "manifest_filestem": "vercel_manifest",
         "verify_project": True,
         "max_failed_uploads": 5,
@@ -250,7 +250,7 @@ class VercelPublisher:
         self.vercel_client = VercelClient(
             self.config["project_token"],
             self.config["project_name"],
-            deployment=self.config["deployment"],
+            deployment=self.config["deployment_name"],
         )
         if self.config["verify_project"]:
             self.vercel_client.verify_project_exists()
