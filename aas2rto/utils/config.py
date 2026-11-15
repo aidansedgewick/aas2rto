@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import warnings
 from logging import getLogger
 from typing import Iterable
@@ -49,7 +50,31 @@ def check_unexpected_config_keys(
             msg = msg + f" in {name}"
 
         keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in unexpected_keys)
-        msg = msg + ":\n    " + keys_str
+        suggest_str = ""
+
+        print_all_keys = False
+        for k in sorted(unexpected_keys):
+            suggestions = difflib.get_close_matches(k, expected, cutoff=0.7)
+            if suggestions:
+                if not suggest_str:
+                    suggest_str = "Hints:"
+                note = (
+                    f"    for '{k}', did you mean "
+                    + " or ".join(f"'{s}'" for s in suggestions)
+                    + "?\n"
+                )
+                suggest_str = suggest_str + f"\n {note}"
+            else:
+                print_all_keys = True
+
+        if print_all_keys:
+            all_keys_note = "allowed keys:\n" + "\n".join(
+                f"    {k}" for k in sorted(expected)
+            )
+            suggest_str = suggest_str + all_keys_note
+
+        msg = msg + ":\n    " + keys_str + "\n" + suggest_str
+
         if raise_exc:  # Raise FIRST, so logs are
             logger.error(msg)
             raise exc_class(msg)
@@ -79,7 +104,30 @@ def check_missing_config_keys(
         if name is not None:
             msg = msg + f" in {name}"
         keys_str = ", ".join(f"\033[33;1m'{k}'\033[0m" for k in missing_keys)
-        msg = msg + ":\n    " + keys_str
+        suggest_str = ""
+
+        print_all_keys = False
+        for k in sorted(missing_keys):
+            suggestions = difflib.get_close_matches(k, provided, cutoff=0.7)
+            if suggestions:
+                if not suggest_str:
+                    suggest_str = "Hints:"
+                note = (
+                    f"    for "
+                    + " or ".join(f"'{s}'" for s in suggestions)
+                    + f" did you mean '{k}'?\n"
+                )
+                suggest_str = suggest_str + f"\n {note}"
+            else:
+                print_all_keys = True
+
+        if print_all_keys:
+            all_keys_note = "required keys:\n" + "\n".join(
+                f"    {k}" for k in sorted(expected)
+            )
+            suggest_str = suggest_str + all_keys_note
+
+        msg = msg + ":\n    " + keys_str + "\n" + suggest_str
         if raise_exc:
             logger.error(msg)
             raise exc_class(msg)
