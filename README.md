@@ -1,4 +1,4 @@
-[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](http://python.org)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](http://python.org)
 [![codecov](https://codecov.io/github/aidansedgewick/aas2rto/graph/badge.svg?token=8YS74434P8)](https://codecov.io/github/aidansedgewick/aas2rto)
 [![astropy](http://img.shields.io/badge/powered%20by-AstroPy-orange.svg?style=flat)](http://www.astropy.org/)
 
