@@ -85,6 +85,11 @@ class PathManager:
             self.lookup["data"] = self.project_path / "data"
         self.data_path = self.lookup["data"]
 
+        if "compiled_lightcurves" not in self.lookup:
+            lcs_path = self.project_path / "compiled_lightcurves"
+            self.lookup["compiled_lightcurves"] = lcs_path
+        self.compiled_lightcurves_path = self.lookup["compiled_lightcurves"]
+
         if "outputs" not in self.lookup:
             self.lookup["outputs"] = self.project_path / "outputs"
         self.outputs_path = self.lookup["outputs"]
@@ -123,6 +128,9 @@ class PathManager:
     def create_paths(self):
         for path_name, path_val in self.lookup.items():
             path_val.mkdir(exist_ok=True, parents=True)
+
+    def get_compiled_lightcurve_path(self, target_id: str, fmt: str = "csv") -> Path:
+        return self.compiled_lightcurves_path / f"{target_id}.{fmt}"
 
     def get_output_plots_path(self, sub_dir, mkdir=True) -> Path:
         plots_path = self.outputs_path / f"plots/{sub_dir}"
