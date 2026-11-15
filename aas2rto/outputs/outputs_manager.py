@@ -26,10 +26,25 @@ import matplotlib.pyplot as plt
 logger = getLogger(__name__.split(".")[-1])
 
 
-def get_target_summary_data(target):
+def get_target_summary_data(target: Target, flag_sources=("lsst", "ztf", "atlas")):
     ra = target.coord.ra
     dec = target.coord.dec
 
+    # Some default values to modify in the checks...
+    data = dict(
+        target_id=target.target_id,
+        ra=ra.to_string(unit=u.hourangle, sep=":", precision=2, pad=True),
+        dec=dec.to_string(unit=u.deg, sep=":", precision=2, alwayssign=True, pad=True),
+        ra_deg=f"{ra.deg:010.6f}",
+        dec_deg=f"{dec.deg:+09.5f}",
+        mag_last="-",
+        stamp_last="",
+    )
+
+    for source in flag_sources:
+        data[f"{source}_det"] = ""
+
+    flag_sources = ("lsst", "ztf", "atlas")
     if target.compiled_lightcurve is not None:
         lc = target.compiled_lightcurve
         if "tag" in lc.columns:
@@ -37,30 +52,18 @@ def get_target_summary_data(target):
         else:
             detections = lc
 
-        mag_val = detections["mag"].iloc[-1]
-        mag_last = f"{mag_val:.2f}"
-        t_last = Time(detections["mjd"].iloc[-1], format="mjd")
-        tstamp_last = t_last.strftime("%y-%m-%d %H:%H")
+        if len(lc) > 0:
+            mag_val = detections["mag"].iloc[-1]
+            t_last = Time(detections["mjd"].iloc[-1], format="mjd")
 
-        has_atlas = ""
+            data["mag_last"] = f"{mag_val:.2f}"
+            data["stamp_last"] = t_last.strftime("%y-%m-%d %H:%H")
+
         if "source" in detections.columns:
-            if "atlas" in detections["source"]:
-                has_atlas = "y"
-    else:
-        mag_last = "-"
-        tstamp_last = "-"
-        has_atlas = ""
+            for source in flag_sources:
+                if source in detections["source"].values:
+                    data[f"{source}_det"] = "y"
 
-    data = dict(
-        target_id=target.target_id,
-        ra=ra.to_string(unit=u.hourangle, sep=":", precision=2, pad=True),
-        dec=dec.to_string(unit=u.deg, sep=":", precision=2, alwayssign=True, pad=True),
-        ra_deg=f"{target.coord.ra.deg:010.6f}",
-        dec_deg=f"{target.coord.dec.deg:+09.5f}",
-        mag_last=mag_last,
-        stamp_last=tstamp_last,
-        has_atlas=has_atlas,
-    )
     data.update(target.flags)  # ALL flags should be set in scoring...
     return data
 
@@ -178,7 +181,12 @@ class OutputsManager:
 
         data_list = []
         for target_id, target in self.target_lookup.items():
-            data = get_target_summary_data(target)
+            try:
+                data = get_target_summary_data(target)
+            except Exception as e:
+                msg = f"Can't get summary data for {target_id}:\n    {type(e)}: {e}"
+                logger.error(msg)
+                continue
             data["score"] = target.get_latest_science_score()
             data_list.append(data)
 
@@ -213,7 +221,11 @@ class OutputsManager:
         return score_df
 
     def rank_targets_on_obs_score(
-        self, observatory: Observer, plots=True, write_list=True, t_ref: Time = None
+        self,
+        observatory: Observer,
+        plots: bool = True,
+        write_list: bool = True,
+        t_ref: Time = None,
     ) -> pd.DataFrame:
 
         t_ref = t_ref or Time.now()
@@ -232,7 +244,12 @@ class OutputsManager:
 
         data_list = []
         for target_id, target in self.target_lookup.items():
-            data = get_target_summary_data(target)
+            try:
+                data = get_target_summary_data(target)
+            except Exception as e:
+                msg = f"Can't get summary data for {target_id}:\n    {type(e)}: {e}"
+                logger.error(msg)
+                continue
             data["score"] = target.get_latest_obs_score(obs_name)
             data_list.append(data)
 
@@ -257,6 +274,7 @@ class OutputsManager:
                 target.update_obs_rank_history(new_rank, obs_name, t_ref)
 
             if plots and row.score > minimum_score:
+                # It passes, copy the plots with the new name into the right order/
                 self.collect_plots(target, plots_path, new_rank, obs_name=obs_name)
 
         score_df = score_df[score_df["score"] > minimum_score]
@@ -316,7 +334,12 @@ class OutputsManager:
             if sum(visible_mask) == 0:
                 continue
 
-            data = get_target_summary_data(target)
+            try:
+                data = get_target_summary_data(target)
+            except Exception as e:
+                msg = f"Can't get summary data for {target_id}:\n    {type(e)}: {e}"
+                logger.error(msg)
+                continue
             data["score"] = last_score
             data["transit_mjd"] = ephem_info.target_transit_time.mjd
             data["transit_time"] = ephem_info.target_transit_time.strftime("%H:%M")

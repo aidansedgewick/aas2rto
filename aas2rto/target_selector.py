@@ -103,6 +103,7 @@ class TargetSelector:
         "minimum_score": 0.0,
         "lazy_modeling": True,
         "lazy_compile": True,
+        "write_compiled_lightcurves": True,
         "consolidate_seplim": 5 * u.arcsec,
         "write_comments": True,
         "delete_opp_target_configs": True,
@@ -282,6 +283,7 @@ class TargetSelector:
             lc_compiler_name = type(lightcurve_compiler).__name__
 
         lazy = self.selector_config["lazy_compile"]
+        write_compiled = self.selector_config["write_compiled_lightcurves"]
         logger.info(f"compile photom. data (lazy={lazy})")
         logger.info(f"use {lc_compiler_name}")
 
@@ -298,6 +300,10 @@ class TargetSelector:
             if compiled_lc is None:
                 failed.append(target_id)
                 continue
+            if write_compiled:
+                lc_path = self.path_manager.get_compiled_lightcurve_path(target_id)
+                compiled_lc.to_csv(lc_path, index=False)
+
             compiled.append(target_id)
 
         logger.info(f"compiled:{len(compiled)}, skipped (lazy):{len(skipped)}")

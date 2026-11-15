@@ -39,6 +39,7 @@ class Test__PathManagerInit:
             "logs",
             "outputs",
             "opp_targets",
+            "compiled_lightcurves",
             "project",
             "scratch",
             "rejected_targets",
