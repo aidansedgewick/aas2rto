@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 logger = getLogger(__name__.split(".")[-1])
 
 
-def get_target_summary_data(target: Target):
+def get_target_summary_data(target: Target, flag_sources=("lsst", "ztf", "atlas")):
     ra = target.coord.ra
     dec = target.coord.dec
 
@@ -39,8 +39,12 @@ def get_target_summary_data(target: Target):
         dec_deg=f"{dec.deg:+09.5f}",
         mag_last="-",
         stamp_last="",
-        has_atlas="",
     )
+
+    for source in flag_sources:
+        data[f"{source}_det"] = ""
+
+    flag_sources = ("lsst", "ztf", "atlas")
     if target.compiled_lightcurve is not None:
         lc = target.compiled_lightcurve
         if "tag" in lc.columns:
@@ -53,11 +57,12 @@ def get_target_summary_data(target: Target):
             t_last = Time(detections["mjd"].iloc[-1], format="mjd")
 
             data["mag_last"] = f"{mag_val:.2f}"
-            data["tstamp_last"] = t_last.strftime("%y-%m-%d %H:%H")
+            data["stamp_last"] = t_last.strftime("%y-%m-%d %H:%H")
 
         if "source" in detections.columns:
-            if "atlas" in detections["source"].values:
-                data["has_atlas"] = "y"
+            for source in flag_sources:
+                if source in detections["source"].values:
+                    data[f"{source}_det"] = "y"
 
     data.update(target.flags)  # ALL flags should be set in scoring...
     return data
