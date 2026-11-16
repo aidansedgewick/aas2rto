@@ -249,7 +249,7 @@ class Test__CompileLightcurves:
     def _remove_empty_tmp_dirs(self, remove_tmp_dirs: NoReturn):
         pass  # remove_tmp_dirs defined in unit/contfest.py, executed with autouse=True
 
-    def test__compile_lcs(self, basic_tselector: TargetSelector):
+    def test__compile_lcs(self, basic_tselector: TargetSelector, tmpdir: Path):
         # Arrange
         T00 = basic_tselector.target_lookup["T00"]
         assert T00.compiled_lightcurve is None
@@ -260,6 +260,27 @@ class Test__CompileLightcurves:
         # Assert
         assert isinstance(T00.compiled_lightcurve, pd.DataFrame)
         assert set(compiled) == set(["T00"])
+
+        exp_lc_path = tmpdir / "projects/default/compiled_lightcurves/T00.csv"
+        assert exp_lc_path.exists()
+
+    def test__skip_writing_compiled_lcs(
+        self, basic_tselector: TargetSelector, tmpdir: Path
+    ):
+        # Arrange
+        basic_tselector.selector_config["write_compiled_lightcurves"] = False
+        T00 = basic_tselector.target_lookup["T00"]
+        assert T00.compiled_lightcurve is None
+
+        # Act
+        compiled, failed = basic_tselector.compile_target_lightcurves()
+
+        # Assert
+        assert isinstance(T00.compiled_lightcurve, pd.DataFrame)
+        assert set(compiled) == set(["T00"])
+
+        exp_lc_path = tmpdir / "projects/default/compiled_lightcurves/T00.csv"
+        assert not exp_lc_path.exists()
 
     def test__lazy_skip_compiled_not_updated(self, basic_tselector: TargetSelector):
         # Arrange
