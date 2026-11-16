@@ -35,6 +35,7 @@ from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting import PlottingManager, plot_default_lightcurve, plot_visibility
 from aas2rto.query_managers.primary import PrimaryQueryManager
+from aas2rto.query_managers.result import QueryManagerResult
 from aas2rto.recovery.recovery_manager import RecoveryManager
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
 from aas2rto.scoring.scoring_manager import ScoringManager
@@ -392,9 +393,21 @@ class TargetSelector:
         t1 = time.perf_counter()
         self.load_targets_of_opportunity(t_ref=t_ref)
         if not "qm_tasks" in skip_tasks:
-            crash_reports = self.primary_query_manager.perform_all_query_manager_tasks(
-                iteration=iteration, t_ref=t_ref
+            qm_results: list[QueryManagerResult] = (
+                self.primary_query_manager.perform_all_query_manager_tasks(
+                    iteration=iteration, t_ref=t_ref
+                )
             )
+
+            # Send any crash reports
+            crash_reports = []
+            for result in qm_results:
+                if result is None:
+                    continue
+                if result.error_message:
+                    report = f"{result.qm_name}: {result.error_message}"
+                    crash_reports.append(report)
+
             if crash_reports:
                 self.messaging_manager.send_crash_reports(crash_reports)
         else:

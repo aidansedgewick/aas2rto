@@ -20,6 +20,8 @@ from aas2rto.target_lookup import TargetLookup
 from aas2rto.utils.config import check_unexpected_config_keys
 from aas2rto.utils.files import calc_file_age, clear_stale_files
 
+from aas2rto.query_managers.result import QueryManagerResult
+
 logger = getLogger("base_qm")
 
 
@@ -51,18 +53,25 @@ class BaseQueryManager(abc.ABC):
         """Class attribute - the NAME of the query manager eg. 'atlas', 'fink_ztf', ..."""
 
     @abc.abstractmethod
-    def perform_all_tasks(self, iteration: int, t_ref: Time = None) -> None:
-        """perform_all_tasks(self, iteration: int, t_ref: Time=None)
+    def perform_all_tasks(
+        self, iteration: int, t_ref: Time = None
+    ) -> QueryManagerResult:
+        """perform_all_tasks(self, iteration: int, t_ref: Time=None) -> QueryManagerResult
 
         The method that the TargetSelector will use to operate your QueryManager
         Any methods the QM needs (outside of __init__) should be called here.
 
         Parameters
         ----------
-        iteration: int
+        iteration : int
             `iteration` counter can optionally be used to modify behaviour of QM
             eg. on iteration=0 (startup), FinkQMs do not make new queries, only load
             existing data
+
+        Returns
+        -------
+        qm_result : aas2rto.query_managers.result.QueryManagerResult
+
         """
 
     def __init_subclass__(cls):
@@ -81,6 +90,9 @@ class BaseQueryManager(abc.ABC):
 
     @classmethod
     def _validate_default_config(cls):
+        if cls.default_config is None:
+            return  # No default config is fine too.
+
         if not isinstance(cls.default_config, dict):
             msg = (
                 f"{cls.name}.default_config should be type 'dict', "
