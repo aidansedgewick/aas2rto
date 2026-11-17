@@ -404,8 +404,10 @@ class TargetSelector:
             for result in qm_results:
                 if result is None:
                     continue
-                if result.error_message:
-                    report = f"{result.qm_name}: {result.error_message}"
+                if result.exc:
+                    report = f"{result.name}: {type(result.exc)} {result.exc}\n"
+                    if result.detail:
+                        report = report + f"\nDetail:\n{result.detail}"
                     crash_reports.append(report)
 
             if crash_reports:
