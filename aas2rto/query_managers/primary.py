@@ -129,7 +129,6 @@ class PrimaryQueryManager:
 
                 for future in as_completed(futures):
                     qm_result = future.result()
-                    qm_result.ran_concurrently = True  # Only for
                     results.append(qm_result)
 
         if sequential_qms:
@@ -141,7 +140,7 @@ class PrimaryQueryManager:
         else:
             logger.info(f"no sequential QM tasks to perform")
 
-        return qm_result
+        return results
 
     def perform_qm_tasks_sequentially(self, iteration: int, t_ref: Time = None):
         t_ref = t_ref or Time.now()
@@ -164,14 +163,18 @@ def _qm_task_wrapper(
         qm_result = query_manager.perform_all_tasks(iteration=iteration, t_ref=t_ref)
     except Exception as e:
         logger.exception(f"Error in {query_manager.name}")
-        return QueryManagerResult(name=qm_result.name, success=False, error_msg=e)
+        return QueryManagerResult(
+            name=query_manager.name, success=False, exc=e, detail=str(e)
+        )
 
     t_stop = time.perf_counter()
 
     if isinstance(qm_result, QueryManagerResult):
-        if qm_result.error_message:
-            err_msg = qm_result.error_message
-            msg = f"EXCEPTION IN {qm_result.name} [caught, so no crash]\n{err_msg}"
+        if qm_result.exc:
+            msg = (
+                f"EXCEPTION in {qm_result.name} [caught, so no crash]\n"
+                f"    {type(qm_result.exc)}: {qm_result.exc}"
+            )
             warnings.warn(UserWarning(msg))
     elif qm_result is None:
         pass
