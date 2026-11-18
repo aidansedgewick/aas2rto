@@ -44,6 +44,7 @@ class FinkLSSTQueryManager(FinkBaseQueryManager):
     target_id_key = LSST_TARGET_ID_KEY
     alert_id_key = LSST_ALERT_ID_KEY
     portal_client_class = FinkLSSTPortalClient
+    can_run_concurrently = True
     # DO NOT init portal_client here: happens in QM init, in case credentials needed...
 
     config_extras = {"reliability_cutoff": 0.5}

@@ -5,5 +5,6 @@ from dataclasses import dataclass, field
 @dataclass
 class QueryManagerResult:
     name: str
-    success: bool = True
-    error_message: str = None
+    success: bool
+    exc: Exception = None
+    detail: str = None

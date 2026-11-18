@@ -12,6 +12,7 @@ from astropy.time import Time, TimeDelta
 
 from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.base import BaseQueryManager
+from aas2rto.query_managers.result import QueryManagerResult
 from aas2rto.query_managers.tns.tns_client import TNSClient, TNSClientError
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
@@ -373,9 +374,10 @@ class TNSQueryManager(BaseQueryManager):
             self.load_existing_tns_results()
             self.combine_delta_results()  # Should really do nothing except write here.
             self.match_on_coordinates()
-            return
+            return QueryManagerResult(name=self.name, success=True)
 
         self.collect_missing_tns_delta_files(t_ref=t_ref)
         self.combine_delta_results()
         self.match_on_coordinates()
         self.clear_stale_files(stale_age=self.config["stale_file_age"])
+        return QueryManagerResult(name=self.name, success=True)

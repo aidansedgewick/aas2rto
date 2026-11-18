@@ -1,5 +1,7 @@
 import pytest
 import threading
+from pathlib import Path
+from typing import Callable
 
 from astropy.time import Time
 
@@ -15,23 +17,45 @@ from aas2rto.target_lookup import TargetLookup
 
 
 @pytest.fixture(autouse=True)
-def remove_empty_directories(self, remove_tmp_dirs):
+def remove_empty_directories(remove_tmp_dirs):
     pass
 
 
-class MockQM(BaseQueryManager):
-
-    name = "mock_qm"
-
-    def __init__(self, config, target_lookup, parent_path):
+class RecordingQM(BaseQueryManager):
+    def __init__(
+        self,
+        config: dict,
+        target_lookup: TargetLookup,
+        parent_path: Path,
+        behaviour: Callable = None,
+    ):
         super().__init__(config, target_lookup, parent_path)
         self.tasks_performed: bool = False
         self.thread_ident: int = None
+        self.behaviour = behaviour  #
 
     def perform_all_tasks(self, iteration: int, t_ref: Time = None):
         self.tasks_performed = True
         self.thread_ident = threading.get_ident()
-        return QueryManagerResult(name="qm")
+        if self.behaviour:
+            self.behaviour()  # Do the extra work
+
+        return QueryManagerResult(name=self.name, success=True)
+
+
+class MockQM(RecordingQM):
+    name = "mock_qm"
+    can_run_concurrently = False  # Explicit
+
+
+class MockConcurrentQM1(RecordingQM):
+    name = "cqm1"
+    can_run_concurrently = True
+
+
+class MockConcurrentQM2(RecordingQM):
+    name = "cqm2"
+    can_run_concurrently = True
 
 
 class FailingQM(BaseQueryManager):
@@ -39,41 +63,18 @@ class FailingQM(BaseQueryManager):
 
     def perform_all_tasks(self, iteration: int, t_ref: Time = None):
         try:
-            raise ValueError()
+            raise ValueError("Requested failure")
         except Exception as e:
             return QueryManagerResult(
-                name=self.name, success=False, error_message="fail as requested"
+                name=self.name, success=False, exc=e, detail="Fail as requested"
             )
 
 
-class MockConcurrentQM1(BaseQueryManager):
-    name = "cqm1"
-    can_run_concurrently = True
-
-    def __init__(self, config, target_lookup, parent_path):
-        super().__init__(config, target_lookup, parent_path)
-        self.tasks_performed: bool = False
-        self.thread_ident: int = None
+class RaisingQM(BaseQueryManager):
+    name = "raising_qm"
 
     def perform_all_tasks(self, iteration, t_ref=None):
-        self.tasks_performed = True
-        self.thread_ident = threading.get_ident()
-        return QueryManagerResult(name="cqm1")
-
-
-class MockConcurrentQM2(BaseQueryManager):
-    name = "cqm2"
-    can_run_concurrently = True
-
-    def __init__(self, config, target_lookup, parent_path):
-        super().__init__(config, target_lookup, parent_path)
-        self.tasks_performed: bool = False
-        self.thread_ident: int = None
-
-    def perform_all_tasks(self, iteration, t_ref=None):
-        self.tasks_performed = True
-        self.thread_ident = threading.get_ident()
-        return QueryManagerResult(name="cqm2")
+        raise ValueError("Unhandled exception")
 
 
 class Test__InitPrimaryQM:
@@ -142,7 +143,7 @@ class Test__Wrapper:
 
         # Assert
         assert result.success
-        assert not result.error_message
+        assert not result.exc
 
     def test__caught_exception_warns(
         self, tlookup: TargetLookup, path_mgr: PathManager, t_fixed: Time
@@ -156,7 +157,20 @@ class Test__Wrapper:
 
         # Assert
         assert not result.success
-        assert result.error_message == "fail as requested"
+        assert result.detail == "Fail as requested"
+
+    def test__unhandled_exception_warns(
+        self, tlookup: TargetLookup, path_mgr: PathManager, t_fixed: Time
+    ):
+        # Arrange
+        qm = RaisingQM({}, tlookup, path_mgr.data_path)
+
+        # Act
+        result = _qm_task_wrapper(qm, 1, t_fixed)
+
+        # Assert
+        assert not result.success
+        assert result.detail == "Unhandled exception"
 
 
 class Test__PerformSeqeuntialAllQMTasks:
@@ -165,22 +179,26 @@ class Test__PerformSeqeuntialAllQMTasks:
 
         # Arrange
         pqm = PrimaryQueryManager({}, tlookup, path_mgr)
-        pqm.query_managers["qm"] = MockQM({}, tlookup, parent_path=path_mgr.data_path)
+        pqm.query_managers["mock_qm"] = MockQM(
+            {}, tlookup, parent_path=path_mgr.data_path
+        )
         main_ident = threading.get_ident()
 
         # Act
         pqm.perform_qm_tasks_sequentially(iteration=1)
 
         # Assert
-        assert pqm.query_managers["qm"].tasks_performed
-        assert pqm.query_managers["qm"].thread_ident == main_ident  # Sequential ok!
+        assert pqm.query_managers["mock_qm"].tasks_performed
+        assert (
+            pqm.query_managers["mock_qm"].thread_ident == main_ident
+        )  # Sequential ok!
 
     def test__caught_exception_warns(
         self, tlookup: TargetLookup, path_mgr: PathManager
     ):
         # Arrange
         pqm = PrimaryQueryManager({}, tlookup, path_mgr)
-        pqm.query_managers["qm"] = FailingQM({}, tlookup, path_mgr.data_path)
+        pqm.query_managers["mock_qm"] = FailingQM({}, tlookup, path_mgr.data_path)
 
         # Act
         with pytest.warns(UserWarning):
@@ -195,7 +213,9 @@ class Test__PerformQMTasksConcurrent:
         # Arrange
         pqm = PrimaryQueryManager({}, tlookup, path_mgr)
         main_ident = threading.get_ident()
-        pqm.query_managers["qm"] = MockQM({}, tlookup, parent_path=path_mgr.data_path)
+        pqm.query_managers["mock_qm"] = MockQM(
+            {}, tlookup, parent_path=path_mgr.data_path
+        )
         pqm.query_managers["cqm1"] = MockConcurrentQM1(
             {}, tlookup, parent_path=path_mgr.data_path
         )
@@ -207,9 +227,40 @@ class Test__PerformQMTasksConcurrent:
         pqm.perform_qm_tasks_concurrently(1, t_fixed)
 
         # Assert
-        assert pqm.query_managers["qm"].thread_ident == main_ident  # Was sequential!
+        assert pqm.query_managers["mock_qm"].thread_ident == main_ident  # Sequential!
         assert pqm.query_managers["cqm1"].thread_ident != main_ident  # New thread!
         assert pqm.query_managers["cqm2"].thread_ident != main_ident  # New thread!
+
+    def test__barrier_reached(
+        self, tlookup: TargetLookup, path_mgr: PathManager, t_fixed: Time
+    ):
+        # Arrange
+        barrier = threading.Barrier(2, timeout=2.0)
+
+        passed_barrier = []
+
+        def wait_for_qms():
+            barrier.wait()
+            passed_barrier.append(threading.get_ident())
+
+        pqm = PrimaryQueryManager({}, tlookup, path_mgr)
+        main_ident = threading.get_ident()
+        pqm.query_managers["mock_qm"] = MockQM(
+            {}, tlookup, parent_path=path_mgr.data_path
+        )
+        pqm.query_managers["cqm1"] = MockConcurrentQM1(
+            {}, tlookup, parent_path=path_mgr.data_path, behaviour=wait_for_qms
+        )
+        pqm.query_managers["cqm2"] = MockConcurrentQM2(
+            {}, tlookup, parent_path=path_mgr.data_path, behaviour=wait_for_qms
+        )
+
+        # Act
+        pqm.perform_qm_tasks_concurrently(1, t_fixed)
+
+        # Assert
+        assert len(passed_barrier) == 2
+        assert all([ident != main_ident for ident in passed_barrier])
 
 
 class Test__ConfigFlagQMTasks:
@@ -225,7 +276,9 @@ class Test__ConfigFlagQMTasks:
         }
         pqm = PrimaryQueryManager(config, tlookup, path_mgr)
         main_ident = threading.get_ident()
-        pqm.query_managers["qm"] = MockQM({}, tlookup, parent_path=path_mgr.data_path)
+        pqm.query_managers["mock_qm"] = MockQM(
+            {}, tlookup, parent_path=path_mgr.data_path
+        )
         pqm.query_managers["cqm1"] = MockConcurrentQM1(
             {}, tlookup, parent_path=path_mgr.data_path
         )
@@ -237,7 +290,7 @@ class Test__ConfigFlagQMTasks:
         pqm.perform_all_query_manager_tasks(1, t_fixed)
 
         # Assert
-        assert pqm.query_managers["qm"].thread_ident == main_ident  # Was sequential!
+        assert pqm.query_managers["mock_qm"].thread_ident == main_ident  # Sequential!
         assert pqm.query_managers["cqm1"].thread_ident != main_ident  # New thread!
         assert pqm.query_managers["cqm2"].thread_ident != main_ident  # New thread!
 
@@ -253,7 +306,9 @@ class Test__ConfigFlagQMTasks:
         }
         pqm = PrimaryQueryManager(config, tlookup, path_mgr)
         main_ident = threading.get_ident()
-        pqm.query_managers["qm"] = MockQM({}, tlookup, parent_path=path_mgr.data_path)
+        pqm.query_managers["mock_qm"] = MockQM(
+            {}, tlookup, parent_path=path_mgr.data_path
+        )
         pqm.query_managers["cqm1"] = MockConcurrentQM1(
             {}, tlookup, parent_path=path_mgr.data_path
         )
@@ -265,10 +320,10 @@ class Test__ConfigFlagQMTasks:
         pqm.perform_all_query_manager_tasks(1, t_fixed)
 
         # Assert
-        assert pqm.query_managers["qm"].tasks_performed
+        assert pqm.query_managers["mock_qm"].tasks_performed
         assert pqm.query_managers["cqm1"].tasks_performed
         assert pqm.query_managers["cqm2"].tasks_performed
 
-        assert pqm.query_managers["qm"].thread_ident == main_ident  # Was sequential!
-        assert pqm.query_managers["cqm1"].thread_ident == main_ident  # Was sequential!
-        assert pqm.query_managers["cqm2"].thread_ident == main_ident  # Was sequential!
+        assert pqm.query_managers["mock_qm"].thread_ident == main_ident  # Sequential!
+        assert pqm.query_managers["cqm1"].thread_ident == main_ident  # Sequential!
+        assert pqm.query_managers["cqm2"].thread_ident == main_ident  # Sequential!
