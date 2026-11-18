@@ -35,6 +35,7 @@ from aas2rto.outputs.outputs_manager import OutputsManager
 from aas2rto.path_manager import PathManager
 from aas2rto.plotting import PlottingManager, plot_default_lightcurve, plot_visibility
 from aas2rto.query_managers.primary import PrimaryQueryManager
+from aas2rto.query_managers.result import QueryManagerResult
 from aas2rto.recovery.recovery_manager import RecoveryManager
 from aas2rto.scoring.default_obs_scoring import DefaultObservatoryScoring
 from aas2rto.scoring.scoring_manager import ScoringManager
@@ -116,6 +117,7 @@ class TargetSelector:
     # expected_messenger_keys = ("telegram", "slack", "web")
 
     def __init__(self, aas2rto_config: dict, create_paths: bool = True):
+        # Quick hack to get logging started - do it properly later.
         log_setup = aas2rto_config.get("selector", {}).get("use_default_loggers", True)
         if log_setup:
             setup_stream_logging()
@@ -129,7 +131,7 @@ class TargetSelector:
         )
         self.aas2rto_config = aas2rto_config
 
-        # Top level section
+        # Get config for this class
         self.selector_config = self.default_selector_config.copy()
         selector_config = aas2rto_config.get("selector", {})
         self.selector_config.update(selector_config)
@@ -140,7 +142,7 @@ class TargetSelector:
             raise_exc=True,
         )
 
-        # Unpack configs
+        # Unpack all other configs
         self.paths_config = aas2rto_config.get("paths", {})
         self.observatories_config = aas2rto_config.get("observatories", {})
 
@@ -391,9 +393,23 @@ class TargetSelector:
         t1 = time.perf_counter()
         self.load_targets_of_opportunity(t_ref=t_ref)
         if not "qm_tasks" in skip_tasks:
-            crash_reports = self.primary_query_manager.perform_all_query_manager_tasks(
-                iteration=iteration, t_ref=t_ref
+            qm_results: list[QueryManagerResult] = (
+                self.primary_query_manager.perform_all_query_manager_tasks(
+                    iteration=iteration, t_ref=t_ref
+                )
             )
+
+            # Send any crash reports
+            crash_reports = []
+            for result in qm_results:
+                if result is None:
+                    continue
+                if result.exc:
+                    report = f"{result.name}: {type(result.exc)} {result.exc}\n"
+                    if result.detail:
+                        report = report + f"\nDetail:\n{result.detail}"
+                    crash_reports.append(report)
+
             if crash_reports:
                 self.messaging_manager.send_crash_reports(crash_reports)
         else:

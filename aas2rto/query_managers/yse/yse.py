@@ -9,6 +9,7 @@ from astropy.time import Time
 
 from aas2rto.query_managers.registry import qm_registry
 from aas2rto.query_managers.base import LightcurveQueryManager
+from aas2rto.query_managers.result import QueryManagerResult
 from aas2rto.query_managers.yse.yse_client import YSEClient, YSEClientError
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
@@ -74,6 +75,7 @@ class YSEQueryManager(LightcurveQueryManager):
     name = "yse"
 
     id_resolving_order = ("tns", "yse")
+    can_run_concurrently = True
 
     default_config = {
         "credentials": None,
@@ -370,7 +372,7 @@ class YSEQueryManager(LightcurveQueryManager):
             self.logger.info("no query for new targets on iter 0")
 
             self.load_target_lightcurves()
-            return
+            return QueryManagerResult(name=self.name, success=True)
 
         # Some house-keeping
         # self.update_lightcurve_filenames(self) # NotImplemented for now...
@@ -385,3 +387,4 @@ class YSEQueryManager(LightcurveQueryManager):
 
         # Load all the lightcurves
         self.load_target_lightcurves()
+        return QueryManagerResult(name=self.name, success=True)

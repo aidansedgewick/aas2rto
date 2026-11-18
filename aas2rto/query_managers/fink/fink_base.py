@@ -27,6 +27,7 @@ from aas2rto.exc import (
 )
 from aas2rto.query_managers.base import LightcurveQueryManager, KafkaQueryManager
 from aas2rto.query_managers.fink.fink_portal_client import FinkBasePortalClient
+from aas2rto.query_managers.result import QueryManagerResult
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.utils.common import chunk_list
@@ -707,4 +708,4 @@ class FinkBaseQueryManager(LightcurveQueryManager, KafkaQueryManager, abc.ABC):
 
         # Clear stale files
         self.clear_stale_files(self.config["stale_file_age"])
-        return
+        return QueryManagerResult(name=self.name, success=True)

@@ -61,6 +61,7 @@ class FinkZTFQueryManager(FinkBaseQueryManager):
     target_id_key = ZTF_TARGET_ID_KEY
     alert_id_key = ZTF_ALERT_ID_KEY
     portal_client_class = FinkZTFPortalClient
+    can_run_concurrently = True
     # DO NOT init portal_client here: happens in QM init, in case credentials needed...
 
     def process_single_alert(self, alert_data: FinkAlert, t_ref: Time = None) -> dict:

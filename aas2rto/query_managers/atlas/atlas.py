@@ -17,6 +17,7 @@ from aas2rto.query_managers.atlas.atlas_client import (
     AtlasTaskStatus,
 )
 from aas2rto.query_managers.base import LightcurveQueryManager
+from aas2rto.query_managers.result import QueryManagerResult
 from aas2rto.target import Target
 from aas2rto.target_lookup import TargetLookup
 from aas2rto.utils.files import calc_file_age
@@ -45,6 +46,7 @@ class AtlasCredentialError(Exception):
 class AtlasQueryManager(LightcurveQueryManager):
     name = "atlas"
 
+    can_run_concurrently = True
     comment_delim = ":"
     id_resolving_order = ("tns", "atlas", "yse", "ztf", "lsst", "ls4")
     default_config = {
@@ -489,22 +491,23 @@ class AtlasQueryManager(LightcurveQueryManager):
             self.recover_existing_queries()
         except requests.ConnectionError as e:
             self.logger.error(f"{type(e).__name__}: {e}")
-            return e
+            return QueryManagerResult(name=self.name, success=False, exc=e)
 
         try:
             self.retry_throttled_queries()
         except requests.ConnectionError as e:
             self.logger.error(f"{type(e).__name__}: {e}")
-            return e
+            return QueryManagerResult(name=self.name, success=False, exc=e)
 
         query_candidates = self.select_lightcurves_to_query(t_ref=t_ref)
         try:
             self.submit_new_queries(query_candidates)
         except requests.ConnectionError as e:
             self.logger.error(f"{type(e).__name__}: {e}")
-            return e
+            return QueryManagerResult(name=self.name, success=False, exc=e)
 
         self.load_target_lightcurves(t_ref=t_ref, only_flag_updated=False)
         # flag_only_exisitng=False means new LCs make the target updated.
 
         self.clear_stale_files()
+        return QueryManagerResult(name=self.name, success=True)
